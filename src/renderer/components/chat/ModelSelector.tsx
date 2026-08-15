@@ -340,7 +340,14 @@ export function ModelSelector({
 
       {/* 模型选择 Dialog */}
       <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className="p-0 gap-0 max-w-lg" aria-describedby={undefined}>
+        <DialogContent
+          className="p-0 gap-0 max-w-lg"
+          aria-describedby={undefined}
+          // 触屏（autoFocusSearch=false）时阻止 Radix 打开自动聚焦：
+          // Radix Dialog 默认会把焦点移入 Dialog 内容区，即使搜索框没有 autoFocus，
+          // 平板 WebView 仍会因此弹出软键盘。preventDefault 后焦点保持原位。
+          onOpenAutoFocus={(e) => { if (!autoFocusSearch) e.preventDefault() }}
+        >
           <DialogHeader className="sr-only">
             <DialogTitle>选择模型</DialogTitle>
           </DialogHeader>
