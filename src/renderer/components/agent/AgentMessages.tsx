@@ -865,9 +865,7 @@ export function AgentMessages({ sessionId, sessionModelId, messagesLoaded, persi
           </>
         )}
       </ConversationContent>
-      {pocketMode
-        ? <ScrollMinimap key={sessionId} items={minimapItems} pocketMode />
-        : <ScrollMinimap items={minimapItems} />}
+      <ScrollMinimap key={sessionId} items={minimapItems} pocketMode={pocketMode} sessionKey={sessionId} />
       <ConversationScrollButton />
       {!pocketMode && allUserMessagesData.length > 0 && (
         <StickyUserMessage userMessages={allUserMessagesData} />

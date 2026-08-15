@@ -32,6 +32,8 @@ interface ScrollMinimapProps {
   items: MinimapItem[]
   /** 平板触屏模式：hover 自动展开改为点击触发，避免触屏 tap 模拟 mouseenter 误弹 */
   pocketMode?: boolean
+  /** 会话/对话标识：变化时强制关闭面板（切会话兜底，不依赖 key 重挂载） */
+  sessionKey?: string
 }
 
 /** 最少消息数才显示迷你地图 */
@@ -72,10 +74,20 @@ function escapeRegExp(str: string): string {
 
 // ── 主组件 ──
 
-export function ScrollMinimap({ items, pocketMode = false }: ScrollMinimapProps): React.ReactElement | null {
+export function ScrollMinimap({ items, pocketMode = false, sessionKey }: ScrollMinimapProps): React.ReactElement | null {
   const { scrollRef, stopScroll, state: stickyState } = useStickToBottomContext()
   const [hovered, setHovered] = React.useState(false)
   const [isLeaving, setIsLeaving] = React.useState(false)
+  // 触屏设备自动进触屏模式（hover:none 匹配手机/平板 WebView）；pocketMode 为显式覆盖。
+  // 这样即使上层 pocketMode 传递中断，触屏设备也不会走桌面 hover 逻辑误弹。
+  const isTouchDevice = React.useMemo(
+    () => typeof window !== 'undefined' && (window.matchMedia('(hover: none)').matches || 'ontouchstart' in window),
+    []
+  )
+  const touchMode = pocketMode || isTouchDevice
+  // 切会话/对话时记录旧标识与变化时间，用于强制关闭面板 + 防「幽灵点击」
+  const lastSessionKeyRef = React.useRef<string | undefined>(sessionKey)
+  const sessionKeyChangeAtRef = React.useRef(0)
   const [visibleIds, setVisibleIds] = React.useState<Set<string>>(new Set())
   /** 主区视口几何中心当前对应的消息 id —— 面板打开时作为列表居中锚点 */
   const [centerVisibleId, setCenterVisibleId] = React.useState<string | undefined>(undefined)
@@ -196,8 +208,8 @@ export function ScrollMinimap({ items, pocketMode = false }: ScrollMinimapProps)
   const OPEN_DELAY = 180
 
   const handleMouseEnter = (): void => {
-    // 触屏无 hover 语义（tap 会模拟 mouseenter），平板模式不在此展开，改由点击触发
-    if (pocketMode) return
+    // 触屏无 hover 语义（tap 会模拟 mouseenter），触屏/平板模式不在此展开，改由点击触发
+    if (touchMode) return
     if (closeTimerRef.current) clearTimeout(closeTimerRef.current)
     if (fadeTimerRef.current) clearTimeout(fadeTimerRef.current)
     setIsLeaving(false)
@@ -216,7 +228,7 @@ export function ScrollMinimap({ items, pocketMode = false }: ScrollMinimapProps)
 
   const handleMouseLeave = (): void => {
     // 触屏模式下收起改由「点击面板外」控制，不走 mouseleave
-    if (pocketMode) return
+    if (touchMode) return
     // 尚未打开就离开了 → 取消打开定时器
     if (openTimerRef.current) {
       clearTimeout(openTimerRef.current)
@@ -238,6 +250,8 @@ export function ScrollMinimap({ items, pocketMode = false }: ScrollMinimapProps)
 
   const handleTriggerClick = React.useCallback((e: React.MouseEvent): void => {
     e.stopPropagation()
+    // 切会话/对话后的短暂窗口内忽略触发条点击，防触屏合成 click 的「幽灵点击」误展开
+    if (Date.now() - sessionKeyChangeAtRef.current < 300) return
     if (closeTimerRef.current) clearTimeout(closeTimerRef.current)
     if (fadeTimerRef.current) clearTimeout(fadeTimerRef.current)
     if (openTimerRef.current) { clearTimeout(openTimerRef.current); openTimerRef.current = undefined }
@@ -248,7 +262,7 @@ export function ScrollMinimap({ items, pocketMode = false }: ScrollMinimapProps)
   // ── 触屏点击面板外关闭 ──
 
   React.useEffect(() => {
-    if (!pocketMode || !hovered) return
+    if (!touchMode || !hovered) return
     const onDocClick = (e: MouseEvent): void => {
       const target = e.target as Node
       const inPanel = listRef.current?.closest('[data-minimap-panel]')?.contains(target) ?? false
@@ -257,7 +271,21 @@ export function ScrollMinimap({ items, pocketMode = false }: ScrollMinimapProps)
     }
     document.addEventListener('click', onDocClick)
     return () => document.removeEventListener('click', onDocClick)
-  }, [pocketMode, hovered])
+  }, [touchMode, hovered])
+
+  // ── 切换会话/对话：强制关闭面板（兜底，不依赖 key 重挂载） ──
+
+  React.useEffect(() => {
+    const changed = lastSessionKeyRef.current !== sessionKey
+    lastSessionKeyRef.current = sessionKey
+    if (!changed) return
+    sessionKeyChangeAtRef.current = Date.now()
+    if (closeTimerRef.current) clearTimeout(closeTimerRef.current)
+    if (fadeTimerRef.current) clearTimeout(fadeTimerRef.current)
+    if (openTimerRef.current) { clearTimeout(openTimerRef.current); openTimerRef.current = undefined }
+    setIsLeaving(false)
+    setHovered(false)
+  }, [sessionKey])
 
   // ── 跳转到指定消息（直接操作 scrollTop，绕过 scrollIntoView） ──
 
@@ -464,7 +492,7 @@ export function ScrollMinimap({ items, pocketMode = false }: ScrollMinimapProps)
           style={{ width: 24, height: barCount * 6 }}
           onMouseEnter={handleMouseEnter}
           onMouseLeave={handleMouseLeave}
-          onClick={pocketMode ? handleTriggerClick : undefined}
+          onClick={touchMode ? handleTriggerClick : undefined}
         >
           {Array.from({ length: barCount }, (_, i) => {
             const start = Math.floor((i * items.length) / barCount)

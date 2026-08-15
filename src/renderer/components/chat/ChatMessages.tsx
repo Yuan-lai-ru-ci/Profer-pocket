@@ -471,9 +471,7 @@ export function ChatMessages({
           </>
         )}
       </ConversationContent>
-      {pocketMode
-        ? <ScrollMinimap key={conversationId} items={minimapItems} pocketMode />
-        : <ScrollMinimap items={minimapItems} />}
+      <ScrollMinimap key={conversationId} items={minimapItems} pocketMode={pocketMode} sessionKey={conversationId} />
       <ConversationScrollButton />
     </Conversation>
   )
