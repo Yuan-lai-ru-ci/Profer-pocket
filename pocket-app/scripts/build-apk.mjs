@@ -15,7 +15,9 @@
  *
  * 步骤：校验环境 → 写入 variant 配置 → 同步 web → cap sync android → gradlew assembleDebug。
  * 环境要求：ANDROID_HOME=C:\Android\Sdk、JAVA_HOME=C:\Android\jdk-21（必须 JDK 21）。
- * 产物：android/app/build/outputs/apk/debug/app-debug.apk，并复制到 releases/Profer-Pocket-<versionName>.apk
+ * 产物：android/app/build/outputs/apk/debug/app-debug.apk，并复制到 releases/。
+ * 命名规则（工作区 CLAUDE.md）：dev 版文件名自动追加当前分支提交短 ID（Profer-Pocket-<版本>-dev-<commit>.apk），
+ * 区分多分支并行出的 dev 包，防 AList 互相覆盖；release 版不带（版本号 + tag 已唯一标识）。
  */
 import { spawnSync } from 'node:child_process'
 import { existsSync, readFileSync, writeFileSync, copyFileSync, mkdirSync } from 'node:fs'
@@ -34,8 +36,8 @@ const VARIANTS = {
   dev: {
     appId: 'com.profer.pocket.dev',
     appName: 'Profer Pocket（开发版）',
-    versionCode: '11',
-    versionName: '0.1.2-dev',
+    versionCode: '12',
+    versionName: '0.1.3-dev',
   },
   release: {
     appId: 'com.profer.pocket',
@@ -68,6 +70,16 @@ function run(cmd, args, cwd) {
   if (r.status !== 0) {
     throw new Error(`[build-apk] 命令失败: ${cmd} ${args.join(' ')} (exit ${r.status})`)
   }
+}
+
+/** 取仓库当前提交短 ID（dev 版文件名标注功能分支用；git 不可用时返回 null） */
+function getCommitShortId() {
+  try {
+    const repoRoot = resolve(appRoot, '..') // Profer-pocket/
+    const r = spawnSync('git', ['rev-parse', '--short', 'HEAD'], { cwd: repoRoot, encoding: 'utf8' })
+    if (r.status === 0 && r.stdout) return r.stdout.trim()
+  } catch { /* git 不可用则忽略 */ }
+  return null
 }
 
 /** 把三处配置写入指定 variant 的值（cap sync 会按 appId 覆盖 applicationId 与 strings 的 package/custom_url_scheme） */
@@ -130,14 +142,16 @@ try {
     run('./gradlew', ['assembleDebug'], androidRoot)
   }
 
-  // 6. 复制产物为带版本名文件
+  // 6. 复制产物为带版本名文件（dev 版自动附加提交短 ID，区分并行分支，见工作区 CLAUDE.md 命名规则）
   step('复制 APK 产物')
   const apk = resolve(androidRoot, 'app/build/outputs/apk/debug/app-debug.apk')
   const outDir = resolve(appRoot, 'releases')
   mkdirSync(outDir, { recursive: true })
-  const outApk = resolve(outDir, `Profer-Pocket-${cfg.versionName}.apk`)
+  const commitId = variant === 'dev' ? getCommitShortId() : null
+  const suffix = variant === 'dev' && commitId ? `-${commitId}` : ''
+  const outApk = resolve(outDir, `Profer-Pocket-${cfg.versionName}${suffix}.apk`)
   copyFileSync(apk, outApk)
-  console.log(`[build-apk] ✅ APK 已生成: ${outApk}`)
+  console.log(`[build-apk] ✅ APK 已生成: ${outApk}${commitId ? `（文件名含提交 ${commitId}）` : ''}`)
 } finally {
   // 无论成败恢复 dev 默认配置，避免工作区残留 release 配置
   applyConfig(DEV_CFG)
