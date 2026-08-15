@@ -110,7 +110,7 @@ import { persistedGraphAtomFamily } from '@/atoms/graph-atoms'
 import { isTaskProgressTool } from './task-progress'
 import type { AgentContextStatus } from '@/atoms/agent-atoms'
 import { settingsOpenAtom } from '@/atoms/settings-tab'
-import { channelsAtom, thinkingExpandedAtom } from '@/atoms/chat-atoms'
+import { channelsAtom, channelsLoadedAtom, thinkingExpandedAtom } from '@/atoms/chat-atoms'
 import { draftSessionIdsAtom } from '@/atoms/draft-session-atoms'
 import { useOpenSession } from '@/hooks/useOpenSession'
 import { AgentSessionProvider } from '@/contexts/session-context'
@@ -678,6 +678,8 @@ export function AgentView({ sessionId, pocketMode = false, hideAgentHeader = fal
   const [pendingFiles, setPendingFiles] = useAtom(agentPendingFilesAtomFamily(sessionId))
   const workspaces = useAtomValue(agentWorkspacesAtom)
   const globalChannels = useAtomValue(channelsAtom)
+  const setGlobalChannels = useSetAtom(channelsAtom)
+  const setChannelsLoaded = useSetAtom(channelsLoadedAtom)
   // 保持 channelId 稳定：初始化前使用上次有效值，避免工具栏抖动
   const stableChannelIdRef = React.useRef(agentChannelId)
   if (agentChannelId) stableChannelIdRef.current = agentChannelId
@@ -838,6 +840,28 @@ export function AgentView({ sessionId, pocketMode = false, hideAgentHeader = fal
         && channel.models.some((model) => model.enabled),
     )
   }, [globalChannels, agentChannelIds, sessionAgentRuntime])
+
+  /**
+   * Pocket 模式：无可用模型时从电脑端重新同步渠道。
+   * 移动端没有渠道配置入口，渠道完全来自电脑端。重试覆盖以下场景：
+   * - 打开模型选择器时 WS 未就绪 / 返回空，导致渠道未加载或误清空
+   * - 电脑端渠道刚配置 / 服务恢复，Pocket 需要手动拉取一次恢复对话
+   */
+  const handleRetryChannelSync = React.useCallback((): void => {
+    window.electronAPI.listChannels()
+      .then((data) => {
+        const arr = Array.isArray(data) ? data : []
+        if (arr.length === 0) {
+          toast.error('电脑端暂无可切换渠道，请先在电脑端配置并启用渠道')
+          return
+        }
+        setGlobalChannels(arr as never)
+        setChannelsLoaded(true)
+        setAgentChannelIds(arr.map((c) => (c as { id?: string }).id).filter(Boolean) as string[])
+      })
+      .catch(() => toast.error('同步渠道失败，请检查电脑端连接'))
+  }, [setGlobalChannels, setChannelsLoaded, setAgentChannelIds])
+
   React.useEffect(() => {
     // 历史空模型会话仅在空闲时自动补全，不能与运行中的本轮 binding 竞争。
     if (!agentChannelId || agentModelId || streaming || backgroundWaiting) return
@@ -2879,14 +2903,32 @@ export function AgentView({ sessionId, pocketMode = false, hideAgentHeader = fal
             {(!agentChannelId || !hasAvailableModel) && (
               <div className="flex items-center gap-2 px-4 py-2 text-sm text-amber-600 dark:text-amber-400">
                 <Settings size={14} />
-                <span>{!agentChannelId ? '请在设置中选择 Agent 供应商' : '暂无可用模型，请在设置中启用 Agent 渠道并配置模型'}</span>
-                <button
-                  type="button"
-                  className="text-xs underline underline-offset-2 hover:text-foreground transition-colors"
-                  onClick={() => setSettingsOpen(true)}
-                >
-                  前往设置
-                </button>
+                <span>
+                  {pocketMode
+                    ? (!agentChannelId
+                        ? '未获取到 Agent 渠道，请确认电脑端已配置并保持连接'
+                        : '未同步到可用模型，请确认电脑端已启用渠道与模型')
+                    : (!agentChannelId
+                        ? '请在设置中选择 Agent 供应商'
+                        : '暂无可用模型，请在设置中启用 Agent 渠道并配置模型')}
+                </span>
+                {pocketMode ? (
+                  <button
+                    type="button"
+                    className="text-xs underline underline-offset-2 hover:text-foreground transition-colors"
+                    onClick={handleRetryChannelSync}
+                  >
+                    重新同步
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    className="text-xs underline underline-offset-2 hover:text-foreground transition-colors"
+                    onClick={() => setSettingsOpen(true)}
+                  >
+                    前往设置
+                  </button>
+                )}
               </div>
             )}
 

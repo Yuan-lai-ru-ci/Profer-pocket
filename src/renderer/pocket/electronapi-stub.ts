@@ -103,6 +103,17 @@ export function setPocketRemoteClient(client: PocketRemoteClient | null): void {
   remoteClient = client
 }
 
+/**
+ * 最后成功获取的渠道列表快照。
+ *
+ * listChannels 在 WS 未就绪 / 获取失败 / 桌面端返回空列表时返回快照而不是空数组：
+ * ModelSelector 打开 Dialog 时会调用 listChannels 刷新并 setChannels 覆盖 channelsAtom，
+ * 若此时拿到空数组，会把平板已加载的渠道清空 → AgentView 的 hasAvailableModel 变 false，
+ * 输入框上方误报“暂无可用模型”黄字且无自动恢复机制，用户无法继续对话。
+ * 保留最后一次成功的渠道，既避免误清空，也让用户仍能看到/选择桌面端已配置的模型。
+ */
+let lastChannelsSnapshot: unknown[] = []
+
 // ===== 会话消息传输层懒加载分页状态 =====
 //
 // 移动端打开会话时不一次性拉全量，而是按完整 turn 惰性分页（见服务端
@@ -744,13 +755,24 @@ export function installElectronApiStub(): void {
     // 注意：WS 返回的是桌面渠道原始形状，没有平板补丁后的 enabled 语义（桌面 enabled 由
     // ChannelSettings 持久化，WS 不应用用户设置）。这里与 loadChannels 一样补全 enabled，
     // 否则 ModelSelector 的 modelOptions（enabled && models[].enabled）恒空 → “暂无可用模型”。
+    // WS 未就绪 / 获取失败 / 返回空列表时返回快照（lastChannelsSnapshot），绝不返回空数组，
+    // 防止 setChannels([]) 覆盖已加载渠道导致 Agent 模式误报“暂无可用模型”且无法自行恢复。
     listChannels: async () => {
-      const data = await (remoteClient?.listChannels() ?? Promise.resolve([]))
-      return (Array.isArray(data) ? data : []).map((c) => ({
+      let data: unknown
+      try {
+        data = await (remoteClient?.listChannels() ?? Promise.resolve(null))
+      } catch {
+        return lastChannelsSnapshot
+      }
+      const raw = Array.isArray(data) ? data : []
+      if (raw.length === 0) return lastChannelsSnapshot
+      const normalized = raw.map((c) => ({
         ...c,
         enabled: true,
         models: ((c as { models?: Array<{ id?: string }> }).models || []).map((m) => ({ ...m, enabled: true })),
       }))
+      lastChannelsSnapshot = normalized
+      return normalized
     },
     getModels: () => Promise.resolve([]),
     getWorkspaceCapabilities: () => Promise.resolve(null),
