@@ -38,6 +38,7 @@ import { LoadingIndicator } from '@/components/ui/loading-indicator'
 import { CodeBlock, MermaidBlock } from '@profer/ui'
 import { detectLanguage } from '@profer/core'
 import { FilePathChip, isAbsoluteFilePath, isRelativeFilePath } from './file-path-chip'
+import { getFileBaseName } from '@/lib/file-utils'
 import { usePocketMode } from './pocket-mode-context'
 import { currentAgentSessionIdAtom } from '@/atoms/agent-atoms'
 import { useOpenPreview } from '@/components/diff/preview-opener'
@@ -280,7 +281,7 @@ function MentionChip({ type, value }: { type: MentionType; value: string }): Rea
   const Icon = style.icon
   const decoded = safeDecode(value)
   const display = type === 'file'
-    ? (decoded.split('/').pop() || decoded)
+    ? getFileBaseName(decoded)
     : type === 'session'
       ? `会话 ${decoded.slice(0, 8)}`
       : decoded
@@ -670,7 +671,7 @@ const MarkdownInlineCode = React.memo(function MarkdownInlineCode({
         const hasLineCol = !!lineColMatch && !lineColMatch[1]!.endsWith(':')
         const pathPart = hasLineCol ? lineColMatch![1]! : trimmed
         const suffix = hasLineCol ? lineColMatch![2]! : ''
-        const baseName = pathPart.split(/[\\/]/).pop() || pathPart
+        const baseName = getFileBaseName(pathPart)
         const absolutePath = turnFileMap.get(baseName)
         if (absolutePath) {
           return <FilePathChip filePath={absolutePath + suffix} basePaths={merged} />

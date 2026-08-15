@@ -102,7 +102,10 @@ function mountCap(): void {
     const last = children[children.length - 1]
     if (last) host = last as HTMLElement
     host = host ?? toolbar
-    if (capEl.parentElement !== host) host.appendChild(capEl)
+    // 胶囊插到 trailing 容器最前（发送/停止按钮左侧），保持水平对齐。
+    // 必须用 insertBefore 而非 appendChild：appendChild 会落到按钮右侧（默认错误位置）。
+    if (capEl.parentElement !== host) host.insertBefore(capEl, host.firstChild)
+    else if (host.firstChild !== capEl) host.insertBefore(capEl, host.firstChild)
     capEl.style.display = 'inline-flex'
     capHostEl = host
   } else {
@@ -278,9 +281,9 @@ function startObserver(): void {
     cancelAnimationFrame(raf)
     raf = requestAnimationFrame(() => {
       if (!capEl) return
-      // 胶囊已脱离目标容器（或宿主被重建、断开）时重新挂载
+      // 胶囊脱离目标容器、宿主被重建/断开、或不在容器最前（被 React 挪到按钮右侧）时重新挂载
       const hostConnected = capHostEl ? capHostEl.isConnected : false
-      if (capEl.parentElement !== capHostEl || !hostConnected) mountCap()
+      if (capEl.parentElement !== capHostEl || !hostConnected || (capHostEl && capEl !== capHostEl.firstChild)) mountCap()
     })
   })
   observer.observe(document.body, { childList: true, subtree: true })

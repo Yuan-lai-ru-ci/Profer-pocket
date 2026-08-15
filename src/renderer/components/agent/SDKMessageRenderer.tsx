@@ -71,6 +71,7 @@ import {
   resolveContextWindowFromModelUsage,
 } from '@profer/shared'
 import type { ToolActivity } from '@/atoms/agent-atoms'
+import { getFileBaseName } from '@/lib/file-utils'
 
 // ===== SDKMessageRenderer Props =====
 
@@ -894,7 +895,7 @@ export function parseAttachedFiles(content: string): { files: AttachedFileRef[];
         .replace(/&gt;/g, '>')
         .replace(/&lt;/g, '<')
         .replace(/&amp;/g, '&')
-      quotes.push({ path: filePath, filename: filePath.split('/').pop() ?? filePath })
+      quotes.push({ path: filePath, filename: getFileBaseName(filePath) })
     }
   }
 
