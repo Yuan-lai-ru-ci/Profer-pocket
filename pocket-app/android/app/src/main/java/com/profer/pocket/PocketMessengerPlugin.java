@@ -6,6 +6,7 @@ import android.os.Build;
 
 import androidx.core.content.ContextCompat;
 
+import com.getcapacitor.JSArray;
 import com.getcapacitor.JSObject;
 import com.getcapacitor.PermissionState;
 import com.getcapacitor.Plugin;
@@ -78,8 +79,12 @@ public class PocketMessengerPlugin extends Plugin {
     @PluginMethod
     public void getLogs(PluginCall call) {
         java.util.List<String> logs = MessageService.takeLogs();
+        // 必须用 JSArray 显式构造：Android 内置 org.json 不会把 List 序列化成 JSON 数组，
+        // 直接 put List 前端 Array.isArray 判 false，日志会整批丢失
+        JSArray arr = new JSArray();
+        for (String s : logs) arr.put(s);
         JSObject ret = new JSObject();
-        ret.put("logs", logs);
+        ret.put("logs", arr);
         call.resolve(ret);
     }
 
