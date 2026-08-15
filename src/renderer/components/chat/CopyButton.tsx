@@ -8,6 +8,7 @@
 import { useState, useCallback, useEffect, useRef } from 'react'
 import { CopyIcon, CheckIcon } from 'lucide-react'
 import { MessageAction } from '@/components/ai-elements/message'
+import { writeClipboardText } from '@/lib/clipboard'
 
 interface CopyButtonProps {
   /** 要复制的内容 */
@@ -34,13 +35,11 @@ export function CopyButton({ content, copyAsPlainText = false }: CopyButtonProps
   const timerRef = useRef<ReturnType<typeof setTimeout>>()
 
   const handleCopy = useCallback(async () => {
-    try {
-      await navigator.clipboard.writeText(copyAsPlainText ? unescapeMarkdownTextForClipboard(content) : content)
+    const ok = await writeClipboardText(copyAsPlainText ? unescapeMarkdownTextForClipboard(content) : content)
+    if (ok) {
       setCopied(true)
       clearTimeout(timerRef.current)
       timerRef.current = setTimeout(() => setCopied(false), 2000)
-    } catch (error) {
-      console.error('复制失败:', error)
     }
   }, [content, copyAsPlainText])
 
