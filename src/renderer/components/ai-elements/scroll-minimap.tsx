@@ -41,192 +41,6 @@ const MIN_ITEMS = 1
 /** 迷你地图最多渲染的横杠数 */
 const MAX_BARS = 20
 
-// ── 调试埋点（排查「切会话仍弹消息导航」问题用；定位完成后整块删除） ──
-
-/** 置 false 即关闭全部调试输出与 HUD */
-const MINIMAP_DEBUG = true
-
-const debugLogs: string[] = []
-/** 常驻记录：所有 hovered→OPEN 事件（面板每次打开都留痕，不被日志轮转挤掉） */
-const debugOpenEvents: string[] = []
-let debugHudEl: HTMLDivElement | null = null
-let debugHudEnabled = false
-/** HUD 折叠状态：true=小胶囊，false=展开面板 */
-let debugHudCollapsed = false
-
-const HUD_BTN_CSS = 'background:#1f2937;color:#4ade80;border:1px solid #4ade80;border-radius:4px;padding:1px 7px;font:11px monospace;cursor:pointer;'
-
-/** 复制全部调试日志（WebView 优先 execCommand 降级，navigator.clipboard 兜底） */
-function copyDebugLogs(): void {
-  const text = ['── Minimap Debug ──', ...debugOpenEvents, ...debugLogs].join('\n')
-  try {
-    if (navigator.clipboard?.writeText) {
-      void navigator.clipboard.writeText(text).then(
-        () => pushDebugLog('✓ 已复制全部日志'),
-        () => fallbackCopy(text),
-      )
-      return
-    }
-    fallbackCopy(text)
-  } catch { fallbackCopy(text) }
-}
-function fallbackCopy(text: string): void {
-  try {
-    const ta = document.createElement('textarea')
-    ta.value = text
-    ta.style.cssText = 'position:fixed;left:-9999px;top:0;opacity:0;height:1px;width:1px;'
-    document.body.appendChild(ta)
-    ta.focus()
-    ta.select()
-    const ok = document.execCommand('copy')
-    document.body.removeChild(ta)
-    pushDebugLog(ok ? '✓ 已复制全部日志' : '⚠ 复制失败，请展开后长按选中')
-  } catch { pushDebugLog('⚠ 复制异常') }
-}
-
-function toggleHudCollapse(): void {
-  debugHudCollapsed = !debugHudCollapsed
-  renderHud()
-}
-
-/** 渲染 HUD：折叠态为小胶囊（可点开），展开态为面板（标题+复制+隐藏+日志） */
-function renderHud(): void {
-  if (!debugHudEl || typeof document === 'undefined') return
-  debugHudEl.innerHTML = ''
-  if (debugHudCollapsed) {
-    debugHudEl.style.cssText =
-      'position:fixed;top:60px;right:8px;z-index:99999;background:#000;color:#4ade80;' +
-      'border:1px solid #22c55e;border-radius:8px;padding:3px 9px;font:11px monospace;' +
-      'cursor:pointer;pointer-events:auto;'
-    debugHudEl.textContent = `MD ▸ (${debugOpenEvents.length})`
-    debugHudEl.onclick = toggleHudCollapse
-    return
-  }
-  debugHudEl.style.cssText =
-    'position:fixed;top:56px;right:8px;z-index:99999;background:#000;color:#4ade80;' +
-    'border:1px solid #22c55e;border-radius:8px;padding:8px 10px;font:12px/1.5 monospace;' +
-    'max-width:84vw;max-height:42vh;overflow:hidden;pointer-events:auto;' +
-    'user-select:text;-webkit-user-select:text;text-align:left;'
-  const header = document.createElement('div')
-  header.style.cssText = 'display:flex;align-items:center;gap:6px;margin-bottom:4px;flex-wrap:wrap;'
-  const title = document.createElement('span')
-  title.style.cssText = 'font-weight:bold;'
-  title.textContent = 'Minimap Debug'
-  const copyBtn = document.createElement('button')
-  copyBtn.textContent = '📋复制'
-  copyBtn.style.cssText = HUD_BTN_CSS
-  copyBtn.onclick = (e) => { e.stopPropagation(); copyDebugLogs() }
-  const hideBtn = document.createElement('button')
-  hideBtn.textContent = '✕隐藏'
-  hideBtn.style.cssText = HUD_BTN_CSS
-  hideBtn.onclick = (e) => { e.stopPropagation(); toggleHudCollapse() }
-  header.append(title, copyBtn, hideBtn)
-  const body = document.createElement('div')
-  body.style.cssText = 'overflow:auto;max-height:34vh;-webkit-overflow-scrolling:touch;white-space:pre-wrap;word-break:break-all;'
-  const openBlock = debugOpenEvents.length > 0
-    ? `◆ OPEN(${debugOpenEvents.length}):\n  ${debugOpenEvents.join('\n  ')}\n──\n`
-    : '◆ OPEN: 无\n──\n'
-  body.textContent = openBlock + debugLogs.slice(-20).join('\n')
-  debugHudEl.append(header, body)
-}
-
-/** 追加一行调试日志，并刷新 HUD */
-function pushDebugLog(line: string): void {
-  if (!MINIMAP_DEBUG) return
-  const stamped = `${new Date().toTimeString().slice(0, 8)} ${line}`
-  debugLogs.push(stamped)
-  if (debugLogs.length > 60) debugLogs.shift()
-  // 面板打开（hovered→OPEN）事件单独常驻，避免被后续日志挤掉
-  if (line.includes('→OPEN')) {
-    debugOpenEvents.push(stamped)
-    if (debugOpenEvents.length > 20) debugOpenEvents.shift()
-  }
-  if (typeof document === 'undefined') return
-  try {
-    if (!debugHudEl) {
-      debugHudEl = document.createElement('div')
-      document.body.appendChild(debugHudEl)
-    }
-    debugHudEnabled = true
-    renderHud()
-  } catch { /* 调试失败忽略 */ }
-}
-
-/** 构造元素 DOM 链摘要（定位面板来源用） */
-function buildChain(el: HTMLElement): string {
-  const parts: string[] = []
-  let cur: HTMLElement | null = el
-  for (let i = 0; i < 5 && cur; i++) {
-    const cls = String(cur.className).split(' ').filter(Boolean).slice(0, 3).join('.')
-    parts.push(`${cur.tagName.toLowerCase()}${cls ? '.' + cls : ''}`)
-    cur = cur.parentElement
-  }
-  return parts.join(' < ')
-}
-
-/**
- * DOM 级弹层探测器：不依赖 hovered 状态，直接观察
- * ① [data-minimap-panel]（ScrollMinimap 面板）②「消息导航」文字出现 ③ 任何 .fixed / [role=dialog] 固定弹层。
- * 若面板出现但 hoveredLogs=0 → 面板非本组件 hovered 控制，存在其他渲染路径。
- */
-let domDetectStarted = false
-function startDomPanelDetector(): void {
-  if (domDetectStarted || typeof document === 'undefined' || !document.body) return
-  domDetectStarted = true
-  let lastPanel = false
-  let lastText = false
-  let lastKeys = new Set<string>()
-  let scanTimer: ReturnType<typeof setTimeout> | undefined
-
-  const fixedOverlayKey = (el: HTMLElement): string => {
-    const cls = String(el.className).split(' ').filter(Boolean).slice(0, 3).join('.')
-    const z = getComputedStyle(el).zIndex
-    return `${el.tagName.toLowerCase()}${cls ? '.' + cls : ''}@z${z}`
-  }
-
-  const scan = (): void => {
-    // ① ScrollMinimap 面板出现/消失
-    const mm = document.querySelector<HTMLElement>('[data-minimap-panel]')
-    const mmPresent = !!mm
-    if (mmPresent !== lastPanel) {
-      lastPanel = mmPresent
-      pushDebugLog(mmPresent
-        ? `PANEL-DOM APPEAR [minimap-panel] | hoveredLogs=${debugOpenEvents.length} | ${buildChain(mm as HTMLElement)}`
-        : 'PANEL-DOM gone')
-    }
-    // ② 「消息导航」文字出现/消失（任意位置）
-    const textPresent = document.body.innerText.includes('消息导航')
-    if (textPresent !== lastText) {
-      lastText = textPresent
-      pushDebugLog(textPresent ? 'TEXT-消息导航 APPEAR' : 'TEXT-消息导航 gone')
-    }
-    // ③ 任何 .fixed / [role=dialog] 弹层出现（排除 HUD 自身）
-    const fixed = Array.from(document.querySelectorAll<HTMLElement>('.fixed, [role="dialog"]')).filter((el) => el !== debugHudEl)
-    const keys = new Set(fixed.map(fixedOverlayKey))
-    for (const k of keys) {
-      if (!lastKeys.has(k)) {
-        const el = fixed.find((f) => fixedOverlayKey(f) === k)
-        const txt = el ? (el.textContent?.trim().slice(0, 50) ?? '') : ''
-        pushDebugLog(`FIXED-OVERLAY +${k} | "${txt}"`)
-      }
-    }
-    lastKeys = keys
-  }
-
-  const schedule = (): void => {
-    if (scanTimer) clearTimeout(scanTimer)
-    scanTimer = setTimeout(scan, 250)
-  }
-
-  scan()
-  const obs = new MutationObserver(schedule)
-  obs.observe(document.body, { childList: true, subtree: true, characterData: true })
-}
-if (typeof document !== 'undefined') {
-  if (document.body) startDomPanelDetector()
-  else document.addEventListener('DOMContentLoaded', startDomPanelDetector)
-}
-
 // ── Markdown 预览配置（轻量级，禁用重量级渲染） ──
 
 const PREVIEW_REMARK_PLUGINS = [remarkGfm]
@@ -288,30 +102,6 @@ export function ScrollMinimap({ items, pocketMode = false, sessionKey }: ScrollM
   const trackRef = React.useRef<HTMLDivElement>(null)
   const listRef = React.useRef<HTMLDivElement>(null)
   const triggerRef = React.useRef<HTMLDivElement>(null)
-  /** 调试：追踪 canScroll 变化，观察「切会话可滚动 false→true 首次渲染」时序 */
-  const canScrollRef = React.useRef(false)
-
-  // ── 调试：统一包装 setHovered，记录每次开/关的来源与上下文 ──
-
-  const setHoveredDbg = React.useCallback(
-    (source: string) => (next: boolean | ((prev: boolean) => boolean)): void => {
-      setHovered((prev) => {
-        const n = typeof next === 'function' ? (next as (prev: boolean) => boolean)(prev) : next
-        if (n !== prev) {
-          pushDebugLog(`hovered ${prev ? 'OPEN' : 'closed'}→${n ? 'OPEN' : 'closed'} via ${source} | touch=${touchMode} | sk=${sessionKey ?? '∅'} | Δ=${Date.now() - sessionKeyChangeAtRef.current}ms`)
-        }
-        return n
-      })
-    },
-    [touchMode, sessionKey],
-  )
-
-  // ── 调试：首挂载时输出环境判定（确认 touchMode 在真机上是否生效） ──
-
-  React.useEffect(() => {
-    pushDebugLog(`MOUNT | pocket=${pocketMode} | touchDetect=${isTouchDevice} | touchMode=${touchMode} | sk=${sessionKey ?? '∅'} | items=${items.length}`)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
 
   // ── 组件卸载时清理计时器 ──
 
@@ -331,12 +121,7 @@ export function ScrollMinimap({ items, pocketMode = false, sessionKey }: ScrollM
 
     const update = (): void => {
       const { scrollTop, scrollHeight, clientHeight } = el
-      const nextCanScroll = scrollHeight > clientHeight + 10
-      if (nextCanScroll !== canScrollRef.current) {
-        canScrollRef.current = nextCanScroll
-        pushDebugLog(`canScroll→${nextCanScroll ? 'true' : 'false'} | scrollTop=${Math.round(scrollTop)} sh=${scrollHeight} ch=${clientHeight}`)
-      }
-      setCanScroll(nextCanScroll)
+      setCanScroll(scrollHeight > clientHeight + 10)
       setScrollMetrics({ scrollTop, scrollHeight, clientHeight })
       if (scrollHeight <= 0) return
 
@@ -371,8 +156,6 @@ export function ScrollMinimap({ items, pocketMode = false, sessionKey }: ScrollM
   }, [scrollRef])
 
   // ── 面板打开时自动聚焦搜索框 ──
-  // 触屏/平板模式跳过自动聚焦：聚焦 input 会弹出系统触摸键盘，打开导航面板时很碍事；
-  // 需要搜索时用户手动点搜索框即可。
 
   React.useEffect(() => {
     if (!hovered || touchMode) return
@@ -415,8 +198,8 @@ export function ScrollMinimap({ items, pocketMode = false, sessionKey }: ScrollM
     if (fadeTimerRef.current) clearTimeout(fadeTimerRef.current)
     if (openTimerRef.current) { clearTimeout(openTimerRef.current); openTimerRef.current = undefined }
     setIsLeaving(false)
-    setHoveredDbg('shortcut')(true)
-  }, [setHoveredDbg])
+    setHovered(true)
+  }, [])
 
   useShortcut('file-find', handleShortcutOpen, items.length >= MIN_ITEMS && canScroll)
 
@@ -426,8 +209,6 @@ export function ScrollMinimap({ items, pocketMode = false, sessionKey }: ScrollM
   const OPEN_DELAY = 180
 
   const handleMouseEnter = (): void => {
-    // 调试：若真机触屏在此仍触发，说明 touchMode 判定失效——这是关键线索
-    if (MINIMAP_DEBUG) pushDebugLog(`mouseenter FIRED | touch=${touchMode}${touchMode ? ' →returned' : ' →OPEN_DELAY...'}`)
     // 触屏无 hover 语义（tap 会模拟 mouseenter），触屏/平板模式不在此展开，改由点击触发
     if (touchMode) return
     if (closeTimerRef.current) clearTimeout(closeTimerRef.current)
@@ -440,7 +221,7 @@ export function ScrollMinimap({ items, pocketMode = false, sessionKey }: ScrollM
     // 延迟打开：鼠标需在触发条上停留足够时间
     if (!openTimerRef.current) {
       openTimerRef.current = setTimeout(() => {
-        setHoveredDbg('mouseenter')(true)
+        setHovered(true)
         openTimerRef.current = undefined
       }, OPEN_DELAY)
     }
@@ -460,7 +241,7 @@ export function ScrollMinimap({ items, pocketMode = false, sessionKey }: ScrollM
     closeTimerRef.current = setTimeout(() => {
       setIsLeaving(true)
       fadeTimerRef.current = setTimeout(() => {
-        setHoveredDbg('mouseleave')(false)
+        setHovered(false)
         setIsLeaving(false)
       }, 80)
     }, 40)
@@ -470,18 +251,14 @@ export function ScrollMinimap({ items, pocketMode = false, sessionKey }: ScrollM
 
   const handleTriggerClick = React.useCallback((e: React.MouseEvent): void => {
     e.stopPropagation()
-    const delta = Date.now() - sessionKeyChangeAtRef.current
-    if (MINIMAP_DEBUG) {
-      pushDebugLog(`trigger-click raw (${Math.round(e.clientX)},${Math.round(e.clientY)}) Δ=${delta}ms${delta < 300 ? ' →IGNORED(ghost窗口内)' : ' →TOGGLE'}`)
-    }
     // 切会话/对话后的短暂窗口内忽略触发条点击，防触屏合成 click 的「幽灵点击」误展开
-    if (delta < 300) return
+    if (Date.now() - sessionKeyChangeAtRef.current < 300) return
     if (closeTimerRef.current) clearTimeout(closeTimerRef.current)
     if (fadeTimerRef.current) clearTimeout(fadeTimerRef.current)
     if (openTimerRef.current) { clearTimeout(openTimerRef.current); openTimerRef.current = undefined }
     setIsLeaving(false)
-    setHoveredDbg('trigger-click')((prev) => !prev)
-  }, [setHoveredDbg])
+    setHovered((prev) => !prev)
+  }, [])
 
   // ── 触屏点击面板外关闭 ──
 
@@ -491,7 +268,7 @@ export function ScrollMinimap({ items, pocketMode = false, sessionKey }: ScrollM
       const target = e.target as Node
       const inPanel = listRef.current?.closest('[data-minimap-panel]')?.contains(target) ?? false
       const inTrigger = triggerRef.current?.contains(target) ?? false
-      if (!inPanel && !inTrigger) setHoveredDbg('outside-click')(false)
+      if (!inPanel && !inTrigger) setHovered(false)
     }
     document.addEventListener('click', onDocClick)
     return () => document.removeEventListener('click', onDocClick)
@@ -504,16 +281,15 @@ export function ScrollMinimap({ items, pocketMode = false, sessionKey }: ScrollM
     lastSessionKeyRef.current = sessionKey
     // 防幽灵点击窗口必须在每次会话变化（含首次挂载）都武装：
     // 首次挂载 lastSessionKeyRef 初始等于 sessionKey，changed=false 提前 return 会漏掉武装，
-    // 导致切会话后任意触发条点击都直接 toggle（bug 来源候选）。
+    // 导致切会话后触发条被幽灵点击时直接 toggle 打开面板。
     sessionKeyChangeAtRef.current = Date.now()
-    if (MINIMAP_DEBUG) pushDebugLog(`session-key effect | changed=${changed} | sk=${sessionKey ?? '∅'} | ghostGuard=armed`)
     if (!changed) return
     if (closeTimerRef.current) clearTimeout(closeTimerRef.current)
     if (fadeTimerRef.current) clearTimeout(fadeTimerRef.current)
     if (openTimerRef.current) { clearTimeout(openTimerRef.current); openTimerRef.current = undefined }
     setIsLeaving(false)
-    setHoveredDbg('session-key')(false)
-  }, [sessionKey, setHoveredDbg])
+    setHovered(false)
+  }, [sessionKey])
 
   // ── 跳转到指定消息（直接操作 scrollTop，绕过 scrollIntoView） ──
 
@@ -538,8 +314,8 @@ export function ScrollMinimap({ items, pocketMode = false, sessionKey }: ScrollM
       : offsetTop - 32
     el.scrollTo({ top: Math.max(0, scrollTarget), behavior: 'smooth' })
 
-    setHoveredDbg('scroll-to-msg')(false)
-  }, [scrollRef, stopScroll, stickyState, setHoveredDbg])
+    setHovered(false)
+  }, [scrollRef, stopScroll, stickyState])
 
   // ── 搜索过滤 ──
 

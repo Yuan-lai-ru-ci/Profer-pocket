@@ -42,8 +42,8 @@ const VARIANTS = {
   release: {
     appId: 'com.profer.pocket',
     appName: 'Profer Pocket',
-    versionCode: '2',
-    versionName: '0.1.1',
+    versionCode: '3',
+    versionName: '0.1.2',
   },
 }
 const DEV_CFG = VARIANTS.dev
