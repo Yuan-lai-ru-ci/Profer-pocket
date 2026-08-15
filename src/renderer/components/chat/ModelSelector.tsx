@@ -108,6 +108,8 @@ interface ModelSelectorProps {
   compact?: boolean
   /** 当前调用运行时需要的协议；Pi/Chat 为 OpenAI，Claude Agent 为 Anthropic。 */
   preferredProtocol?: 'openai' | 'anthropic'
+  /** 打开 Dialog 时是否自动聚焦搜索框（默认 true）。平板触屏传 false，避免弹出软键盘遮挡选模型列表。 */
+  autoFocusSearch?: boolean
 }
 
 export function ModelSelector({
@@ -118,6 +120,7 @@ export function ModelSelector({
   showChannelInTrigger = false,
   compact: compactProp,
   preferredProtocol = 'openai',
+  autoFocusSearch = true,
 }: ModelSelectorProps = {}): React.ReactElement {
   const compactCtx = React.useContext(CompactModelSelectorCtx)
   const compact = compactProp ?? compactCtx
@@ -352,7 +355,7 @@ export function ModelSelector({
               onKeyDown={handleSearchKeyDown}
               placeholder="搜索模型..."
               className="flex-1 bg-transparent text-base outline-none placeholder:text-muted-foreground/50"
-              autoFocus
+              autoFocus={autoFocusSearch}
             />
           </div>
 

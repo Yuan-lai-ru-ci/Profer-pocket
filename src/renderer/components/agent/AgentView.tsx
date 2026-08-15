@@ -2638,6 +2638,7 @@ export function AgentView({ sessionId, pocketMode = false, hideAgentHeader = fal
           preferredProtocol={sessionAgentRuntime === 'pi' ? 'openai' : 'anthropic'}
           externalSelectedModel={externalSelectedModel}
           onModelSelect={handleModelSelect}
+          autoFocusSearch={!pocketMode}
         />
       ),
     },
