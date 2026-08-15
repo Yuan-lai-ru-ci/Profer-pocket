@@ -43,6 +43,10 @@ let capHostEl: HTMLElement | null = null
 let followBottom = true
 let copyResetTimer: ReturnType<typeof setTimeout> | null = null
 let observer: MutationObserver | null = null
+/** 心跳日志间隔（毫秒）：dev 版每 5s 自动打一条日志，便于真机直观验证 HUD 收流/计数/自动滚动 */
+const HEARTBEAT_INTERVAL_MS = 5000
+let heartbeatTimer: ReturnType<typeof setInterval> | null = null
+let heartbeatCount = 0
 
 /** 是否启用 HUD：本地 vite 联调（import.meta.env.DEV）或 dev 变体 APK（__POCKET_BUILD__） */
 function isHudEnabled(): boolean {
@@ -300,6 +304,15 @@ function installConsoleCapture(): void {
   console.error = (...args: unknown[]) => { origError(...args); pushLog('error', args) }
 }
 
+/** dev 版心跳：每 HEARTBEAT_INTERVAL_MS 自动 debugLog 一条，便于直观验证 HUD 收流/滚动/计数 */
+function startHeartbeat(): void {
+  if (heartbeatTimer) return
+  heartbeatTimer = setInterval(() => {
+    heartbeatCount += 1
+    debugLog(`心跳 #${heartbeatCount}`)
+  }, HEARTBEAT_INTERVAL_MS)
+}
+
 /**
  * 初始化调试日志 HUD。幂等：仅首次调用生效。
  * 非 dev 环境（release APK / import.meta.env.PROD）为空操作。
@@ -310,6 +323,7 @@ export function initDebugHud(): void {
   ensureDom()
   installConsoleCapture()
   startObserver()
+  startHeartbeat()
   // 视口尺寸变化（横竖屏切换/键盘弹出）时重算面板位置
   window.addEventListener('resize', () => { if (panelEl && panelEl.style.display !== 'none') positionPanel() })
 }
