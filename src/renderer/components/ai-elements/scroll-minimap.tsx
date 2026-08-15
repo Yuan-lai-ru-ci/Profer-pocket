@@ -41,6 +41,35 @@ const MIN_ITEMS = 1
 /** 迷你地图最多渲染的横杠数 */
 const MAX_BARS = 20
 
+// ── 调试埋点（排查「切会话仍弹消息导航」问题用；定位完成后整块删除） ──
+
+/** 置 false 即关闭全部调试输出与 HUD */
+const MINIMAP_DEBUG = true
+
+const debugLogs: string[] = []
+let debugHudEl: HTMLDivElement | null = null
+let debugHudEnabled = false
+
+/** 追加一行调试日志，并同步到右上角屏显 HUD（最近 12 条，用户无需 adb 即可读出） */
+function pushDebugLog(line: string): void {
+  if (!MINIMAP_DEBUG) return
+  debugLogs.push(`${new Date().toTimeString().slice(0, 8)} ${line}`)
+  if (debugLogs.length > 40) debugLogs.shift()
+  if (typeof document === 'undefined') return
+  try {
+    if (!debugHudEl) {
+      debugHudEl = document.createElement('div')
+      debugHudEl.style.cssText =
+        'position:fixed;top:56px;right:8px;z-index:99999;background:rgba(0,0,0,.85);' +
+        'color:#4ade80;padding:6px 8px;border-radius:8px;font:10px/1.5 monospace;' +
+        'max-width:74vw;max-height:44vh;overflow:auto;white-space:pre-wrap;pointer-events:none;text-align:left;'
+      document.body.appendChild(debugHudEl)
+    }
+    debugHudEnabled = true
+    debugHudEl.textContent = '── Minimap Debug ──\n' + debugLogs.slice(-12).join('\n')
+  } catch { /* 调试失败忽略 */ }
+}
+
 // ── Markdown 预览配置（轻量级，禁用重量级渲染） ──
 
 const PREVIEW_REMARK_PLUGINS = [remarkGfm]
@@ -102,6 +131,30 @@ export function ScrollMinimap({ items, pocketMode = false, sessionKey }: ScrollM
   const trackRef = React.useRef<HTMLDivElement>(null)
   const listRef = React.useRef<HTMLDivElement>(null)
   const triggerRef = React.useRef<HTMLDivElement>(null)
+  /** 调试：追踪 canScroll 变化，观察「切会话可滚动 false→true 首次渲染」时序 */
+  const canScrollRef = React.useRef(false)
+
+  // ── 调试：统一包装 setHovered，记录每次开/关的来源与上下文 ──
+
+  const setHoveredDbg = React.useCallback(
+    (source: string) => (next: boolean | ((prev: boolean) => boolean)): void => {
+      setHovered((prev) => {
+        const n = typeof next === 'function' ? (next as (prev: boolean) => boolean)(prev) : next
+        if (n !== prev) {
+          pushDebugLog(`hovered ${prev ? 'OPEN' : 'closed'}→${n ? 'OPEN' : 'closed'} via ${source} | touch=${touchMode} | sk=${sessionKey ?? '∅'} | Δ=${Date.now() - sessionKeyChangeAtRef.current}ms`)
+        }
+        return n
+      })
+    },
+    [touchMode, sessionKey],
+  )
+
+  // ── 调试：首挂载时输出环境判定（确认 touchMode 在真机上是否生效） ──
+
+  React.useEffect(() => {
+    pushDebugLog(`MOUNT | pocket=${pocketMode} | touchDetect=${isTouchDevice} | touchMode=${touchMode} | sk=${sessionKey ?? '∅'} | items=${items.length}`)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   // ── 组件卸载时清理计时器 ──
 
@@ -121,7 +174,12 @@ export function ScrollMinimap({ items, pocketMode = false, sessionKey }: ScrollM
 
     const update = (): void => {
       const { scrollTop, scrollHeight, clientHeight } = el
-      setCanScroll(scrollHeight > clientHeight + 10)
+      const nextCanScroll = scrollHeight > clientHeight + 10
+      if (nextCanScroll !== canScrollRef.current) {
+        canScrollRef.current = nextCanScroll
+        pushDebugLog(`canScroll→${nextCanScroll ? 'true' : 'false'} | scrollTop=${Math.round(scrollTop)} sh=${scrollHeight} ch=${clientHeight}`)
+      }
+      setCanScroll(nextCanScroll)
       setScrollMetrics({ scrollTop, scrollHeight, clientHeight })
       if (scrollHeight <= 0) return
 
@@ -197,8 +255,8 @@ export function ScrollMinimap({ items, pocketMode = false, sessionKey }: ScrollM
     if (fadeTimerRef.current) clearTimeout(fadeTimerRef.current)
     if (openTimerRef.current) { clearTimeout(openTimerRef.current); openTimerRef.current = undefined }
     setIsLeaving(false)
-    setHovered(true)
-  }, [])
+    setHoveredDbg('shortcut')(true)
+  }, [setHoveredDbg])
 
   useShortcut('file-find', handleShortcutOpen, items.length >= MIN_ITEMS && canScroll)
 
@@ -208,6 +266,8 @@ export function ScrollMinimap({ items, pocketMode = false, sessionKey }: ScrollM
   const OPEN_DELAY = 180
 
   const handleMouseEnter = (): void => {
+    // 调试：若真机触屏在此仍触发，说明 touchMode 判定失效——这是关键线索
+    if (MINIMAP_DEBUG) pushDebugLog(`mouseenter FIRED | touch=${touchMode}${touchMode ? ' →returned' : ' →OPEN_DELAY...'}`)
     // 触屏无 hover 语义（tap 会模拟 mouseenter），触屏/平板模式不在此展开，改由点击触发
     if (touchMode) return
     if (closeTimerRef.current) clearTimeout(closeTimerRef.current)
@@ -220,7 +280,7 @@ export function ScrollMinimap({ items, pocketMode = false, sessionKey }: ScrollM
     // 延迟打开：鼠标需在触发条上停留足够时间
     if (!openTimerRef.current) {
       openTimerRef.current = setTimeout(() => {
-        setHovered(true)
+        setHoveredDbg('mouseenter')(true)
         openTimerRef.current = undefined
       }, OPEN_DELAY)
     }
@@ -240,7 +300,7 @@ export function ScrollMinimap({ items, pocketMode = false, sessionKey }: ScrollM
     closeTimerRef.current = setTimeout(() => {
       setIsLeaving(true)
       fadeTimerRef.current = setTimeout(() => {
-        setHovered(false)
+        setHoveredDbg('mouseleave')(false)
         setIsLeaving(false)
       }, 80)
     }, 40)
@@ -250,14 +310,18 @@ export function ScrollMinimap({ items, pocketMode = false, sessionKey }: ScrollM
 
   const handleTriggerClick = React.useCallback((e: React.MouseEvent): void => {
     e.stopPropagation()
+    const delta = Date.now() - sessionKeyChangeAtRef.current
+    if (MINIMAP_DEBUG) {
+      pushDebugLog(`trigger-click raw (${Math.round(e.clientX)},${Math.round(e.clientY)}) Δ=${delta}ms${delta < 300 ? ' →IGNORED(ghost窗口内)' : ' →TOGGLE'}`)
+    }
     // 切会话/对话后的短暂窗口内忽略触发条点击，防触屏合成 click 的「幽灵点击」误展开
-    if (Date.now() - sessionKeyChangeAtRef.current < 300) return
+    if (delta < 300) return
     if (closeTimerRef.current) clearTimeout(closeTimerRef.current)
     if (fadeTimerRef.current) clearTimeout(fadeTimerRef.current)
     if (openTimerRef.current) { clearTimeout(openTimerRef.current); openTimerRef.current = undefined }
     setIsLeaving(false)
-    setHovered((prev) => !prev)
-  }, [])
+    setHoveredDbg('trigger-click')((prev) => !prev)
+  }, [setHoveredDbg])
 
   // ── 触屏点击面板外关闭 ──
 
@@ -267,7 +331,7 @@ export function ScrollMinimap({ items, pocketMode = false, sessionKey }: ScrollM
       const target = e.target as Node
       const inPanel = listRef.current?.closest('[data-minimap-panel]')?.contains(target) ?? false
       const inTrigger = triggerRef.current?.contains(target) ?? false
-      if (!inPanel && !inTrigger) setHovered(false)
+      if (!inPanel && !inTrigger) setHoveredDbg('outside-click')(false)
     }
     document.addEventListener('click', onDocClick)
     return () => document.removeEventListener('click', onDocClick)
@@ -278,14 +342,15 @@ export function ScrollMinimap({ items, pocketMode = false, sessionKey }: ScrollM
   React.useEffect(() => {
     const changed = lastSessionKeyRef.current !== sessionKey
     lastSessionKeyRef.current = sessionKey
+    if (MINIMAP_DEBUG) pushDebugLog(`session-key effect | changed=${changed} | sk=${sessionKey ?? '∅'} | Δ=${Date.now() - sessionKeyChangeAtRef.current}ms`)
     if (!changed) return
     sessionKeyChangeAtRef.current = Date.now()
     if (closeTimerRef.current) clearTimeout(closeTimerRef.current)
     if (fadeTimerRef.current) clearTimeout(fadeTimerRef.current)
     if (openTimerRef.current) { clearTimeout(openTimerRef.current); openTimerRef.current = undefined }
     setIsLeaving(false)
-    setHovered(false)
-  }, [sessionKey])
+    setHoveredDbg('session-key')(false)
+  }, [sessionKey, setHoveredDbg])
 
   // ── 跳转到指定消息（直接操作 scrollTop，绕过 scrollIntoView） ──
 
@@ -310,8 +375,8 @@ export function ScrollMinimap({ items, pocketMode = false, sessionKey }: ScrollM
       : offsetTop - 32
     el.scrollTo({ top: Math.max(0, scrollTarget), behavior: 'smooth' })
 
-    setHovered(false)
-  }, [scrollRef, stopScroll, stickyState])
+    setHoveredDbg('scroll-to-msg')(false)
+  }, [scrollRef, stopScroll, stickyState, setHoveredDbg])
 
   // ── 搜索过滤 ──
 
