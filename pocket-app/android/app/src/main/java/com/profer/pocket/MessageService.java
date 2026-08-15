@@ -170,6 +170,10 @@ public class MessageService extends Service implements MessageWebSocketClient.Li
         } catch (Exception e) {
             // 忽略
         }
+        if (wsClient != null) {
+            wsClient.addLog("保活锁状态: wakeLock=" + (wakeLock != null && wakeLock.isHeld())
+                    + " wifiLock=" + (wifiLock != null && wifiLock.isHeld()));
+        }
     }
 
     /** 释放后台保活锁（服务销毁时调用） */

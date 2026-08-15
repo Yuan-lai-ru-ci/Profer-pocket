@@ -78,6 +78,8 @@ public final class MessageWebSocketClient {
     /** 调试日志队列（前端 HUD 轮询拉取；上限 MAX_LOGS，超出丢弃最旧） */
     private final ConcurrentLinkedQueue<String> logs = new ConcurrentLinkedQueue<>();
     private static final int MAX_LOGS = 60;
+    /** 诊断：累计非 4001 断连/失败次数（含重连，反映后台连接稳定性） */
+    private volatile int disconnectCount = 0;
 
     public MessageWebSocketClient(Listener listener) {
         this.listener = listener;
@@ -205,7 +207,8 @@ public final class MessageWebSocketClient {
                 public void onClosed(WebSocket ws, int code, String reason) {
                     if (seq != connSeq) return;
                     connected = false;
-                    addLog("WS 断开 code=" + code + " reason=" + reason);
+                    disconnectCount++;
+                    addLog("WS 断开 code=" + code + " reason=" + reason + "（第 " + disconnectCount + " 次断连）");
                     // 置空当前 socket：心跳 tick 不再向已关闭连接发 ping，
                     // 也避免 4001 后前端立即重新 startService 时被幂等检查跳过
                     webSocket = null;
@@ -224,7 +227,8 @@ public final class MessageWebSocketClient {
                     if (seq != connSeq) return;
                     connected = false;
                     lastError = (t != null && t.getMessage() != null) ? t.getMessage() : ("失败: " + (response != null ? response.code() : "无响应"));
-                    addLog("WS 失败 " + lastError);
+                    disconnectCount++;
+                    addLog("WS 失败 " + lastError + "（第 " + disconnectCount + " 次断连）");
                     heartbeatHandler.removeCallbacksAndMessages(null);
                     if (!shouldReconnect) return;
                     if (listener != null) listener.onClosed();
