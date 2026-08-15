@@ -47,14 +47,22 @@ const MAX_BARS = 20
 const MINIMAP_DEBUG = true
 
 const debugLogs: string[] = []
+/** 常驻记录：所有 hovered→OPEN 事件（面板每次打开都留痕，不被日志轮转挤掉） */
+const debugOpenEvents: string[] = []
 let debugHudEl: HTMLDivElement | null = null
 let debugHudEnabled = false
 
-/** 追加一行调试日志，并同步到右上角屏显 HUD（最近 12 条，用户无需 adb 即可读出） */
+/** 追加一行调试日志，并同步到右上角屏显 HUD（OPEN 事件常驻置顶 + 最近 10 条） */
 function pushDebugLog(line: string): void {
   if (!MINIMAP_DEBUG) return
-  debugLogs.push(`${new Date().toTimeString().slice(0, 8)} ${line}`)
+  const stamped = `${new Date().toTimeString().slice(0, 8)} ${line}`
+  debugLogs.push(stamped)
   if (debugLogs.length > 40) debugLogs.shift()
+  // 面板打开（hovered→OPEN）事件单独常驻，避免被后续日志挤掉
+  if (line.includes('→OPEN')) {
+    debugOpenEvents.push(stamped)
+    if (debugOpenEvents.length > 20) debugOpenEvents.shift()
+  }
   if (typeof document === 'undefined') return
   try {
     if (!debugHudEl) {
@@ -66,7 +74,10 @@ function pushDebugLog(line: string): void {
       document.body.appendChild(debugHudEl)
     }
     debugHudEnabled = true
-    debugHudEl.textContent = '── Minimap Debug ──\n' + debugLogs.slice(-12).join('\n')
+    const openBlock = debugOpenEvents.length > 0
+      ? `◆ OPEN(${debugOpenEvents.length}):\n  ${debugOpenEvents.join('\n  ')}\n──\n`
+      : '◆ OPEN: 无\n──\n'
+    debugHudEl.textContent = '── Minimap Debug ──\n' + openBlock + debugLogs.slice(-10).join('\n')
   } catch { /* 调试失败忽略 */ }
 }
 
@@ -342,9 +353,12 @@ export function ScrollMinimap({ items, pocketMode = false, sessionKey }: ScrollM
   React.useEffect(() => {
     const changed = lastSessionKeyRef.current !== sessionKey
     lastSessionKeyRef.current = sessionKey
-    if (MINIMAP_DEBUG) pushDebugLog(`session-key effect | changed=${changed} | sk=${sessionKey ?? '∅'} | Δ=${Date.now() - sessionKeyChangeAtRef.current}ms`)
-    if (!changed) return
+    // 防幽灵点击窗口必须在每次会话变化（含首次挂载）都武装：
+    // 首次挂载 lastSessionKeyRef 初始等于 sessionKey，changed=false 提前 return 会漏掉武装，
+    // 导致切会话后任意触发条点击都直接 toggle（bug 来源候选）。
     sessionKeyChangeAtRef.current = Date.now()
+    if (MINIMAP_DEBUG) pushDebugLog(`session-key effect | changed=${changed} | sk=${sessionKey ?? '∅'} | ghostGuard=armed`)
+    if (!changed) return
     if (closeTimerRef.current) clearTimeout(closeTimerRef.current)
     if (fadeTimerRef.current) clearTimeout(fadeTimerRef.current)
     if (openTimerRef.current) { clearTimeout(openTimerRef.current); openTimerRef.current = undefined }

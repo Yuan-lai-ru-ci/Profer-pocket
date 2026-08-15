@@ -36,8 +36,8 @@ const VARIANTS = {
   dev: {
     appId: 'com.profer.pocket.dev',
     appName: 'Profer Pocket（开发版）',
-    versionCode: '12',
-    versionName: '0.1.3-dev',
+    versionCode: '13',
+    versionName: '0.1.4-dev',
   },
   release: {
     appId: 'com.profer.pocket',
