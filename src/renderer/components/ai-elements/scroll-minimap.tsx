@@ -158,11 +158,12 @@ export function ScrollMinimap({ items, pocketMode = false, sessionKey }: ScrollM
   // ── 面板打开时自动聚焦搜索框 ──
 
   React.useEffect(() => {
-    if (hovered && searchInputRef.current) {
+    if (!hovered || touchMode) return
+    if (searchInputRef.current) {
       const timer = setTimeout(() => searchInputRef.current?.focus(), 80)
       return () => clearTimeout(timer)
     }
-  }, [hovered])
+  }, [hovered, touchMode])
 
   // ── 面板打开时把当前可见消息滚到列表中间，避免每次都从顶部开始 ──
 
@@ -278,8 +279,11 @@ export function ScrollMinimap({ items, pocketMode = false, sessionKey }: ScrollM
   React.useEffect(() => {
     const changed = lastSessionKeyRef.current !== sessionKey
     lastSessionKeyRef.current = sessionKey
-    if (!changed) return
+    // 防幽灵点击窗口必须在每次会话变化（含首次挂载）都武装：
+    // 首次挂载 lastSessionKeyRef 初始等于 sessionKey，changed=false 提前 return 会漏掉武装，
+    // 导致切会话后触发条被幽灵点击时直接 toggle 打开面板。
     sessionKeyChangeAtRef.current = Date.now()
+    if (!changed) return
     if (closeTimerRef.current) clearTimeout(closeTimerRef.current)
     if (fadeTimerRef.current) clearTimeout(fadeTimerRef.current)
     if (openTimerRef.current) { clearTimeout(openTimerRef.current); openTimerRef.current = undefined }
