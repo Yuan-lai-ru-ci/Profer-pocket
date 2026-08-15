@@ -33,5 +33,16 @@ export default defineConfig({
     port: 5175,
     strictPort: true,
     open: false,
+    // 开发联调：浏览器把 http://127.0.0.1 视为安全上下文，页面直连 ws:// 电脑端 7788
+    // 会被混合内容策略拦截（官方安卓版靠 Capacitor cleartext 放行，浏览器无此豁免）。
+    // 加 /ws 代理：平板连同源 ws://127.0.0.1:5175/ws，vite 转发到电脑端 remote-service，
+    // 绕开混合内容限制。联调时服务器地址留空（自动同源），token 正常填。
+    proxy: {
+      '/ws': {
+        target: 'http://127.0.0.1:7788',
+        ws: true,
+        changeOrigin: true,
+      },
+    },
   },
 })
