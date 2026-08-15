@@ -5,6 +5,7 @@
  *  - pocketConnectionStatusAtom：连接状态（App 内 setConnection 同步写入，供「连接」tab 展示）
  *  - pocketUnbindRequestAtom：解绑请求计数（设置页点击解绑后 +1，App 监听执行 unbind）
  *  - pocketNotifyCompleteAtom：Agent 完成提醒音开关（localStorage 持久化，Web Audio 播放）
+ *  - pocketScreenOrientationAtom：屏幕方向（localStorage 持久化，Capacitor 原生插件应用）
  */
 
 import { atom } from 'jotai'
@@ -25,3 +26,9 @@ export const pocketUnbindRequestAtom = atom(0)
 
 /** Agent 回合完成提醒音开关（默认关） */
 export const pocketNotifyCompleteAtom = atomWithStorage<boolean>('profer-remote-notify-complete', false)
+
+/** 屏幕方向：跟随系统旋转（auto）/ 固定横屏（landscape）/ 固定竖屏（portrait） */
+export type PocketScreenOrientation = 'auto' | 'landscape' | 'portrait'
+
+/** 屏幕方向（默认跟随系统旋转；localStorage 持久化，重启保持） */
+export const pocketScreenOrientationAtom = atomWithStorage<PocketScreenOrientation>('profer-pocket-screen-orientation', 'auto')

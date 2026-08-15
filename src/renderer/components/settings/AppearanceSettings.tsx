@@ -40,6 +40,8 @@ import {
   UI_SCALE_OPTIONS,
 } from '@/atoms/ui-scale'
 import { previewModePreferenceAtom, type PreviewModePreference } from '@/atoms/preview-atoms'
+import { pocketScreenOrientationAtom, type PocketScreenOrientation } from '@/atoms/pocket-settings'
+import { applyPocketScreenOrientation } from '@/lib/pocket-screen-orientation'
 import { cn } from '@/lib/utils'
 import { SkinManager } from './SkinManager'
 import { detectIsWindows } from '@/lib/platform'
@@ -79,6 +81,13 @@ const MARKDOWN_FONT_SIZE_OPTIONS = [
 const PREVIEW_MODE_OPTIONS: { value: PreviewModePreference; label: string }[] = [
   { value: 'tab', label: '标签页' },
   { value: 'split', label: '侧边分屏' },
+]
+
+/** 屏幕方向选项（平板端） */
+const SCREEN_ORIENTATION_OPTIONS: { value: PocketScreenOrientation; label: string }[] = [
+  { value: 'auto', label: '跟随系统' },
+  { value: 'landscape', label: '固定横屏' },
+  { value: 'portrait', label: '固定竖屏' },
 ]
 
 
@@ -130,6 +139,7 @@ export function AppearanceSettings({ pocketMode = false }: { pocketMode?: boolea
   const isElectron = React.useMemo(() => navigator.userAgent.includes('Electron'), [])
   const [uiScale, setUiScale] = useAtom(uiScaleAtom)
   const [previewModePref, setPreviewModePref] = useAtom(previewModePreferenceAtom)
+  const [screenOrientation, setScreenOrientation] = useAtom(pocketScreenOrientationAtom)
   // 平板端裁剪到 100%～150%（175%/200% 过度放大，触屏设备无意义）
   const scaleOptions = React.useMemo(
     () => (pocketMode ? UI_SCALE_OPTIONS.filter((o) => o.value !== 'massive' && o.value !== 'max') : UI_SCALE_OPTIONS),
@@ -192,6 +202,13 @@ export function AppearanceSettings({ pocketMode = false }: { pocketMode?: boolea
     updateUiScale(scale)
   }, [setUiScale])
 
+  /** 切换屏幕方向（仅平板）：更新本地状态并立即应用原生插件 */
+  const handleScreenOrientationChange = React.useCallback((value: string) => {
+    const orientation = value as PocketScreenOrientation
+    setScreenOrientation(orientation)
+    void applyPocketScreenOrientation(orientation)
+  }, [setScreenOrientation])
+
   return (
     <div className="space-y-6">
       <SettingsSection
@@ -220,6 +237,16 @@ export function AppearanceSettings({ pocketMode = false }: { pocketMode?: boolea
               value={uiScale}
               onValueChange={handleUiScaleChange}
               options={scaleOptions}
+            />
+          )}
+
+          {pocketMode && (
+            <SettingsSegmentedControl
+              label="屏幕方向"
+              description="锁定屏幕方向，旋转设备时不再自动切换"
+              value={screenOrientation}
+              onValueChange={handleScreenOrientationChange}
+              options={SCREEN_ORIENTATION_OPTIONS}
             />
           )}
 
