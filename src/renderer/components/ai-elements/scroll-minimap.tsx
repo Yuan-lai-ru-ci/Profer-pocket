@@ -371,13 +371,16 @@ export function ScrollMinimap({ items, pocketMode = false, sessionKey }: ScrollM
   }, [scrollRef])
 
   // ── 面板打开时自动聚焦搜索框 ──
+  // 触屏/平板模式跳过自动聚焦：聚焦 input 会弹出系统触摸键盘，打开导航面板时很碍事；
+  // 需要搜索时用户手动点搜索框即可。
 
   React.useEffect(() => {
-    if (hovered && searchInputRef.current) {
+    if (!hovered || touchMode) return
+    if (searchInputRef.current) {
       const timer = setTimeout(() => searchInputRef.current?.focus(), 80)
       return () => clearTimeout(timer)
     }
-  }, [hovered])
+  }, [hovered, touchMode])
 
   // ── 面板打开时把当前可见消息滚到列表中间，避免每次都从顶部开始 ──
 

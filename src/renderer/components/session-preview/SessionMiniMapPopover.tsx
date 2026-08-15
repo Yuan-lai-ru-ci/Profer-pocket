@@ -61,7 +61,8 @@ const TOUCH_ONLY_MEDIA = '(hover: none)'
 const TOUCH_MOVE_TOLERANCE = 12
 
 const isTouchOnly = (): boolean =>
-  typeof window !== 'undefined' && window.matchMedia?.(TOUCH_ONLY_MEDIA)?.matches === true
+  typeof window !== 'undefined' &&
+  (window.matchMedia?.(TOUCH_ONLY_MEDIA)?.matches === true || 'ontouchstart' in window)
 
 interface SessionMiniMapPopoverProps {
   target: SessionMiniMapTarget
@@ -95,6 +96,10 @@ export function useSessionMiniMapHover(delayMs = 600, disabled = false): UseSess
   const anchorRef = React.useRef<HTMLElement | null>(null)
   const [isOpen, setIsOpen] = React.useState(false)
   const [isLeaving, setIsLeaving] = React.useState(false)
+  // Pocket 客户端（main.tsx 会给 body 加 pocket-mode 类）：手机/平板纯触屏无 hover 语义，
+  // 会话悬浮预览整体禁用（hover 与长按都不触发），避免切会话/误触弹出「消息导航」样式的预览面板
+  const isPocketClient = typeof document !== 'undefined' && !!document.body?.classList.contains('pocket-mode')
+  const effDisabled = disabled || isPocketClient
   const enterTimerRef = React.useRef<ReturnType<typeof setTimeout>>()
   const leaveTimerRef = React.useRef<ReturnType<typeof setTimeout>>()
   const fadeTimerRef = React.useRef<ReturnType<typeof setTimeout>>()
@@ -120,14 +125,14 @@ export function useSessionMiniMapHover(delayMs = 600, disabled = false): UseSess
   }, [])
 
   React.useEffect(() => {
-    if (!disabled) return
+    if (!effDisabled) return
     if (enterTimerRef.current) clearTimeout(enterTimerRef.current)
     if (leaveTimerRef.current) clearTimeout(leaveTimerRef.current)
     if (fadeTimerRef.current) clearTimeout(fadeTimerRef.current)
     if (longPressTimerRef.current) clearTimeout(longPressTimerRef.current)
     setIsOpen(false)
     setIsLeaving(false)
-  }, [disabled])
+  }, [effDisabled])
 
   const setAnchorRef = React.useCallback((node: HTMLElement | null): void => {
     anchorRef.current = node
@@ -135,7 +140,7 @@ export function useSessionMiniMapHover(delayMs = 600, disabled = false): UseSess
 
   // 触屏上忽略合成 mouseenter（纯触屏只能长按触发预览，避免轻触/滑动时预览误弹出）
   const handleMouseEnter = React.useCallback((): void => {
-    if (disabled) return
+    if (effDisabled) return
     if (touchOnlyRef.current) return
     if (leaveTimerRef.current) clearTimeout(leaveTimerRef.current)
     if (fadeTimerRef.current) clearTimeout(fadeTimerRef.current)
@@ -143,7 +148,7 @@ export function useSessionMiniMapHover(delayMs = 600, disabled = false): UseSess
     if (isOpen) return
     if (enterTimerRef.current) clearTimeout(enterTimerRef.current)
     enterTimerRef.current = setTimeout(() => setIsOpen(true), delayMs)
-  }, [delayMs, disabled, isOpen])
+  }, [delayMs, effDisabled, isOpen])
 
   const closeWithDelay = React.useCallback((): void => {
     if (enterTimerRef.current) clearTimeout(enterTimerRef.current)
@@ -187,7 +192,7 @@ export function useSessionMiniMapHover(delayMs = 600, disabled = false): UseSess
   }, [])
 
   const handleTouchStart = React.useCallback((e: React.TouchEvent): void => {
-    if (disabled) return
+    if (effDisabled) return
     // 触摸任意列表项：若已有预览打开，先关闭（新的长按 600ms 后才打开新预览）
     if (isOpen) {
       setIsOpen(false)
@@ -207,7 +212,7 @@ export function useSessionMiniMapHover(delayMs = 600, disabled = false): UseSess
       setIsOpen(true)
       armOutsideClose()
     }, delayMs)
-  }, [disabled, delayMs, isOpen, armOutsideClose])
+  }, [effDisabled, delayMs, isOpen, armOutsideClose])
 
   const handleTouchMove = React.useCallback((e: React.TouchEvent): void => {
     // 长按未触发时位移超阈值视为滚动，取消长按；长按已触发（预览已开）时位移也视为取消（手指滑动离开）
