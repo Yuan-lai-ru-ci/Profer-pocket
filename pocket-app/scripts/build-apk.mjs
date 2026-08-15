@@ -37,14 +37,14 @@ const VARIANTS = {
   dev: {
     appId: 'com.profer.pocket.dev',
     appName: 'Profer Pocket（开发版）',
-    versionCode: '16',
-    versionName: '0.1.7-dev',
+    versionCode: '17',
+    versionName: '0.1.8-dev',
   },
   release: {
     appId: 'com.profer.pocket',
     appName: 'Profer Pocket',
-    versionCode: '3',
-    versionName: '0.1.2',
+    versionCode: '4',
+    versionName: '0.1.3',
   },
 }
 const DEV_CFG = VARIANTS.dev
