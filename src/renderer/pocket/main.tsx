@@ -36,7 +36,7 @@ import { agentSessionsAtom, agentWorkspacesAtom, currentAgentSessionIdAtom, curr
 import { appModeAtom } from '@/atoms/app-mode'
 import { initPocketUiScale } from '@/atoms/ui-scale'
 import { initPocketScreenOrientation } from '@/lib/pocket-screen-orientation'
-import { getPocketPendingNotification, normalizeWsUrl, setPocketKeepaliveForeground, startPocketKeepalive, stopPocketKeepalive } from '@/lib/pocket-keepalive'
+import { getPocketPendingNotification, normalizeWsUrl, setPocketKeepaliveForeground, startPocketKeepalive, stopPocketKeepalive, getPocketKeepaliveLogs } from '@/lib/pocket-keepalive'
 import { initDebugHud, debugLog } from '@/lib/debug-hud'
 import { UiScaleContainer } from '@/components/UiScaleContainer'
 import { Button } from '@/components/ui/button'
@@ -918,6 +918,16 @@ function NativePocketSidebar({ mobileOpen, onDismiss }: { mobileOpen: boolean; o
 // ===== 调试日志 HUD（dev 版标配；release 不注入标记 → 空操作）=====
 initDebugHud()
 debugLog('Pocket UI 已启动，调试 HUD 就绪')
+
+// 原生后台消息通道日志 → 调试 HUD：轮询拉取原生 WS 日志喂给 debugLog（仅 dev 变体/联调生效）
+if (import.meta.env.DEV || (window as unknown as { __POCKET_BUILD__?: string }).__POCKET_BUILD__ === 'dev') {
+  setInterval(async () => {
+    try {
+      const logs = await getPocketKeepaliveLogs()
+      if (logs && logs.length > 0) logs.forEach((l) => debugLog('[原生]', l))
+    } catch { /* ignore */ }
+  }, 2000)
+}
 
 // ===== 挂载 =====
 ReactDOM.createRoot(document.getElementById('root')!).render(

@@ -74,6 +74,15 @@ public class PocketMessengerPlugin extends Plugin {
         call.resolve(ret);
     }
 
+    /** 调试：取出并清空原生 WS 日志（前端 HUD 轮询调用，取走即清空） */
+    @PluginMethod
+    public void getLogs(PluginCall call) {
+        java.util.List<String> logs = MessageService.takeLogs();
+        JSObject ret = new JSObject();
+        ret.put("logs", logs);
+        call.resolve(ret);
+    }
+
     @PluginMethod
     public void requestPermissions(PluginCall call) {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {

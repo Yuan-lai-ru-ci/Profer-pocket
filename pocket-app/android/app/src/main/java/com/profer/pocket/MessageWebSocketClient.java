@@ -7,8 +7,11 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.net.URLEncoder;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.TimeUnit;
 
 import okhttp3.OkHttpClient;
@@ -72,6 +75,9 @@ public final class MessageWebSocketClient {
     private volatile int agentEventCount = 0;
     /** 诊断：最近一次连接失败原因（onFailure 记录） */
     private volatile String lastError = null;
+    /** 调试日志队列（前端 HUD 轮询拉取；上限 MAX_LOGS，超出丢弃最旧） */
+    private final ConcurrentLinkedQueue<String> logs = new ConcurrentLinkedQueue<>();
+    private static final int MAX_LOGS = 60;
 
     public MessageWebSocketClient(Listener listener) {
         this.listener = listener;
@@ -142,12 +148,28 @@ public final class MessageWebSocketClient {
         return lastError;
     }
 
+    /** 记录一条调试日志（带时间戳，供前端 HUD 展示） */
+    public void addLog(String msg) {
+        java.text.SimpleDateFormat sdf = new java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.getDefault());
+        logs.add(sdf.format(new java.util.Date()) + " " + msg);
+        while (logs.size() > MAX_LOGS) logs.poll();
+    }
+
+    /** 取出并清空日志队列（前端轮询调用） */
+    public List<String> takeLogs() {
+        List<String> out = new ArrayList<>();
+        String s;
+        while ((s = logs.poll()) != null) out.add(s);
+        return out;
+    }
+
     private void openSocketLocked() {
         final int seq = ++connSeq;
         reconnectScheduledFor = -1;
         try {
             String wsUrl = url + (url.contains("?") ? "&" : "?")
                     + "token=" + encodeQuery(token);
+            addLog("发起连接 " + url);
             Request request = new Request.Builder().url(wsUrl).build();
             WebSocket ws = httpClient.newWebSocket(request, new WebSocketListener() {
                 @Override
@@ -159,6 +181,7 @@ public final class MessageWebSocketClient {
                     lastInboundAt = System.currentTimeMillis();
                     connected = true;
                     lastError = null;
+                    addLog("WS 已连接");
                     scheduleHeartbeat();
                     sendListSessions();
                     if (listener != null) listener.onOpen();
@@ -182,6 +205,7 @@ public final class MessageWebSocketClient {
                 public void onClosed(WebSocket ws, int code, String reason) {
                     if (seq != connSeq) return;
                     connected = false;
+                    addLog("WS 断开 code=" + code + " reason=" + reason);
                     // 置空当前 socket：心跳 tick 不再向已关闭连接发 ping，
                     // 也避免 4001 后前端立即重新 startService 时被幂等检查跳过
                     webSocket = null;
@@ -200,6 +224,7 @@ public final class MessageWebSocketClient {
                     if (seq != connSeq) return;
                     connected = false;
                     lastError = (t != null && t.getMessage() != null) ? t.getMessage() : ("失败: " + (response != null ? response.code() : "无响应"));
+                    addLog("WS 失败 " + lastError);
                     heartbeatHandler.removeCallbacksAndMessages(null);
                     if (!shouldReconnect) return;
                     if (listener != null) listener.onClosed();
@@ -252,6 +277,7 @@ public final class MessageWebSocketClient {
         // 假死检测：超过 75s 未收到任何入站帧（含 pong），判定半开连接，主动断开触发重连
         if (System.currentTimeMillis() - lastInboundAt > DEAD_THRESHOLD_MS) {
             final int seq = this.connSeq;
+            addLog("假死检测：75s 无入站，主动断开重连");
             closeQuietly(ws, 1001, "ws dead");
             // close+cancel 可能双回调，scheduleReconnect 内部按 seq 去重
             scheduleReconnect(seq);
@@ -272,6 +298,7 @@ public final class MessageWebSocketClient {
                 case "agent_event": {
                     agentEventCount++;
                     String sessionId = json.optString("sessionId", null);
+                    addLog("收到 agent_event session=" + sessionId);
                     JSONObject payload = json.optJSONObject("payload");
                     if (sessionId != null && payload != null && listener != null) {
                         listener.onAgentEvent(sessionId, payload);

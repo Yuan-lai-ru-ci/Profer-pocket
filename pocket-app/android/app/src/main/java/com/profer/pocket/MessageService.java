@@ -8,6 +8,9 @@ import android.os.IBinder;
 
 import org.json.JSONObject;
 
+import java.util.ArrayList;
+import java.util.List;
+
 /**
  * 前台消息服务：常驻通知 + okhttp WS 消息通道
  *
@@ -72,6 +75,13 @@ public class MessageService extends Service implements MessageWebSocketClient.Li
         pendingSessionId = null;
         pendingType = null;
         return result;
+    }
+
+    /** 取出并清空 WS 调试日志（前端 HUD 轮询调用） */
+    public static List<String> takeLogs() {
+        MessageService svc = instance;
+        if (svc == null || svc.wsClient == null) return new ArrayList<>();
+        return svc.wsClient.takeLogs();
     }
 
     /** 诊断信息：服务是否运行 + WS 连接状态 + 收到事件数 + 最近错误 + 前台状态（排查用） */
@@ -144,10 +154,17 @@ public class MessageService extends Service implements MessageWebSocketClient.Li
     @Override
     public void onAgentEvent(String sessionId, JSONObject payload) {
         // 前台时 WebView 全量渲染，原生抑制通知（去重关键）
-        if (isForeground()) return;
+        if (isForeground()) {
+            wsClient.addLog("前台状态，抑制系统通知");
+            return;
+        }
         MessageEventParser.NotifyInfo info =
                 MessageEventParser.parse(sessionId, payload, wsClient.getSessionTitles());
-        if (info == null) return; // 无需提醒（解析失败/未知类型/用户主动停止）
+        if (info == null) {
+            wsClient.addLog("事件无需提醒（未知/解析失败/用户主动停止）");
+            return;
+        }
+        wsClient.addLog("发出系统通知: " + info.title);
         NotificationHelper.notifyMessage(this, info.title, info.body, sessionId, info.type);
     }
 

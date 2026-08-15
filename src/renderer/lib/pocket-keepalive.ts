@@ -23,6 +23,7 @@ type PocketCapacitorGlobal = {
         getPendingNotification?: () => Promise<{ sessionId?: string; type?: string }>
         requestPermissions?: () => Promise<{ granted: boolean }>
         getStatus?: () => Promise<{ diagnostic?: string }>
+        getLogs?: () => Promise<{ logs?: string[] }>
       }
     }
   }
@@ -120,6 +121,19 @@ export async function getPocketKeepaliveStatus(): Promise<string | null> {
     return typeof res?.diagnostic === 'string' ? res.diagnostic : null
   } catch (e) {
     console.warn('[Pocket Keepalive] 读取诊断失败', e)
+    return null
+  }
+}
+
+/** 取出并清空原生 WS 调试日志（HUD 轮询调用）；非原生/调用失败返回 null */
+export async function getPocketKeepaliveLogs(): Promise<string[] | null> {
+  if (!isNativeCapacitor()) return null
+  const cap = (window as unknown as PocketCapacitorGlobal).Capacitor
+  try {
+    const res = await cap?.Plugins?.PocketMessenger?.getLogs?.()
+    return Array.isArray(res?.logs) ? res.logs : null
+  } catch (e) {
+    console.warn('[Pocket Keepalive] 读取日志失败', e)
     return null
   }
 }
