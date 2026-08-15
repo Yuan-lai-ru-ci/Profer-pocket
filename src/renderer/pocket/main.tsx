@@ -35,6 +35,7 @@ import { channelsAtom, channelsLoadedAtom, conversationsAtom, currentConversatio
 import { agentSessionsAtom, agentWorkspacesAtom, currentAgentSessionIdAtom, currentAgentWorkspaceIdAtom, agentChannelIdAtom, agentModelIdAtom, agentChannelIdsAtom, agentStreamingStatesAtom, agentMessageRefreshAtom } from '@/atoms/agent-atoms'
 import { appModeAtom } from '@/atoms/app-mode'
 import { initPocketUiScale } from '@/atoms/ui-scale'
+import { initPocketScreenOrientation } from '@/lib/pocket-screen-orientation'
 import { UiScaleContainer } from '@/components/UiScaleContainer'
 import { Button } from '@/components/ui/button'
 import { AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogFooter, AlertDialogTitle, AlertDialogDescription, AlertDialogAction, AlertDialogCancel } from '@/components/ui/alert-dialog'
@@ -114,6 +115,9 @@ const pocketStore = createStore()
 // 平板默认略微放大 UI（触屏友好）：无本地缓存时取 110%，已有用户选择则保持。
 // 必须在渲染前写入 pocketStore 的 uiScaleAtom（atom 默认值在模块加载时已固定）
 initPocketUiScale(pocketStore)
+
+// 屏幕方向：启动时读取持久化初始值并应用到原生层（重启保持；浏览器环境安全降级）
+initPocketScreenOrientation(pocketStore)
 
 // ===== 平板设置系统：直接搬运桌面 SettingsDialog，tab 白名单只保留平板可用的「连接 / 外观 / 通知」=====
 // （连接/通知为本设备本地能力：localStorage + WS 状态，不依赖 Electron IPC；外观全部本地持久化。
