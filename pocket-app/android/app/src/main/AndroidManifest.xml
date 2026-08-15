@@ -50,4 +50,7 @@
     <!-- 前台服务权限 + dataSync 类型（Android 14+ 强制要求声明） -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <!-- 后台保活锁：PARTIAL_WAKE_LOCK 防熄屏 Doze 挂起 CPU/网络，WifiLock 防 Wi-Fi 休眠断连 -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
 </manifest>

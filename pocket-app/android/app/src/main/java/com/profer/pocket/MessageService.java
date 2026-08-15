@@ -3,8 +3,10 @@ package com.profer.pocket;
 import android.app.Service;
 import android.content.Context;
 import android.content.Intent;
+import android.net.wifi.WifiManager;
 import android.os.Build;
 import android.os.IBinder;
+import android.os.PowerManager;
 
 import org.json.JSONObject;
 
@@ -36,6 +38,9 @@ public class MessageService extends Service implements MessageWebSocketClient.Li
     private static final java.util.Map<String, Long> lastCompleteNotifyAt = new java.util.concurrent.ConcurrentHashMap<>();
 
     private MessageWebSocketClient wsClient;
+    /** 后台保活锁：PARTIAL_WAKE_LOCK 防 Doze 挂起 CPU/网络，WifiLock 防 Wi-Fi 休眠断连 */
+    private PowerManager.WakeLock wakeLock;
+    private WifiManager.WifiLock wifiLock;
 
     /** 启动前台服务（App 在前台时调用，满足 Android 8+ 后台启动限制） */
     public static void start(Context ctx, String url, String token) {
@@ -127,6 +132,8 @@ public class MessageService extends Service implements MessageWebSocketClient.Li
         } catch (Exception e) {
             // 极端情况（如 ForegroundServiceStartNotAllowedException）：保活优先，不崩溃
         }
+        // 持有后台保活锁：防熄屏 Doze 挂起 CPU/网络、Wi-Fi 休眠，尽量保持后台 WS 连接不断
+        acquireKeepAliveLocks();
 
         if (url != null && token != null) {
             wsClient.connect(url, token);
@@ -136,10 +143,45 @@ public class MessageService extends Service implements MessageWebSocketClient.Li
 
     @Override
     public void onDestroy() {
+        releaseKeepAliveLocks();
         if (wsClient != null) wsClient.shutdown();
         NotificationHelper.cancelKeepalive(this);
         instance = null;
         super.onDestroy();
+    }
+
+    /** 获取后台保活锁（服务启动时调用）：PARTIAL_WAKE_LOCK + WifiLock，任何一项失败都不阻断服务 */
+    private void acquireKeepAliveLocks() {
+        try {
+            PowerManager pm = (PowerManager) getSystemService(POWER_SERVICE);
+            if (pm != null && wakeLock == null) {
+                wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "profer:message-ws");
+                wakeLock.acquire();
+            }
+        } catch (Exception e) {
+            // 忽略：锁获取失败不阻断消息通道
+        }
+        try {
+            WifiManager wm = (WifiManager) getApplicationContext().getSystemService(WIFI_SERVICE);
+            if (wm != null && wifiLock == null) {
+                wifiLock = wm.createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF, "profer:message-ws");
+                wifiLock.acquire();
+            }
+        } catch (Exception e) {
+            // 忽略
+        }
+    }
+
+    /** 释放后台保活锁（服务销毁时调用） */
+    private void releaseKeepAliveLocks() {
+        if (wakeLock != null && wakeLock.isHeld()) {
+            try { wakeLock.release(); } catch (Exception e) { /* 忽略 */ }
+        }
+        wakeLock = null;
+        if (wifiLock != null && wifiLock.isHeld()) {
+            try { wifiLock.release(); } catch (Exception e) { /* 忽略 */ }
+        }
+        wifiLock = null;
     }
 
     @Override
