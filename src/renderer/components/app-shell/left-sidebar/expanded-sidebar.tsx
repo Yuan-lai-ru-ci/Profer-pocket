@@ -22,7 +22,7 @@ export function ExpandedSidebar({ s }: { s: SidebarModel }): React.ReactElement 
   const {
     isMac,
     setSidebarCollapsed,
-    tabletMode,
+    pocketMode,
     isClassic,
     mode,
     handleNewAgentSession,
@@ -120,7 +120,7 @@ export function ExpandedSidebar({ s }: { s: SidebarModel }): React.ReactElement 
                 onClick={() => setSidebarCollapsed(true)}
                 className={cn(
                   'sidebar-collapse-button mt-2 size-10 flex-shrink-0 flex items-center justify-center rounded-[10px] text-foreground/40 titlebar-no-drag',
-                  tabletMode && 'ml-auto',
+                  pocketMode && 'ml-auto',
                   isClassic
                     ? 'bg-muted hover:bg-foreground/[0.08] hover:text-foreground/60 transition-colors'
                     : 'bg-primary/5 hover:bg-primary/10 hover:text-foreground/60 transition-[background-color,border-color,color] duration-150 border border-border/60 hover:border-border'
@@ -157,7 +157,7 @@ export function ExpandedSidebar({ s }: { s: SidebarModel }): React.ReactElement 
       </div>
 
       {/* 自动任务入口：作为任务中心入口放在置顶区上方，不参与置顶列表层级。平板版隐藏（无规划中心能力） */}
-      {!tabletMode && (
+      {!pocketMode && (
         <div className="px-3 pt-2 pb-0.5">
           <AutomationSidebarEntry
             count={automationCount}
@@ -168,7 +168,7 @@ export function ExpandedSidebar({ s }: { s: SidebarModel }): React.ReactElement 
       )}
 
       {/* Agent 技能入口：Skills / MCP 能力中心，仅 Agent 模式可见；平板版隐藏 */}
-      {mode === 'agent' && !tabletMode && (
+      {mode === 'agent' && !pocketMode && (
         <div className="px-3 pb-0.5">
           <SkillsSidebarEntry
             count={capabilities?.skills.length ?? 0}
@@ -345,7 +345,7 @@ export function ExpandedSidebar({ s }: { s: SidebarModel }): React.ReactElement 
                 </TooltipContent>
               </Tooltip>
               {/* 平板版暂时隐藏团队版功能：不展示“加入团队工作区”入口 */}
-              {authStatus.isLoggedIn && accountCaps.membershipTier !== 'free' && !tabletMode && (
+              {authStatus.isLoggedIn && accountCaps.membershipTier !== 'free' && !pocketMode && (
                 <Tooltip>
                   <TooltipTrigger asChild>
                     <button

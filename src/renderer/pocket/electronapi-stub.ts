@@ -4,7 +4,7 @@
  * 分层职责：
  * 1. 事件桥：onAgentStreamEvent 等 IPC 事件注册器 → WS agent_event 分发。
  *    桌面渲染层（useGlobalAgentListeners / AgentView / LeftSidebar 依赖树）只感知
- *    electronAPI 形状；平板通过 emitTabletAgentStreamEvent() 把 WS 事件喂回注册器，
+ *    electronAPI 形状；平板通过 emitPocketAgentStreamEvent() 把 WS 事件喂回注册器，
  *    使桌面组件的事件处理逻辑 100% 复用（与桌面 IPC AgentStreamEvent 同形状）。
  * 2. 命令映射：AgentView / LeftSidebar 用到的 IPC 命令 → WS 远程命令。
  * 3. 降级层：平板无意义的桌面能力（本地文件对话框 / 知识库 / 进程面板 / 分叉回退）→
@@ -15,7 +15,7 @@ import type { AgentStreamEvent, AgentStreamCompletePayload, StreamChunkEvent, St
 import { CHAT_IPC_CHANNELS, BUILTIN_DEFAULT_ID, BUILTIN_DEFAULT_PROMPT } from '@profer/shared'
 
 /** WsClient 满足的最小远程命令面（与 ws-client.ts 方法一一对应） */
-interface TabletRemoteClient {
+interface PocketRemoteClient {
   listSessions(): Promise<unknown>
   listWorkspaces(): Promise<unknown>
   createWorkspace(name: string): Promise<unknown>
@@ -96,10 +96,10 @@ interface TabletRemoteClient {
   chatReadAttachment(localPath: string): Promise<unknown>
 }
 
-let remoteClient: TabletRemoteClient | null = null
+let remoteClient: PocketRemoteClient | null = null
 
 /** 在 WebSocket 建连后注入，使原生桌面组件沿用 electronAPI 形状调用远程服务。 */
-export function setTabletRemoteClient(client: TabletRemoteClient | null): void {
+export function setPocketRemoteClient(client: PocketRemoteClient | null): void {
   remoteClient = client
 }
 
@@ -239,17 +239,17 @@ function emitTo<T>(set: Set<Listener<T>>, payload: T): void {
     try {
       listener(payload)
     } catch (e) {
-      console.error('[Tablet] 事件监听器执行异常', e)
+      console.error('[Pocket] 事件监听器执行异常', e)
     }
   }
 }
 
 /** 平板 WS agent_event → 桌面 IPC AgentStreamEvent 形状，喂给 useGlobalAgentListeners。 */
-export function emitTabletAgentStreamEvent(event: AgentStreamEvent): void {
+export function emitPocketAgentStreamEvent(event: AgentStreamEvent): void {
   emitTo(agentStreamEventListeners, event)
 }
 
-export function emitTabletChatStreamEvent(channel: string, payload: unknown): void {
+export function emitPocketChatStreamEvent(channel: string, payload: unknown): void {
   switch (channel) {
     case CHAT_IPC_CHANNELS.STREAM_CHUNK:
       emitTo(chatChunkListeners, payload as StreamChunkEvent)
@@ -267,22 +267,22 @@ export function emitTabletChatStreamEvent(channel: string, payload: unknown): vo
       emitTo(chatToolActivityListeners, payload as StreamToolActivityEvent)
       break
     default:
-      console.warn('[Tablet] 未知 Chat 流式通道:', channel)
+      console.warn('[Pocket] 未知 Chat 流式通道:', channel)
   }
 }
 
 /** 供 future WS 协议扩展时调用（当前 remote-service 暂无对应事件源）。 */
-export function emitTabletAgentStreamComplete(payload: AgentStreamCompletePayload): void {
+export function emitPocketAgentStreamComplete(payload: AgentStreamCompletePayload): void {
   emitTo(agentStreamCompleteListeners, payload)
 }
 
 /** 用户主动停止标记（stopAgent 记录，run_idle 桥接 STREAM_COMPLETE 时消费）。 */
-const tabletStoppedByUser = new Set<string>()
+const pocketStoppedByUser = new Set<string>()
 
 /** 取并清除指定会话的用户停止标记（未标记返回 false）。 */
-export function consumeTabletStoppedByUser(sessionId: string): boolean {
-  const stopped = tabletStoppedByUser.has(String(sessionId))
-  tabletStoppedByUser.delete(String(sessionId))
+export function consumePocketStoppedByUser(sessionId: string): boolean {
+  const stopped = pocketStoppedByUser.has(String(sessionId))
+  pocketStoppedByUser.delete(String(sessionId))
   return stopped
 }
 
@@ -308,7 +308,7 @@ export function installElectronApiStub(): void {
   if (existing) return // 若已存在（Electron 环境）则不覆盖
 
   const stub: Record<string, unknown> = {
-    // ---- 事件桥（注册器；WS 事件由 emitTabletAgentStreamEvent 喂回） ----
+    // ---- 事件桥（注册器；WS 事件由 emitPocketAgentStreamEvent 喂回） ----
     onAgentStreamEvent: (cb: Listener<AgentStreamEvent>) => register(agentStreamEventListeners, cb),
     onAgentStreamComplete: (cb: Listener<AgentStreamCompletePayload>) => register(agentStreamCompleteListeners, cb),
     onAgentStreamError: (cb: Listener<{ sessionId: string; error: unknown }>) => register(agentStreamErrorListeners, cb),
@@ -508,7 +508,7 @@ export function installElectronApiStub(): void {
     },
     stopAgent: (sessionId: string) => {
       // 记录用户主动停止标记：run_idle 桥接 STREAM_COMPLETE 时用（stoppedByUser 展示“已停止”）
-      if (sessionId) tabletStoppedByUser.add(String(sessionId))
+      if (sessionId) pocketStoppedByUser.add(String(sessionId))
       if (!remoteClient) return Promise.reject(new Error('移动端连接未就绪'))
       return remoteClient.stopAgent(sessionId)
     },

@@ -153,7 +153,7 @@ import type {
   MicPermissionResult,
   QuickTaskOpenSessionData,
   QuickTaskSubmitInput,
-  TabletModeStatus,
+  PocketModeStatus,
   TrayCreateSessionData,
   TrayOpenAgentSessionData,
   UserProfile,
@@ -442,11 +442,11 @@ export interface ElectronAPI {
   updateSettingsSync: (updates: Partial<AppSettings>) => boolean
 
   /** 获取移动模式（试验版）状态与连接信息 */
-  getTabletModeStatus: () => Promise<TabletModeStatus>
+  getPocketModeStatus: () => Promise<PocketModeStatus>
   /** 启用或关闭移动模式（试验版） */
-  setTabletModeEnabled: (enabled: boolean) => Promise<TabletModeStatus>
+  setPocketModeEnabled: (enabled: boolean) => Promise<PocketModeStatus>
   /** 设置移动模式服务端口（保存并热应用，服务运行中自动重启） */
-  setTabletModePort: (port: number) => Promise<TabletModeStatus>
+  setPocketModePort: (port: number) => Promise<PocketModeStatus>
   /** 获取安卓版 APK 扫码下载信息（官网地址/二维码/文件名） */
   getProferApkQr: () => Promise<{ url: string; dataUrl: string; fileName: string }>
 

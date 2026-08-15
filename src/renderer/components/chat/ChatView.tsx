@@ -62,20 +62,20 @@ import type {
 interface ChatViewProps {
   conversationId: string
   /** 移动模式：隐藏输入框占位提示文字等触屏简化 */
-  tabletMode?: boolean
+  pocketMode?: boolean
   /** 隐藏 ChatHeader（平板竖屏由外部顶栏承担标题，避免双顶栏） */
   hideChatHeader?: boolean
 }
 
-export function ChatView({ conversationId, tabletMode = false, hideChatHeader = false }: ChatViewProps): React.ReactElement {
+export function ChatView({ conversationId, pocketMode = false, hideChatHeader = false }: ChatViewProps): React.ReactElement {
   return (
     <ConversationProvider conversationId={conversationId}>
-      <ChatViewInner conversationId={conversationId} tabletMode={tabletMode} hideChatHeader={hideChatHeader} />
+      <ChatViewInner conversationId={conversationId} pocketMode={pocketMode} hideChatHeader={hideChatHeader} />
     </ConversationProvider>
   )
 }
 
-function ChatViewInner({ conversationId, tabletMode = false, hideChatHeader = false }: ChatViewProps): React.ReactElement {
+function ChatViewInner({ conversationId, pocketMode = false, hideChatHeader = false }: ChatViewProps): React.ReactElement {
   // ===== 本地状态（每个实例独立） =====
   const [messages, setMessages] = React.useState<ChatMessage[]>([])
   const [contextDividers, setContextDividers] = React.useState<string[]>([])
@@ -645,6 +645,7 @@ function ChatViewInner({ conversationId, tabletMode = false, hideChatHeader = fa
           {/* 中间：消息区域 */}
           <ChatMessages
             conversationId={conversationId}
+            pocketMode={pocketMode}
             messages={messages}
             messagesLoaded={messagesLoaded}
             streaming={isStreaming}
@@ -712,8 +713,8 @@ function ChatViewInner({ conversationId, tabletMode = false, hideChatHeader = fa
             onSend={handleSend}
             onStop={handleStop}
             onClearContext={handleClearContext}
-            placeholder={tabletMode ? '' : undefined}
-            tabletMode={tabletMode}
+            placeholder={pocketMode ? '' : undefined}
+            pocketMode={pocketMode}
           />
         </div>
       </div>

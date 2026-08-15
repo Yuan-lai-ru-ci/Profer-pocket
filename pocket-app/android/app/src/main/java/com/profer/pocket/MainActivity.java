@@ -1,4 +1,4 @@
-package com.profer.tablet;
+package com.profer.pocket;
 
 import com.getcapacitor.BridgeActivity;
 

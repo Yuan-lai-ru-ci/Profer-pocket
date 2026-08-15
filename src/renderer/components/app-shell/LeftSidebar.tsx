@@ -24,8 +24,8 @@ import { SidebarDialogs } from './left-sidebar/sidebar-dialogs'
 export type { LeftSidebarProps } from './left-sidebar/types'
 import type { LeftSidebarProps } from './left-sidebar/types'
 
-export function LeftSidebar({ width, noTransition, tabletMode, renderSearchDialog = true }: LeftSidebarProps): React.ReactElement {
-  const s = useLeftSidebar(tabletMode)
+export function LeftSidebar({ width, noTransition, pocketMode, renderSearchDialog = true }: LeftSidebarProps): React.ReactElement {
+  const s = useLeftSidebar(pocketMode)
   const isClassic = s.isClassic
   const sidebarCollapsed = s.sidebarCollapsed
 

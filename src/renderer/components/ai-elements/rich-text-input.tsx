@@ -9,7 +9,7 @@
  * - htmlToMarkdown 转换
  * - IME composition 处理
  * - Enter 提交 / Shift+Enter 换行
- * - tabletMode（触屏无 Shift 键）：Enter 换行，Ctrl/Cmd+Enter 或发送按钮提交
+ * - pocketMode（触屏无 Shift 键）：Enter 换行，Ctrl/Cmd+Enter 或发送按钮提交
  * - 代码块内 Enter 换行例外
  * - 自动扩高
  */
@@ -117,7 +117,7 @@ interface RichTextInputProps {
   /** 是否使用 Cmd/Ctrl+Enter 发送（而非 Enter） */
   sendWithCmdEnter?: boolean
   /** 移动模式：输入框压扁为单行高度（约 40px），减少触屏下输入区占用 */
-  tabletMode?: boolean
+  pocketMode?: boolean
   className?: string
 }
 
@@ -150,7 +150,7 @@ export function RichTextInput({
   htmlValue,
   onHtmlChange,
   sendWithCmdEnter = false,
-  tabletMode = false,
+  pocketMode = false,
 }: RichTextInputProps): React.ReactElement {
   const [isExpanded, setIsExpanded] = useState(false)
   const inputIdRef = useRef(`rich-text-input-${Math.random().toString(36).slice(2)}`)
@@ -335,8 +335,8 @@ export function RichTextInput({
         tabindex: '0',
         class: cn(
           'prose dark:prose-invert max-w-none focus:outline-none',
-          tabletMode
-            ? 'min-h-[var(--tablet-input-h,40px)] w-full text-[15px] leading-[1.4]'
+          pocketMode
+            ? 'min-h-[var(--pocket-input-h,40px)] w-full text-[15px] leading-[1.4]'
             : 'min-h-[101px] w-full text-[15px] leading-[1.6]',
           '[&>*:first-child]:mt-0 [&>*:last-child]:mb-0',
           '[&_pre]:rounded-md [&_pre]:p-3',
@@ -483,9 +483,9 @@ export function RichTextInput({
           }
 
           // 判断是发送还是换行
-          // tabletMode：触屏软键盘没有 Shift 修饰键，普通 Enter 一律换行（拆分段/硬换行），
+          // pocketMode：触屏软键盘没有 Shift 修饰键，普通 Enter 一律换行（拆分段/硬换行），
           // 发送由发送按钮或 Ctrl/Cmd+Enter 承担；桌面模式保持 Enter 发送 / Shift+Enter 换行。
-          const isSend = tabletMode ? hasCmd : (cmdEnterMode ? hasCmd : (!hasShift && !hasCmd))
+          const isSend = pocketMode ? hasCmd : (cmdEnterMode ? hasCmd : (!hasShift && !hasCmd))
 
           if (isSend) {
             event.preventDefault()
@@ -651,13 +651,13 @@ export function RichTextInput({
   // 平板触屏禁用：切换 Agent/Chat 模式、打开会话都会重挂载输入框，自动聚焦会弹出软键盘；
   // 触屏用户点击输入框时主动聚焦即可。
   useEffect(() => {
-    if (editor && !disabled && !tabletMode) {
+    if (editor && !disabled && !pocketMode) {
       const timer = setTimeout(() => {
         editor.commands.focus()
       }, 100)
       return () => clearTimeout(timer)
     }
-  }, [editor, disabled, autoFocusTrigger, tabletMode])
+  }, [editor, disabled, autoFocusTrigger, pocketMode])
 
   // 语音输入回填：优先插入到当前编辑器的光标位置。
   useEffect(() => {
@@ -686,7 +686,7 @@ export function RichTextInput({
       className={cn(
         'rich-text-input relative w-full overflow-y-auto scrollbar-thin transition-[max-height] duration-200 ease-in-out',
         isManuallyCollapsed
-          ? tabletMode ? 'max-h-[var(--tablet-input-h,40px)]' : 'max-h-[101px]'
+          ? pocketMode ? 'max-h-[var(--pocket-input-h,40px)]' : 'max-h-[101px]'
           : isExpanded ? 'max-h-[500px]' : 'max-h-[200px]',
         disabled && 'opacity-50 cursor-not-allowed',
         className
@@ -717,7 +717,7 @@ export function RichTextInput({
       <style>{`
         .ProseMirror {
           outline: none;
-          padding: ${tabletMode ? '5px 15px 0px' : '9px 15px 0px'};
+          padding: ${pocketMode ? '5px 15px 0px' : '9px 15px 0px'};
           font-style: normal;
         }
         .ProseMirror p {

@@ -8,14 +8,14 @@
  *
  * variant 差异（构建前写入配置，构建结束无论成败都会恢复为 dev 默认）：
  *   | 项             | release          | dev                        |
- *   | appId          | com.profer.tablet | com.profer.tablet.dev      |
- *   | appName        | Profer 移动版     | Profer 移动版（开发版）    |
+ *   | appId          | com.profer.pocket | com.profer.pocket.dev      |
+ *   | appName        | Profer Pocket     | Profer Pocket（开发版）    |
  *   | versionCode    | 1                | 10                         |
  *   | versionName    | 0.1.0            | 0.1.1-dev                  |
  *
  * 步骤：校验环境 → 写入 variant 配置 → 同步 web → cap sync android → gradlew assembleDebug。
  * 环境要求：ANDROID_HOME=C:\Android\Sdk、JAVA_HOME=C:\Android\jdk-21（必须 JDK 21）。
- * 产物：android/app/build/outputs/apk/debug/app-debug.apk，并复制到 releases/Profer-Tablet-<versionName>.apk
+ * 产物：android/app/build/outputs/apk/debug/app-debug.apk，并复制到 releases/Profer-Pocket-<versionName>.apk
  */
 import { spawnSync } from 'node:child_process'
 import { existsSync, readFileSync, writeFileSync, copyFileSync, mkdirSync } from 'node:fs'
@@ -23,7 +23,7 @@ import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const here = dirname(fileURLToPath(import.meta.url))
-const appRoot = resolve(here, '..') // tablet-app/
+const appRoot = resolve(here, '..') // pocket-app/
 const androidRoot = resolve(appRoot, 'android')
 const appGradle = resolve(androidRoot, 'app/build.gradle')
 const stringsXml = resolve(androidRoot, 'app/src/main/res/values/strings.xml')
@@ -32,14 +32,14 @@ const capConfig = resolve(appRoot, 'capacitor.config.ts')
 // ── 双 variant 配置（发新版时在此同步版本号） ──
 const VARIANTS = {
   dev: {
-    appId: 'com.profer.tablet.dev',
-    appName: 'Profer 移动版（开发版）',
+    appId: 'com.profer.pocket.dev',
+    appName: 'Profer Pocket（开发版）',
     versionCode: '10',
     versionName: '0.1.1-dev',
   },
   release: {
-    appId: 'com.profer.tablet',
-    appName: 'Profer 移动版',
+    appId: 'com.profer.pocket',
+    appName: 'Profer Pocket',
     versionCode: '1',
     versionName: '0.1.0',
   },
@@ -135,7 +135,7 @@ try {
   const apk = resolve(androidRoot, 'app/build/outputs/apk/debug/app-debug.apk')
   const outDir = resolve(appRoot, 'releases')
   mkdirSync(outDir, { recursive: true })
-  const outApk = resolve(outDir, `Profer-Tablet-${cfg.versionName}.apk`)
+  const outApk = resolve(outDir, `Profer-Pocket-${cfg.versionName}.apk`)
   copyFileSync(apk, outApk)
   console.log(`[build-apk] ✅ APK 已生成: ${outApk}`)
 } finally {

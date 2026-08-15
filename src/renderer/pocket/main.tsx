@@ -1,13 +1,13 @@
 /**
- * Profer Tablet UI — 桌面式平板界面
+ * Profer Pocket UI — 桌面式平板界面
  *
  * 完整复用桌面真实组件（与 LeftSidebar 同一搬运策略）：
- *  - 对话区：桌面 <AgentView> 100% 复用（AgentHeader + AgentMessages + 审批横幅 + composer；任务图工具栏项与 Dialog 在 tabletMode 下隐藏）
+ *  - 对话区：桌面 <AgentView> 100% 复用（AgentHeader + AgentMessages + 审批横幅 + composer；任务图工具栏项与 Dialog 在 pocketMode 下隐藏）
  *  - 左侧会话栏：桌面 <LeftSidebar> 复用
  *  - 数据源：WsClient → remote-service；electronAPI 桥把 IPC 命令/事件映射为 WS 命令/事件
  *
  * 关键机制：
- *  - electronAPI 桥（electronapi-stub）：事件注册器由 WS agent_event 喂回（emitTabletAgentStreamEvent），
+ *  - electronAPI 桥（electronapi-stub）：事件注册器由 WS agent_event 喂回（emitPocketAgentStreamEvent），
  *    useGlobalAgentListeners / AgentView 的桌面逻辑零改动复用
  *  - jotai Provider（createStore）供给 userProfile/channels/agentSessions 等 atom
  *  - sonner Toaster 提供桌面同款 toast 反馈
@@ -20,7 +20,7 @@ import { Provider, createStore, useSetAtom, useAtomValue } from 'jotai'
 import { Toaster, toast } from 'sonner'
 import '@fontsource-variable/inter/index.css'
 import '@/styles/globals.css'
-import { installElectronApiStub, setTabletRemoteClient, emitTabletAgentStreamEvent, emitTabletAgentStreamComplete, emitTabletChatStreamEvent, consumeTabletStoppedByUser } from './electronapi-stub'
+import { installElectronApiStub, setPocketRemoteClient, emitPocketAgentStreamEvent, emitPocketAgentStreamComplete, emitPocketChatStreamEvent, consumePocketStoppedByUser } from './electronapi-stub'
 import { defaultWsUrl, WsClient, type AgentWorkflowEvent, type ChatWorkflowEvent } from './ws-client'
 // ===== 复用桌面组件 / atom（必须位于模块顶部，确保 ESM 正常收集）=====
 import { AgentView } from '@/components/agent'
@@ -34,14 +34,14 @@ import { authStatusAtom } from '@/atoms/identity-atoms'
 import { channelsAtom, channelsLoadedAtom, conversationsAtom, currentConversationIdAtom } from '@/atoms/chat-atoms'
 import { agentSessionsAtom, agentWorkspacesAtom, currentAgentSessionIdAtom, currentAgentWorkspaceIdAtom, agentChannelIdAtom, agentModelIdAtom, agentChannelIdsAtom, agentStreamingStatesAtom, agentMessageRefreshAtom } from '@/atoms/agent-atoms'
 import { appModeAtom } from '@/atoms/app-mode'
-import { initTabletUiScale } from '@/atoms/ui-scale'
+import { initPocketUiScale } from '@/atoms/ui-scale'
 import { UiScaleContainer } from '@/components/UiScaleContainer'
 import { Button } from '@/components/ui/button'
 import { AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogFooter, AlertDialogTitle, AlertDialogDescription, AlertDialogAction, AlertDialogCancel } from '@/components/ui/alert-dialog'
 import { TooltipProvider, Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip'
 import { Menu, Plus, Palette, Link, Loader2, Bell, RefreshCw } from 'lucide-react'
 import { type AgentStreamPayload } from '@profer/shared'
-import { tabletConnectionStatusAtom, tabletNotifyCompleteAtom, tabletUnbindRequestAtom } from '@/atoms/tablet-settings'
+import { pocketConnectionStatusAtom, pocketNotifyCompleteAtom, pocketUnbindRequestAtom } from '@/atoms/pocket-settings'
 
 // ===== 先安装 electronAPI stub（必须在任何复用组件求值前）=====
 installElectronApiStub()
@@ -49,11 +49,11 @@ installElectronApiStub()
 // ===== Capacitor 原生 App 环境检测 =====
 // App 内 WebView 沉浸式全屏，系统状态栏（通知栏）会盖住顶部内容；浏览器模式 env() 为 0 无需处理。
 const isNativeApp = typeof window !== 'undefined' && !!((window as unknown as { Capacitor?: { isNativePlatform?: () => boolean } }).Capacitor?.isNativePlatform?.())
-const SAFE_AREA_CLS = isNativeApp ? 'tablet-safe-area' : ''
+const SAFE_AREA_CLS = isNativeApp ? 'pocket-safe-area' : ''
 
 // ===== 移动模式标记：Portal 到 body 的组件（设置弹窗等）需要 CSS 定向（竖屏差异化布局）=====
 if (typeof document !== 'undefined') {
-  document.body.classList.add('tablet-mode')
+  document.body.classList.add('pocket-mode')
 }
 
 // ===== Token 存取 =====
@@ -109,29 +109,29 @@ function normalizeWsUrl(raw: string): string | null {
 interface ChannelInfo { id: string; name: string; provider: string; models: { id: string; name: string }[] }
 interface SessionInfo { id: string; title: string; channelId?: string; modelId?: string; workspaceId?: string; agentRuntime?: 'claude' | 'pi'; permissionMode?: string; active: boolean; createdAt?: number; updatedAt?: number; pinned?: boolean; archived?: boolean; draft?: boolean }
 
-const tabletStore = createStore()
+const pocketStore = createStore()
 
 // 平板默认略微放大 UI（触屏友好）：无本地缓存时取 110%，已有用户选择则保持。
-// 必须在渲染前写入 tabletStore 的 uiScaleAtom（atom 默认值在模块加载时已固定）
-initTabletUiScale(tabletStore)
+// 必须在渲染前写入 pocketStore 的 uiScaleAtom（atom 默认值在模块加载时已固定）
+initPocketUiScale(pocketStore)
 
 // ===== 平板设置系统：直接搬运桌面 SettingsDialog，tab 白名单只保留平板可用的「连接 / 外观 / 通知」=====
 // （连接/通知为本设备本地能力：localStorage + WS 状态，不依赖 Electron IPC；外观全部本地持久化。
 // 其余 tab 大量依赖 electronAPI 能力，在平板上会显示空壳/伪状态，故不暴露）
-const TABLET_SETTINGS_TABS: SettingsTabItem[] = [
+const POCKET_SETTINGS_TABS: SettingsTabItem[] = [
   { id: 'connection', label: '连接', icon: <Link size={16} /> },
   { id: 'appearance', label: '外观设置', icon: <Palette size={16} /> },
   { id: 'notifications', label: '通知', icon: <Bell size={16} /> },
 ]
 
 // ===== Agent 完成提醒音（Web Audio API 合成，零插件依赖，浏览器与 Capacitor WebView 通用）=====
-let tabletChimeCtx: AudioContext | null = null
-function playTabletCompleteChime(): void {
+let pocketChimeCtx: AudioContext | null = null
+function playPocketCompleteChime(): void {
   try {
     const Ctor = window.AudioContext ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
     if (!Ctor) return
-    tabletChimeCtx = tabletChimeCtx ?? new Ctor()
-    const ctx = tabletChimeCtx
+    pocketChimeCtx = pocketChimeCtx ?? new Ctor()
+    const ctx = pocketChimeCtx
     if (ctx.state === 'suspended') void ctx.resume()
     const now = ctx.currentTime
     // 双音短促提示（E5 → A5，各 350ms），音量 0.22 不刺耳
@@ -172,7 +172,7 @@ const RUN_COMPLETED_DEDUP_WINDOW_MS = 3000
     if (existing) clearTimeout(existing)
     pendingStopTimers.set(sid, setTimeout(() => {
       pendingStopTimers.delete(sid)
-      tabletStore.set(agentStreamingStatesAtom, (prev) => {
+      pocketStore.set(agentStreamingStatesAtom, (prev) => {
         const cur = prev.get(sid)
         if (!cur?.running) return prev
         const map = new Map(prev)
@@ -185,9 +185,9 @@ const RUN_COMPLETED_DEDUP_WINDOW_MS = 3000
 }
 
 // ===== 根组件 =====
-function TabletApp(): React.ReactElement {
+function PocketApp(): React.ReactElement {
   return (
-    <Provider store={tabletStore}>
+    <Provider store={pocketStore}>
       {/* AgentView/LeftSidebar 组件树大量使用 Tooltip，缺少 Provider 会批量抛错 */}
       <TooltipProvider>
         <Toaster theme="system" position="top-center" richColors />
@@ -197,7 +197,7 @@ function TabletApp(): React.ReactElement {
         </UiScaleContainer>
         {/* 设置入口：LeftSidebar 底部头像/设置按钮置位 settingsOpenAtom，此处渲染原版 Dialog；
             Portal 到 body，不随缩放容器变换 */}
-        <SettingsDialog tabsOverride={TABLET_SETTINGS_TABS} />
+        <SettingsDialog tabsOverride={POCKET_SETTINGS_TABS} />
       </TooltipProvider>
     </Provider>
   )
@@ -304,7 +304,7 @@ function App(): React.ReactElement {
       onChatEvent: (evt) => handleChatEvent(evt),
     })
     clientRef.current = client
-    setTabletRemoteClient(client)
+    setPocketRemoteClient(client)
     client.connect()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
@@ -387,11 +387,11 @@ function App(): React.ReactElement {
       // 以主进程权威状态为准强制清理，否则停止按钮会永远亮着、点击也无效（stop 守卫直接 return）。
       const remoteActiveIds = new Set(personalSessions.filter((s) => s.active).map((s) => s.id))
       const staleIds = new Set<string>()
-      for (const [sid, st] of tabletStore.get(agentStreamingStatesAtom)) {
+      for (const [sid, st] of pocketStore.get(agentStreamingStatesAtom)) {
         if (st?.running && !remoteActiveIds.has(sid)) staleIds.add(sid)
       }
       if (staleIds.size > 0) {
-        tabletStore.set(agentStreamingStatesAtom, (prev) => {
+        pocketStore.set(agentStreamingStatesAtom, (prev) => {
           const map = new Map(prev)
           for (const sid of staleIds) {
             const cur = map.get(sid)
@@ -497,11 +497,11 @@ function App(): React.ReactElement {
 
   // ===== Agent 事件：喂给 electronAPI 桥（useGlobalAgentListeners 消费），并在回合结束后刷新会话列表 =====
   const handleChatEvent = useCallback((evt: ChatWorkflowEvent) => {
-    emitTabletChatStreamEvent(evt.channel, evt.payload)
+    emitPocketChatStreamEvent(evt.channel, evt.payload)
   }, [])
 
   const handleAgentEvent = useCallback((client: WsClient, evt: AgentWorkflowEvent) => {
-    emitTabletAgentStreamEvent({ sessionId: evt.sessionId, payload: evt.payload as AgentStreamPayload })
+    emitPocketAgentStreamEvent({ sessionId: evt.sessionId, payload: evt.payload as AgentStreamPayload })
     const p = evt.payload as { kind?: string; event?: { type?: string; stoppedByUser?: boolean; startedAt?: number; resultSubtype?: string; resultErrors?: string[]; backgroundTasksPending?: boolean } } | null
     // run_completed（remote-service 在 orchestrator onComplete 时广播，携带真实完成元数据）
     // 与 run_idle（orchestrator finally 释放 active 时广播）都可能到达；两者都表示"本轮结束"。
@@ -522,13 +522,13 @@ function App(): React.ReactElement {
       // stoppedByUser：run_completed 用服务端真实值（opts.stoppedByUser）为准；
       // run_idle 无此字段，用本地 stopAgent 记录的标记。无论哪个分支都消费本地标记，
       // 避免两者都到达时（run_completed→run_idle）或顺序颠倒时残留。
-      const localStopped = consumeTabletStoppedByUser(evt.sessionId)
+      const localStopped = consumePocketStoppedByUser(evt.sessionId)
       const stoppedByUser = isRunCompleted ? (p.event.stoppedByUser ?? false) : localStopped
 
       if (!deduped) {
         // startedAt 用真实值：run_completed 带 opts.startedAt，run_idle 无此字段则回退 Date.now()
         const startedAt = p.event.startedAt ?? Date.now()
-        emitTabletAgentStreamComplete({
+        emitPocketAgentStreamComplete({
           sessionId: evt.sessionId,
           messages: [],
           stoppedByUser,
@@ -539,9 +539,9 @@ function App(): React.ReactElement {
         })
         // Agent 完成提醒音：开关开启、非用户主动停止、且完成会话不是当前正在查看的会话
         // （自己盯着屏幕看时不需要提醒；正在看其他会话 / Chat 模式时值得提示）
-        if (!stoppedByUser && tabletStore.get(tabletNotifyCompleteAtom)) {
-          const viewingId = tabletStore.get(currentAgentSessionIdAtom)
-          if (viewingId !== evt.sessionId) playTabletCompleteChime()
+        if (!stoppedByUser && pocketStore.get(pocketNotifyCompleteAtom)) {
+          const viewingId = pocketStore.get(currentAgentSessionIdAtom)
+          if (viewingId !== evt.sessionId) playPocketCompleteChime()
         }
       }
       // 会话已空闲：撤销该会话的停止超时兜底定时器
@@ -609,7 +609,7 @@ function App(): React.ReactElement {
   const handleRefresh = useCallback(() => {
     const client = clientRef.current
     if (appMode === 'agent' && currentSessionId) {
-      tabletStore.set(agentMessageRefreshAtom, (prev) => {
+      pocketStore.set(agentMessageRefreshAtom, (prev) => {
         const map = new Map(prev)
         map.set(currentSessionId, (prev.get(currentSessionId) ?? 0) + 1)
         return map
@@ -624,11 +624,11 @@ function App(): React.ReactElement {
 
   // 连接状态同步到设置页 atom（「连接」tab 的状态徽标）
   useEffect(() => {
-    tabletStore.set(tabletConnectionStatusAtom, connection)
+    pocketStore.set(pocketConnectionStatusAtom, connection)
   }, [connection])
 
   // 设置页「解绑此设备」请求：计数变化时执行完整解绑流程（弹窗确认已在设置页内完成）
-  const unbindRequestCount = useAtomValue(tabletUnbindRequestAtom)
+  const unbindRequestCount = useAtomValue(pocketUnbindRequestAtom)
   useEffect(() => {
     if (unbindRequestCount > 0) unbind()
   }, [unbindRequestCount, unbind])
@@ -719,7 +719,7 @@ function App(): React.ReactElement {
         <div className="w-full max-w-sm space-y-6">
           <div className="space-y-1.5">
             <div className="text-xl font-semibold italic tracking-tight">Profer</div>
-            <div className="text-sm text-muted-foreground">在电脑上以 <code className="px-1.5 py-0.5 rounded bg-muted/60 font-mono text-xs">--tablet</code> 启动后连接</div>
+            <div className="text-sm text-muted-foreground">在电脑上以 <code className="px-1.5 py-0.5 rounded bg-muted/60 font-mono text-xs">--pocket</code> 启动后连接</div>
           </div>
           <input
             value={serverInput}
@@ -815,8 +815,8 @@ function App(): React.ReactElement {
           document.body
         )}
 
-        <div className={`tablet-app-root flex h-full w-full overflow-hidden bg-background p-0 text-foreground landscape:min-[1024px]:p-2 ${SAFE_AREA_CLS}`}>
-      <NativeTabletSidebar mobileOpen={sidebarOpen} onDismiss={() => setSidebarOpen(false)} />
+        <div className={`pocket-app-root flex h-full w-full overflow-hidden bg-background p-0 text-foreground landscape:min-[1024px]:p-2 ${SAFE_AREA_CLS}`}>
+      <NativePocketSidebar mobileOpen={sidebarOpen} onDismiss={() => setSidebarOpen(false)} />
 
       {/* 主区（竖屏 pt-12 为浮动顶栏预留高度，滚动内容从悬浮条下方穿过；横屏无顶栏不需要） */}
       <div className="flex-1 min-w-0 flex flex-col overflow-hidden bg-content-area pt-12 landscape:min-[1024px]:pt-0 landscape:min-[1024px]:ml-2 landscape:min-[1024px]:rounded-[24px] landscape:min-[1024px]:border landscape:min-[1024px]:border-border/70 landscape:min-[1024px]:shadow-xl">
@@ -827,7 +827,7 @@ function App(): React.ReactElement {
         <div className="flex min-h-0 flex-1 flex-col touch-pan-y">
           {appMode === 'chat' ? (
             currentChatId ? (
-              <ChatView conversationId={currentChatId} tabletMode hideChatHeader={!landscapeWide} />
+              <ChatView conversationId={currentChatId} pocketMode hideChatHeader={!landscapeWide} />
             ) : (
               <div className="flex h-full flex-col items-center justify-center px-6 text-center">
                 <div className="max-w-sm space-y-2">
@@ -839,7 +839,7 @@ function App(): React.ReactElement {
             )
           ) : (
             currentSessionId ? (
-              <AgentView sessionId={currentSessionId} tabletMode hideAgentHeader={!landscapeWide} />
+              <AgentView sessionId={currentSessionId} pocketMode hideAgentHeader={!landscapeWide} />
             ) : (
               <div className="flex h-full flex-col items-center justify-center px-6 text-center">
                 <div className="max-w-sm space-y-2">
@@ -876,16 +876,16 @@ function App(): React.ReactElement {
 }
 
 // ===== 平板直接复用桌面 LeftSidebar；浏览器端只以 WebSocket adapter 替代 Electron IPC。 =====
-function NativeTabletSidebar({ mobileOpen, onDismiss }: { mobileOpen: boolean; onDismiss: () => void }): React.ReactElement {
+function NativePocketSidebar({ mobileOpen, onDismiss }: { mobileOpen: boolean; onDismiss: () => void }): React.ReactElement {
   return (
     <>
-      <div className="hidden h-full shrink-0 landscape:min-[1024px]:block"><LeftSidebar width={288} tabletMode /></div>
+      <div className="hidden h-full shrink-0 landscape:min-[1024px]:block"><LeftSidebar width={288} pocketMode /></div>
       <div className={`fixed inset-0 z-50 landscape:min-[1024px]:hidden ${mobileOpen ? 'pointer-events-auto' : 'pointer-events-none'}`} aria-hidden={!mobileOpen}>
         <button type="button" className={`absolute inset-0 z-0 bg-black/40 transition-opacity duration-200 ${mobileOpen ? 'opacity-100' : 'opacity-0'}`} onClick={onDismiss} aria-label="关闭会话导航" tabIndex={mobileOpen ? 0 : -1} />
         <div className={`absolute inset-y-0 left-0 z-10 touch-pan-y transition-transform duration-200 ease-out ${SAFE_AREA_CLS} ${mobileOpen ? 'translate-x-0' : '-translate-x-full'}`}>
           {/* 搜索面板（SearchDialog）是全局 atom + Portal，只需渲染一份；由横屏固定侧栏实例承担。
               抽屉实例设为 false，避免双 SearchDialog 叠加导致打开即被 interactOutside 关闭（“一闪即逝”）。 */}
-          <LeftSidebar width={288} tabletMode renderSearchDialog={false} />
+          <LeftSidebar width={288} pocketMode renderSearchDialog={false} />
         </div>
       </div>
     </>
@@ -895,7 +895,7 @@ function NativeTabletSidebar({ mobileOpen, onDismiss }: { mobileOpen: boolean; o
 // ===== 挂载 =====
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
-    <TabletApp />
+    <PocketApp />
   </React.StrictMode>,
 )
 
@@ -904,10 +904,10 @@ type ErrInfo = { msg: string; stack?: string }
 const errs: ErrInfo[] = []
 function renderErrBanner(): void {
   if (errs.length === 0) return
-  let el = document.getElementById('tablet-error-banner')
+  let el = document.getElementById('pocket-error-banner')
   if (!el) {
     el = document.createElement('div')
-    el.id = 'tablet-error-banner'
+    el.id = 'pocket-error-banner'
     el.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:99999;background:#7f1d1d;color:#fff;padding:10px;font:12px monospace;max-height:40vh;overflow:auto;white-space:pre-wrap;word-break:break-all;'
     document.body.appendChild(el)
   }

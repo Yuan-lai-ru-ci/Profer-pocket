@@ -10,17 +10,17 @@ export default defineConfig({
   define: {
     __APP_VERSION__: JSON.stringify(pkg.version),
   },
-  // root 指向 tablet 目录：单入口 html 相对 root 为 index.html，
+  // root 指向 pocket 目录：单入口 html 相对 root 为 index.html，
   // 构建时直接输出 dist/index.html（匹配 Capacitor sync-web 的 webDir 入口）；
-  // dev 时 http://localhost:5175/ 直接就是 tablet 页面。
-  root: resolve(__dirname, 'src/renderer/tablet'),
+  // dev 时 http://localhost:5175/ 直接就是 pocket 页面。
+  root: resolve(__dirname, 'src/renderer/pocket'),
   base: './',
   build: {
     outDir: resolve(__dirname, 'dist'),
     emptyOutDir: true,
     rollupOptions: {
-      // 纯移动端：仅 tablet 单入口（桌面 index.html 不构建）
-      input: resolve(__dirname, 'src/renderer/tablet/index.html'),
+      // 纯移动端：仅 pocket 单入口（桌面 index.html 不构建）
+      input: resolve(__dirname, 'src/renderer/pocket/index.html'),
     },
   },
   resolve: {

@@ -1,11 +1,11 @@
 /**
- * TabletNotificationSettings — 平板「通知」设置页
+ * PocketNotificationSettings — 平板「通知」设置页
  *
  * 目前只包含「Agent 完成提醒音」一个开关：Agent 回合在电脑端完成时，
  * 若本设备正打开着其他会话（或未在查看该会话），播放短促提示音。
  *
  * 实现：Web Audio API 合成提示音（零插件依赖，浏览器与 Capacitor WebView 通用）；
- * 开关经 tabletNotifyCompleteAtom 持久化到 localStorage。
+ * 开关经 pocketNotifyCompleteAtom 持久化到 localStorage。
  *
  * 限制说明（如实告知用户）：App 在后台时 Android WebView 会被冻结、WebSocket 断开，
  * 收不到完成事件，因此无法推送系统通知栏提醒。
@@ -15,10 +15,10 @@ import * as React from 'react'
 import { useAtom } from 'jotai'
 import { Bell } from 'lucide-react'
 import { SettingsSection, SettingsCard, SettingsToggle } from './primitives'
-import { tabletNotifyCompleteAtom } from '@/atoms/tablet-settings'
+import { pocketNotifyCompleteAtom } from '@/atoms/pocket-settings'
 
-export function TabletNotificationSettings(): React.ReactElement {
-  const [notifyComplete, setNotifyComplete] = useAtom(tabletNotifyCompleteAtom)
+export function PocketNotificationSettings(): React.ReactElement {
+  const [notifyComplete, setNotifyComplete] = useAtom(pocketNotifyCompleteAtom)
 
   return (
     <div className="space-y-6">

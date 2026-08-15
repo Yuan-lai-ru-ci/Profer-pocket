@@ -1,14 +1,14 @@
 apply plugin: 'com.android.application'
 
 android {
-    namespace "com.profer.tablet"
+    namespace "com.profer.pocket"
     compileSdk rootProject.ext.compileSdkVersion
     defaultConfig {
-        applicationId "com.profer.tablet.dev"
+        applicationId "com.profer.pocket.dev"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 9
-        versionName "0.1.0-dev"
+        versionCode 10
+        versionName "0.1.1-dev"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.

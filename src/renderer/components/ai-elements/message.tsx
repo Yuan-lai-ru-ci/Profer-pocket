@@ -38,7 +38,7 @@ import { LoadingIndicator } from '@/components/ui/loading-indicator'
 import { CodeBlock, MermaidBlock } from '@profer/ui'
 import { detectLanguage } from '@profer/core'
 import { FilePathChip, isAbsoluteFilePath, isRelativeFilePath } from './file-path-chip'
-import { useTabletMode } from './tablet-mode-context'
+import { usePocketMode } from './pocket-mode-context'
 import { currentAgentSessionIdAtom } from '@/atoms/agent-atoms'
 import { useOpenPreview } from '@/components/diff/preview-opener'
 import { useStore } from 'jotai'
@@ -493,7 +493,7 @@ const MarkdownLink = React.memo(function MarkdownLink({
   const ctxBasePaths = React.useContext(BasePathsContext)
   const store = useStore()
   const openPreview = useOpenPreview()
-  const tabletMode = useTabletMode()
+  const pocketMode = usePocketMode()
   const onWikilinkClick = React.useContext(WikilinkClickContext)
 
   // mention:// 协议 → 渲染为 MentionChip
@@ -511,7 +511,7 @@ const MarkdownLink = React.memo(function MarkdownLink({
           tabIndex={onWikilinkClick ? 0 : -1}
           onClick={(e) => {
             e.preventDefault(); e.stopPropagation()
-            if (tabletMode || !onWikilinkClick) return
+            if (pocketMode || !onWikilinkClick) return
             onWikilinkClick(name)
           }}
           onKeyDown={(e) => {
@@ -535,7 +535,7 @@ const MarkdownLink = React.memo(function MarkdownLink({
         e.preventDefault()
         // 平板远程模式：预览面板（MainArea）与系统打开（Electron IPC）均不可用，
         // 文件/链接点击不做动作，避免“点了没反应”的无效入口
-        if (tabletMode) return
+        if (pocketMode) return
         if (!href) return
         if (href.startsWith('http://') || href.startsWith('https://')) {
           window.electronAPI.openExternal(href)

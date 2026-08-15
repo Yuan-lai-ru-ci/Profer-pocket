@@ -15,7 +15,7 @@ import {
   MessageContent,
   BasePathsProvider,
 } from '@/components/ai-elements/message'
-import { TabletModeContext } from '@/components/ai-elements/tablet-mode-context'
+import { PocketModeContext } from '@/components/ai-elements/pocket-mode-context'
 import {
   Conversation,
   ConversationContent,
@@ -116,7 +116,7 @@ interface AgentMessagesProps {
   onRewind?: (assistantMessageUuid: string) => void
   onCompact?: () => void
   /** 平板远程模式不显示桌面端的用户消息悬浮置顶导航条。 */
-  tabletMode?: boolean
+  pocketMode?: boolean
   /** 移动端触顶自动加载：还有更早消息时可触发。 */
   onLoadEarlierHistory?: () => void
   /** 移动端：更早是否还有内容（服务端 hasMore）。 */
@@ -496,7 +496,7 @@ function AgentRunningIndicator({ startedAt }: { startedAt?: number }): React.Rea
   )
 }
 
-export function AgentMessages({ sessionId, sessionModelId, messagesLoaded, persistedSDKMessages, streaming, streamState, liveMessages, sessionPath, attachedDirs, stoppedByUser, onRetry, onRetryInNewSession, onFork, onRewind, onCompact, tabletMode = false, onLoadEarlierHistory, historyMoreAvailable, historyLoadingEarlier }: AgentMessagesProps): React.ReactElement {
+export function AgentMessages({ sessionId, sessionModelId, messagesLoaded, persistedSDKMessages, streaming, streamState, liveMessages, sessionPath, attachedDirs, stoppedByUser, onRetry, onRetryInNewSession, onFork, onRewind, onCompact, pocketMode = false, onLoadEarlierHistory, historyMoreAvailable, historyLoadingEarlier }: AgentMessagesProps): React.ReactElement {
   const userProfile = useAtomValue(userProfileAtom)
   const setMinimapCache = useSetAtom(tabMinimapCacheAtom)
   const channels = useAtomValue(channelsAtom)
@@ -727,19 +727,19 @@ export function AgentMessages({ sessionId, sessionModelId, messagesLoaded, persi
     : (liveMessages != null && liveMessages.some((m) => (m as { type: string }).type === 'assistant'))
 
   return (
-    <TabletModeContext.Provider value={tabletMode}>
+    <PocketModeContext.Provider value={pocketMode}>
     <BasePathsProvider basePaths={attachedDirs}>
     <div ref={historySelectionRootRef} className="relative flex min-h-0 flex-1 flex-col">
     <Conversation resize={ready && !transitioning ? 'smooth' : 'instant'} className={ready ? (skipFadeIn ? 'opacity-100' : 'opacity-100 transition-opacity duration-200') : 'opacity-0'}>
       <ScrollPositionManager id={sessionId} ready={ready} />
       <TopHistoryLoader
-        onLoadEarlierHistory={tabletMode ? onLoadEarlierHistory : undefined}
-        historyMoreAvailable={tabletMode ? historyMoreAvailable : undefined}
-        historyLoadingEarlier={tabletMode ? historyLoadingEarlier : undefined}
+        onLoadEarlierHistory={pocketMode ? onLoadEarlierHistory : undefined}
+        historyMoreAvailable={pocketMode ? historyMoreAvailable : undefined}
+        historyLoadingEarlier={pocketMode ? historyLoadingEarlier : undefined}
       />
       <StreamScrollFollow sessionId={sessionId} streaming={streaming} />
       <ConversationContent>
-        {tabletMode && hasContent && (historyLoadingEarlier || historyMoreAvailable === false) && (
+        {pocketMode && hasContent && (historyLoadingEarlier || historyMoreAvailable === false) && (
           <div className="flex items-center justify-center py-2 text-xs text-muted-foreground/50">
             {historyLoadingEarlier ? (
               <span className="inline-flex items-center gap-1.5">
@@ -751,7 +751,7 @@ export function AgentMessages({ sessionId, sessionModelId, messagesLoaded, persi
             )}
           </div>
         )}
-        {!tabletMode && hasEarlierGroups && (
+        {!pocketMode && hasEarlierGroups && (
           <div className="flex justify-center py-3">
             <button
               type="button"
@@ -865,15 +865,17 @@ export function AgentMessages({ sessionId, sessionModelId, messagesLoaded, persi
           </>
         )}
       </ConversationContent>
-      <ScrollMinimap items={minimapItems} />
+      {pocketMode
+        ? <ScrollMinimap key={sessionId} items={minimapItems} pocketMode />
+        : <ScrollMinimap items={minimapItems} />}
       <ConversationScrollButton />
-      {!tabletMode && allUserMessagesData.length > 0 && (
+      {!pocketMode && allUserMessagesData.length > 0 && (
         <StickyUserMessage userMessages={allUserMessagesData} />
       )}
     </Conversation>
       <AgentHistorySelectionLayer sessionId={sessionId} rootRef={historySelectionRootRef} />
     </div>
     </BasePathsProvider>
-    </TabletModeContext.Provider>
+    </PocketModeContext.Provider>
   )
 }

@@ -10,7 +10,7 @@ import * as React from 'react'
 import { useStore } from 'jotai'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
-import { useTabletMode } from './tablet-mode-context'
+import { usePocketMode } from './pocket-mode-context'
 import { FileTypeIcon } from '@/components/file-browser/FileTypeIcon'
 import { useOpenPreview } from '@/components/diff/preview-opener'
 import { currentAgentSessionIdAtom } from '@/atoms/agent-atoms'
@@ -108,7 +108,7 @@ export function FilePathChip({ filePath, basePath, basePaths, className }: FileP
   const { path: cleanPath, suffix: lineColSuffix } = stripLineCol(trimmedPath)
   // 平板远程模式：预览面板/文件管理器均依赖桌面能力（MainArea 渲染 / Electron IPC），
   // 点击与右键菜单入口应诚实隐藏，仅保留路径展示
-  const tabletMode = useTabletMode()
+  const pocketMode = usePocketMode()
 
   const filename = getFileName(cleanPath)
 
@@ -207,7 +207,7 @@ export function FilePathChip({ filePath, basePath, basePaths, className }: FileP
   }, [cleanPath, candidateBases, filename])
 
   // 平板模式：静态展示（不可点击、无右键菜单），保留文件名与文件类型图标
-  if (tabletMode) {
+  if (pocketMode) {
     return (
       <span
         title={displayPath}

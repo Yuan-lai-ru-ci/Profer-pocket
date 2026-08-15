@@ -12,7 +12,7 @@ import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const here = dirname(fileURLToPath(import.meta.url))
-const appRoot = resolve(here, '..') // tablet-app/
+const appRoot = resolve(here, '..') // pocket-app/
 const pocketRoot = resolve(appRoot, '..') // Profer-pocket/
 const src = resolve(pocketRoot, 'dist')
 const webDir = resolve(appRoot, 'web')

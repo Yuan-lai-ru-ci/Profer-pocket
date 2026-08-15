@@ -1,5 +1,5 @@
 /**
- * Tablet WS Client — 平板端与主进程 remote-service 的通信层
+ * Pocket WS Client — 平板端与主进程 remote-service 的通信层
  *
  * 职责：
  *  - 管理 WebSocket 连接（含 token 鉴权、自动重连、心跳）
@@ -152,7 +152,7 @@ export class WsClient {
         this.lastPongAt = Date.now()
         this.handleMessage(msg)
       } catch (e) {
-        console.error('[Tablet WS] 消息解析失败', e)
+        console.error('[Pocket WS] 消息解析失败', e)
       }
     }
 

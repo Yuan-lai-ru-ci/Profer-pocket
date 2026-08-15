@@ -2445,19 +2445,19 @@
 /* ===== 平板竖屏：设置弹窗改为纵向布局（顶部横条 tab + 内容区全宽） =====
  * 平板设置只有少量 tab，竖屏下 160px 左侧导航会挤压内容区；
  * 改成顶部横向 tab 条（保留切换入口——多个 tab 时必须能切换），内容全宽。
- * body.tablet-mode 由 tablet/main.tsx 挂载时标记，覆盖 Portal 到 body 的弹窗（radix Dialog 默认 Portal）。桌面版不受影响。
+ * body.pocket-mode 由 pocket/main.tsx 挂载时标记，覆盖 Portal 到 body 的弹窗（radix Dialog 默认 Portal）。桌面版不受影响。
  */
 @media (orientation: portrait) {
-  body.tablet-mode .tablet-settings-dialog {
+  body.pocket-mode .pocket-settings-dialog {
     width: 94vw;
     max-width: 94vw;
     height: 92vh;
     max-height: 92vh;
   }
-  body.tablet-mode .settings-body {
+  body.pocket-mode .settings-body {
     flex-direction: column;
   }
-  body.tablet-mode .settings-nav {
+  body.pocket-mode .settings-nav {
     display: flex;
     flex-direction: row;
     align-items: center;
@@ -2470,19 +2470,19 @@
     overflow-y: hidden;
     flex-shrink: 0;
   }
-  body.tablet-mode .settings-nav nav {
+  body.pocket-mode .settings-nav nav {
     flex-direction: row;
     gap: 2px;
   }
-  body.tablet-mode .settings-nav nav button {
+  body.pocket-mode .settings-nav nav button {
     white-space: nowrap;
   }
-  body.tablet-mode .tablet-settings-dialog .px-6 {
+  body.pocket-mode .pocket-settings-dialog .px-6 {
     padding-left: 20px;
     padding-right: 20px;
   }
   /* 特殊风格 8 宫格：手机窄屏（<430px）4 列固定 99px 卡片会溢出，改 2 列居中 */
-  body.tablet-mode .tablet-special-grid {
+  body.pocket-mode .pocket-special-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
     justify-items: center;
   }
@@ -2493,21 +2493,21 @@
  * 收起态也常驻 40px 窄条，竖屏下挤压并可能与内容区视觉重合；直接隐藏。
  */
 @media (orientation: portrait) {
-  body.tablet-mode .chat-prompt-sidebar {
+  body.pocket-mode .chat-prompt-sidebar {
     display: none;
   }
 }
 
 /* ===== 平板输入框高度：竖屏 +20px（40px → 60px），方便触屏输入 =====
- * --tablet-input-h 由 rich-text-input tabletMode 分支消费（min-h/max-h 折叠态）；
+ * --pocket-input-h 由 rich-text-input pocketMode 分支消费（min-h/max-h 折叠态）；
  * 竖屏覆盖变量值即可，展开态（200px/500px）不受影响，桌面版不消费该变量。
  */
 :root {
-  --tablet-input-h: 40px;
+  --pocket-input-h: 40px;
 }
 @media (orientation: portrait) {
-  body.tablet-mode {
-    --tablet-input-h: 60px;
+  body.pocket-mode {
+    --pocket-input-h: 60px;
   }
 }
 
@@ -2518,35 +2518,35 @@
  * 避免出现“正文已左移、底下虚线与分叉按钮仍停在 46px”的错位。
  */
 @media (orientation: portrait) {
-  body.tablet-mode .message-item .message-content {
+  body.pocket-mode .message-item .message-content {
     padding-left: 6px;
   }
-  body.tablet-mode .message-item .file-changes-summary {
+  body.pocket-mode .message-item .file-changes-summary {
     padding-left: 6px;
   }
-  body.tablet-mode .message-item .agent-turn-actions {
+  body.pocket-mode .message-item .agent-turn-actions {
     padding-left: 6px;
   }
 }
 
 /* ===== 平板 App 状态栏安全区（Capacitor WebView 沉浸式） =====
  * App 内 WebView 延伸到系统状态栏后面，顶部内容会被状态栏遮挡。
- * 仅在原生 App 环境由 main.tsx 动态添加 tablet-safe-area 类（浏览器 env() 为 0，不影响）。
+ * 仅在原生 App 环境由 main.tsx 动态添加 pocket-safe-area 类（浏览器 env() 为 0，不影响）。
  * padding-top 用 max() 保证无状态栏设备（沉浸横屏）为 0；!important 覆盖 Tailwind 的 p-* 工具类。
  */
-.tablet-safe-area {
+.pocket-safe-area {
   padding-top: max(env(safe-area-inset-top), 0px) !important;
 }
 
 /* ===== 移动模式：隐藏滚动条（触控滚动，滚动条多余且占视觉空间） =====
  * 平板所有滚动都靠手指惯性，自定义滚动条无意义；桌面版不受影响。
  */
-body.tablet-mode *::-webkit-scrollbar {
+body.pocket-mode *::-webkit-scrollbar {
   width: 0;
   height: 0;
   display: none;
 }
-body.tablet-mode * {
+body.pocket-mode * {
   scrollbar-width: none;
   -ms-overflow-style: none;
 }
@@ -2561,10 +2561,10 @@ body.tablet-mode * {
  * 竖屏窄屏下隐藏模型名文本与下拉箭头，只留模型 logo 图标；点击仍可打开选择弹窗。
  */
 @media (orientation: portrait) {
-  body.tablet-mode .model-selector-trigger span {
+  body.pocket-mode .model-selector-trigger span {
     display: none;
   }
-  body.tablet-mode .model-selector-trigger .lucide-chevron-down {
+  body.pocket-mode .model-selector-trigger .lucide-chevron-down {
     display: none;
   }
 }

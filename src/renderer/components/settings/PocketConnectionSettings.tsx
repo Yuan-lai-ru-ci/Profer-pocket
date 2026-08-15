@@ -1,9 +1,9 @@
 /**
- * TabletConnectionSettings — 平板「连接」设置页
+ * PocketConnectionSettings — 平板「连接」设置页
  *
  * 展示本设备与电脑端 remote-service 的绑定状态（只读），提供解绑操作。
  * 服务器地址 / 访问令牌均只读：修改地址属于「重绑定」语义，走解绑 → 连接页重新输入。
- * 解绑通过 tabletUnbindRequestAtom 通知 tablet/main.tsx 的 App 组件执行完整清理。
+ * 解绑通过 pocketUnbindRequestAtom 通知 pocket/main.tsx 的 App 组件执行完整清理。
  */
 
 import * as React from 'react'
@@ -23,10 +23,10 @@ import {
 import { Button } from '@/components/ui/button'
 import { SettingsSection, SettingsCard } from './primitives'
 import { settingsOpenAtom } from '@/atoms/settings-tab'
-import { tabletConnectionStatusAtom, tabletUnbindRequestAtom, type TabletConnectionStatus } from '@/atoms/tablet-settings'
+import { pocketConnectionStatusAtom, pocketUnbindRequestAtom, type PocketConnectionStatus } from '@/atoms/pocket-settings'
 
 /** 连接状态徽标文案与配色 */
-const STATUS_META: Record<TabletConnectionStatus, { label: string; dot: string; text: string }> = {
+const STATUS_META: Record<PocketConnectionStatus, { label: string; dot: string; text: string }> = {
   open: { label: '已连接', dot: 'bg-emerald-500', text: 'text-emerald-600 dark:text-emerald-500' },
   connecting: { label: '正在连接…', dot: 'bg-amber-500 animate-pulse', text: 'text-amber-600 dark:text-amber-500' },
   reconnecting: { label: '重连中…', dot: 'bg-amber-500 animate-pulse', text: 'text-amber-600 dark:text-amber-500' },
@@ -68,9 +68,9 @@ function ReadonlyValue({ label, value, secret = false }: { label: string; value:
   )
 }
 
-export function TabletConnectionSettings(): React.ReactElement {
-  const status = useAtomValue(tabletConnectionStatusAtom)
-  const setUnbindRequest = useSetAtom(tabletUnbindRequestAtom)
+export function PocketConnectionSettings(): React.ReactElement {
+  const status = useAtomValue(pocketConnectionStatusAtom)
+  const setUnbindRequest = useSetAtom(pocketUnbindRequestAtom)
   const setSettingsOpen = useSetAtom(settingsOpenAtom)
   const [confirmOpen, setConfirmOpen] = React.useState(false)
 

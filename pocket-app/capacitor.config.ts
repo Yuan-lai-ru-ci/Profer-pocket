@@ -1,8 +1,8 @@
 import type { CapacitorConfig } from '@capacitor/cli'
 
 const config: CapacitorConfig = {
-  appId: 'com.profer.tablet.dev',
-  appName: 'Profer 移动版（开发版）',
+  appId: 'com.profer.pocket.dev',
+  appName: 'Profer Pocket（开发版）',
   webDir: 'web',
   android: {
     allowMixedContent: true,

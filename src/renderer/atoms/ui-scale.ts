@@ -17,7 +17,7 @@
  *   - 平板：localStorage 缓存（electronapi-stub 的 getSettings/updateSettings 为空实现，
  *     自动降级到纯本地缓存）
  * - 平板端首次访问无缓存时保持 standard（与原版观感一致），需要放大时在设置里调节；
- *   tablet/main.tsx 调用 initTabletUiScale(store) 覆盖默认值；桌面保持 standard。
+ *   pocket/main.tsx 调用 initPocketUiScale(store) 覆盖默认值；桌面保持 standard。
  */
 
 import { atom } from 'jotai'
@@ -116,10 +116,10 @@ export async function initializeUiScale(
  * 平板无 Electron settings.json（stub 为空实现），只使用 localStorage。
  * 首次访问无缓存时保持 standard（100%，与原版观感一致，需要放大时在设置里调）；
  * 已有用户选择则保持。
- * 需在 tablet/main.tsx 渲染前调用，并把档位写入平板 store 的 uiScaleAtom
+ * 需在 pocket/main.tsx 渲染前调用，并把档位写入平板 store 的 uiScaleAtom
  * （atom 默认值在模块加载时已固定，直接改 localStorage 不会驱动组件）。
  */
-export function initTabletUiScale(store: { set: (atom: typeof uiScaleAtom, value: UiScale) => void }): void {
+export function initPocketUiScale(store: { set: (atom: typeof uiScaleAtom, value: UiScale) => void }): void {
   const cached = getCachedUiScale()
   const next: UiScale = (cached && cached in UI_SCALE_VALUES) ? cached : 'standard'
   if (!cached) cacheUiScale(next)

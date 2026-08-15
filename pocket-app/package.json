@@ -1,5 +1,5 @@
 {
-  "name": "profer-pocket-tablet",
+  "name": "profer-pocket",
   "version": "0.1.0",
   "description": "Profer-pocket 移动端 Capacitor 壳（装载独立瘦客户端的静态产物）",
   "private": true,

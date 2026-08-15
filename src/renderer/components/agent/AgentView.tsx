@@ -552,31 +552,31 @@ function ToolbarGraphButton({ onClick }: { onClick: () => void }): React.ReactEl
 }
 
 /** 平板远程模式下从输入工具栏隐藏的项（依赖桌面文件系统/语音/全局设置，浏览器环境无意义） */
-const TABLET_HIDDEN_TOOLBAR_KEYS = new Set(['thinking', 'speech', 'attach-file', 'attach-folder', 'auto-preview', 'graph'])
+const POCKET_HIDDEN_TOOLBAR_KEYS = new Set(['thinking', 'speech', 'attach-file', 'attach-folder', 'auto-preview', 'graph'])
 
 export interface AgentViewProps {
   sessionId: string
   /** 平板远程模式：隐藏无意义的工具栏项，触控目标加大到 44px */
-  tabletMode?: boolean
+  pocketMode?: boolean
   /** 平板竖屏等场景：标题由外部顶栏承担时隐藏内置 AgentHeader（避免双标题） */
   hideAgentHeader?: boolean
 }
 
-export function AgentView({ sessionId, tabletMode = false, hideAgentHeader = false }: AgentViewProps): React.ReactElement {
+export function AgentView({ sessionId, pocketMode = false, hideAgentHeader = false }: AgentViewProps): React.ReactElement {
   const [persistedSDKMessages, setPersistedSDKMessages] = React.useState<SDKMessage[]>([])
   const persistedSDKMessagesRef = React.useRef<SDKMessage[]>([])
   persistedSDKMessagesRef.current = persistedSDKMessages
   // 移动端触顶自动加载：hasMore（服务端还有更早）+ loading（防抖），供触顶加载与顶部状态使用。
-  const [tabletHistoryHasMore, setTabletHistoryHasMore] = React.useState(true)
-  const tabletHistoryHasMoreRef = React.useRef(true)
-  const [tabletHistoryLoading, setTabletHistoryLoading] = React.useState(false)
-  const tabletPullInFlightRef = React.useRef(false)
+  const [pocketHistoryHasMore, setPocketHistoryHasMore] = React.useState(true)
+  const pocketHistoryHasMoreRef = React.useRef(true)
+  const [pocketHistoryLoading, setPocketHistoryLoading] = React.useState(false)
+  const pocketPullInFlightRef = React.useRef(false)
   const handleLoadEarlierHistory = React.useCallback(() => {
-    if (!tabletMode) return
-    if (tabletPullInFlightRef.current) return
-    if (!tabletHistoryHasMoreRef.current) return
-    tabletPullInFlightRef.current = true
-    setTabletHistoryLoading(true)
+    if (!pocketMode) return
+    if (pocketPullInFlightRef.current) return
+    if (!pocketHistoryHasMoreRef.current) return
+    pocketPullInFlightRef.current = true
+    setPocketHistoryLoading(true)
     const api = window.electronAPI as unknown as {
       getAgentSessionSDKMessages?: (id: string, opts?: unknown) => Promise<unknown>
       getSdkMessagesHasMore?: (id: string) => boolean
@@ -588,18 +588,18 @@ export function AgentView({ sessionId, tabletMode = false, hideAgentHeader = fal
           setPersistedSDKMessages(arr)
         }
         const more = api.getSdkMessagesHasMore?.(sessionId)
-        const nextHasMore = typeof more === 'boolean' ? more : tabletHistoryHasMoreRef.current
-        tabletHistoryHasMoreRef.current = nextHasMore
-        setTabletHistoryHasMore(nextHasMore)
+        const nextHasMore = typeof more === 'boolean' ? more : pocketHistoryHasMoreRef.current
+        pocketHistoryHasMoreRef.current = nextHasMore
+        setPocketHistoryHasMore(nextHasMore)
       })
       .catch(() => {
         // 拉取失败：不阻断，暂不再次自动触发
       })
       .finally(() => {
-        tabletPullInFlightRef.current = false
-        setTabletHistoryLoading(false)
+        pocketPullInFlightRef.current = false
+        setPocketHistoryLoading(false)
       })
-  }, [tabletMode, sessionId])
+  }, [pocketMode, sessionId])
   const setStreamingStates = useSetAtom(agentStreamingStatesAtom)
   // 按 sessionId 切片订阅：仅本 session 的 streaming state 变化才让 AgentView 重渲染。
   // 流式期间其他 session 的高频更新（每 token 一次）通过 base map atom 传播但派生
@@ -1013,9 +1013,9 @@ export function AgentView({ sessionId, tabletMode = false, hideAgentHeader = fal
     if (isSessionSwitch) {
       loadingSessionIdRef.current = sessionId
       // 移动端：切会话时重置触顶加载状态（首次默认假设还有更多，待首帧返回后校正）。
-      tabletHistoryHasMoreRef.current = true
-      setTabletHistoryHasMore(true)
-      setTabletHistoryLoading(false)
+      pocketHistoryHasMoreRef.current = true
+      setPocketHistoryHasMore(true)
+      setPocketHistoryLoading(false)
       // 命中缓存则立即填充，消除「先清空 → 等 IPC 全量读盘」的可见空窗；
       // IPC 返回后仍会以最新数据覆盖。未命中才回退到清空 + loading 态。
       // 注意：refreshVersion bump（流结束/出错/rewind）不是会话切换，
@@ -1031,7 +1031,7 @@ export function AgentView({ sessionId, tabletMode = false, hideAgentHeader = fal
     }
     let cancelled = false
     // 移动端打开会话：显式 paginateFirst 走首帧分页（无参=全量，留给侧栏预览）。桌面无参全量。
-    const loadPromise = tabletMode
+    const loadPromise = pocketMode
       ? (window.electronAPI as unknown as { getAgentSessionSDKMessages?: (id: string, opts?: unknown) => Promise<unknown> }).getAgentSessionSDKMessages?.(sessionId, { paginateFirst: 4 }) ?? Promise.resolve([])
       : window.electronAPI.getAgentSessionSDKMessages(sessionId)
     loadPromise
@@ -1049,8 +1049,8 @@ export function AgentView({ sessionId, tabletMode = false, hideAgentHeader = fal
             const api = window.electronAPI as unknown as { getSdkMessagesHasMore?: (id: string) => boolean }
             const more = api.getSdkMessagesHasMore?.(sessionId)
             if (typeof more === 'boolean') {
-              tabletHistoryHasMoreRef.current = more
-              setTabletHistoryHasMore(more)
+              pocketHistoryHasMoreRef.current = more
+              setPocketHistoryHasMore(more)
             }
           }
 
@@ -1119,7 +1119,7 @@ export function AgentView({ sessionId, tabletMode = false, hideAgentHeader = fal
         setMessagesLoaded(true)
       })
     return () => { cancelled = true }
-  }, [sessionId, refreshVersion, tabletMode, setStreamingStates, setLiveMessagesMap, setMessagesCache, store])
+  }, [sessionId, refreshVersion, pocketMode, setStreamingStates, setLiveMessagesMap, setMessagesCache, store])
 
   // 从会话元数据初始化附加目录（仅冷启动水合，后续由 handleAttachFolder/handleDetachDirectory 实时写入）
   React.useEffect(() => {
@@ -2602,7 +2602,7 @@ export function AgentView({ sessionId, tabletMode = false, hideAgentHeader = fal
   const canSend = messagesLoaded && (hasTextInput || pendingFiles.length > 0 || !!suggestion) && agentChannelId !== null && hasAvailableModel && (!streaming || hasTextInput) && !isCompacting && !streamState?.stopping
 
   // 触控目标尺寸：平板 44px（size-11），桌面保持 36px
-  const toolBtnSize = tabletMode ? 'size-11' : 'size-[36px]'
+  const toolBtnSize = pocketMode ? 'size-11' : 'size-[36px]'
 
   const inputToolbarItems = React.useMemo<ToolbarItem[]>(() => {
     const items: ToolbarItem[] = [
@@ -2741,8 +2741,8 @@ export function AgentView({ sessionId, tabletMode = false, hideAgentHeader = fal
       node: <ToolbarGraphButton onClick={() => { setGraphDialogOpen(true); setGraphRefreshVersion(v => v + 1) }} />,
     },
   ]
-    return tabletMode
-      ? items.filter((item) => !TABLET_HIDDEN_TOOLBAR_KEYS.has(item.key))
+    return pocketMode
+      ? items.filter((item) => !POCKET_HIDDEN_TOOLBAR_KEYS.has(item.key))
       : items
   }, [
     agentChannelIds,
@@ -2771,7 +2771,7 @@ export function AgentView({ sessionId, tabletMode = false, hideAgentHeader = fal
     processGroupsKeepExpanded,
     setAutoPreviewEnabled,
     setProcessGroupsKeepExpanded,
-    tabletMode,
+    pocketMode,
   ])
 
   const inputTrailingNode = (streaming || streamState?.stopping) ? (
@@ -2838,10 +2838,10 @@ export function AgentView({ sessionId, tabletMode = false, hideAgentHeader = fal
           onFork={handleFork}
           onRewind={handleRewindRequest}
           onCompact={handleCompact}
-          tabletMode={tabletMode}
-          onLoadEarlierHistory={tabletMode ? handleLoadEarlierHistory : undefined}
-          historyMoreAvailable={tabletMode ? tabletHistoryHasMore : undefined}
-          historyLoadingEarlier={tabletMode && tabletHistoryLoading ? true : undefined}
+          pocketMode={pocketMode}
+          onLoadEarlierHistory={pocketMode ? handleLoadEarlierHistory : undefined}
+          historyMoreAvailable={pocketMode ? pocketHistoryHasMore : undefined}
+          historyLoadingEarlier={pocketMode && pocketHistoryLoading ? true : undefined}
         />
 
         {/* 权限请求横幅 */}
@@ -2957,7 +2957,7 @@ export function AgentView({ sessionId, tabletMode = false, hideAgentHeader = fal
               longTextPasteThreshold={longTextPasteAsAttachmentEnabled ? LONG_TEXT_ATTACHMENT_THRESHOLD : undefined}
               placeholder={
                 // 平板触屏：输入框保持干净，不显示占位提示文字
-                tabletMode
+                pocketMode
                   ? ''
                   : isCompacting
                     ? '正在压缩上下文，完成后可继续对话...'
@@ -2982,7 +2982,7 @@ export function AgentView({ sessionId, tabletMode = false, hideAgentHeader = fal
               htmlValue={inputHtmlContent}
               onHtmlChange={setInputHtmlContent}
               sendWithCmdEnter={sendWithCmdEnter}
-              tabletMode={tabletMode}
+              pocketMode={pocketMode}
             />
 
             {/* Footer 工具栏 — 容器变窄时尾部按钮自动折叠进「更多」Popover */}
@@ -2995,7 +2995,7 @@ export function AgentView({ sessionId, tabletMode = false, hideAgentHeader = fal
     </AgentSessionProvider>
 
     {/* 任务图悬浮画板（平板版不渲染：无 IPC getGraph 桥接，画板没有数据来源） */}
-    {!tabletMode && (
+    {!pocketMode && (
       <Dialog open={graphDialogOpen} onOpenChange={setGraphDialogOpen}>
         <DialogContent className="w-[85vw] max-w-[1200px] h-[80vh] max-h-[850px] p-0 gap-0" hideClose={false}>
           <DialogTitle className="sr-only">任务图</DialogTitle>

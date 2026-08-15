@@ -61,8 +61,8 @@ import { DataManagementSettings } from "./DataManagementSettings";
 import { TeamWorkspaceSettings } from "./TeamWorkspaceSettings";
 import { CreditsSettings } from "./CreditsSettings";
 import { SubscriptionSettings } from "./SubscriptionSettings";
-import { TabletConnectionSettings } from "./TabletConnectionSettings";
-import { TabletNotificationSettings } from "./TabletNotificationSettings";
+import { PocketConnectionSettings } from "./PocketConnectionSettings";
+import { PocketNotificationSettings } from "./PocketNotificationSettings";
 import { OpenApiSettings } from "./OpenApiSettings";
 import { ProxySettings } from "./ProxySettings";
 import { DevicesSettings } from "./DevicesSettings";
@@ -134,7 +134,7 @@ const ACCOUNT_TABS: ReadonlySet<SettingsTab> = new Set([
 ]);
 
 /** 根据标签页 id 渲染对应内容 */
-function renderTabContent(tab: SettingsTab, tabletMode = false): React.ReactElement {
+function renderTabContent(tab: SettingsTab, pocketMode = false): React.ReactElement {
   switch (tab) {
     case "general":
       return <GeneralSettings />;
@@ -148,11 +148,11 @@ function renderTabContent(tab: SettingsTab, tabletMode = false): React.ReactElem
       return <ToolSettings />;
     case "appearance":
       // 平板（tabsOverride 非空）：界面大小裁剪到 150%、隐藏 Agent 预览展开方式（功能不可用）
-      return <AppearanceSettings tabletMode={tabletMode} />;
+      return <AppearanceSettings pocketMode={pocketMode} />;
     case "connection":
-      return <TabletConnectionSettings />;
+      return <PocketConnectionSettings />;
     case "notifications":
-      return <TabletNotificationSettings />;
+      return <PocketNotificationSettings />;
     case "about":
       return <AboutSettings />;
     case "bots":
