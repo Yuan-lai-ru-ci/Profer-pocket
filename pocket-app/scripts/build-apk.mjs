@@ -16,8 +16,9 @@
  * 步骤：校验环境 → 写入 variant 配置 → 同步 web → cap sync android → gradlew assembleDebug。
  * 环境要求：ANDROID_HOME=C:\Android\Sdk、JAVA_HOME=C:\Android\jdk-21（必须 JDK 21）。
  * 产物：android/app/build/outputs/apk/debug/app-debug.apk，并复制到 releases/。
- * 命名规则（工作区 CLAUDE.md）：dev 版文件名自动追加当前分支提交短 ID（Profer-Pocket-<版本>-dev-<commit>.apk），
- * 区分多分支并行出的 dev 包，防 AList 互相覆盖；release 版不带（版本号 + tag 已唯一标识）。
+ * 命名规则（工作区 CLAUDE.md）：dev 版文件名只用当前分支提交短 ID（Profer-Pocket-<commit>.apk），不附带版本号，
+ * 提交 ID 已唯一标识该分支构建；区分多分支并行出的 dev 包，防 AList 互相覆盖。
+ * release 版文件名用版本号（Profer-Pocket-<版本>.apk），不用提交 ID。
  */
 import { spawnSync } from 'node:child_process'
 import { existsSync, readFileSync, writeFileSync, copyFileSync, mkdirSync } from 'node:fs'
@@ -142,16 +143,17 @@ try {
     run('./gradlew', ['assembleDebug'], androidRoot)
   }
 
-  // 6. 复制产物为带版本名文件（dev 版自动附加提交短 ID，区分并行分支，见工作区 CLAUDE.md 命名规则）
+  // 6. 复制产物：dev 版文件名只用提交短 ID（不附带版本号）；release 用版本号
   step('复制 APK 产物')
   const apk = resolve(androidRoot, 'app/build/outputs/apk/debug/app-debug.apk')
   const outDir = resolve(appRoot, 'releases')
   mkdirSync(outDir, { recursive: true })
   const commitId = variant === 'dev' ? getCommitShortId() : null
-  const suffix = variant === 'dev' && commitId ? `-${commitId}` : ''
-  const outApk = resolve(outDir, `Profer-Pocket-${cfg.versionName}${suffix}.apk`)
+  const outApk = variant === 'dev' && commitId
+    ? resolve(outDir, `Profer-Pocket-${commitId}.apk`)
+    : resolve(outDir, `Profer-Pocket-${cfg.versionName}.apk`)
   copyFileSync(apk, outApk)
-  console.log(`[build-apk] ✅ APK 已生成: ${outApk}${commitId ? `（文件名含提交 ${commitId}）` : ''}`)
+  console.log(`[build-apk] ✅ APK 已生成: ${outApk}${variant === 'dev' && commitId ? '（dev 文件名=提交短ID）' : ''}`)
 } finally {
   // 无论成败恢复 dev 默认配置，避免工作区残留 release 配置
   applyConfig(DEV_CFG)
