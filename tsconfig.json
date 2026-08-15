@@ -27,11 +27,13 @@
     "noUnusedParameters": false,
     "noPropertyAccessFromIndexSignature": false,
 
-    // Path alias（对齐 vite.config.ts 的 @ → src）
+    // Path alias（对齐 vite.config.ts：@ → src/renderer，@/types → src/types）
     "baseUrl": ".",
     "paths": {
-      "@/*": ["./src/*"]
+      "@/*": ["./src/renderer/*"],
+      "@/types/*": ["./src/types/*"]
     }
   },
-  "include": ["src/**/*"]
+  "include": ["src/renderer/**/*", "src/types/**/*", "packages/**/*"],
+  "exclude": ["**/*.test.ts", "**/*.test.tsx", "node_modules"]
 }

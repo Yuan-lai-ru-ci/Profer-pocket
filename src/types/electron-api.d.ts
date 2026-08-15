@@ -1,0 +1,1413 @@
+/**
+ * ElectronAPI 类型声明（Profer-pocket 端）
+ *
+ * 忠实复制自主仓库 apps/electron/src/preload/index.ts 的 ElectronAPI 接口（152-1380 行）
+ * + MigrationExportResult + declare global，供渲染进程类型检查。
+ * Pocket 无 preload，运行时由 electronapi-stub 提供，类型保持一致。
+ */
+
+import type {
+  ActivePlanningReminder,
+  AgentAttachDirectoryInput,
+  AgentAttachFileInput,
+  AgentGenerateTitleInput,
+  AgentMessageSearchResult,
+  AgentQueueMessageInput,
+  AgentRuntime,
+  AgentSaveFilesInput,
+  AgentSaveWorkspaceFilesInput,
+  AgentSavedFile,
+  AgentSendInput,
+  AgentSessionMeta,
+  AgentSessionReferenceSearchInput,
+  AgentSessionReferenceSearchResult,
+  AgentStreamCompletePayload,
+  AgentStreamEvent,
+  AgentThinkingLevel,
+  AgentWorkspace,
+  AskUserRequest,
+  AskUserResponse,
+  AttachmentSaveInput,
+  AttachmentSaveResult,
+  Automation,
+  CalendarEvent,
+  CalendarEventListQuery,
+  ChangelogEntry,
+  Channel,
+  ChannelCreateInput,
+  ChannelPlanQuotaResult,
+  ChannelTestResult,
+  ChannelUpdateInput,
+  ChatMessage,
+  ChatSendInput,
+  ChatToolInfo,
+  ChatToolMeta,
+  ChatToolState,
+  ConversationMeta,
+  CreateAutomationInput,
+  CreateCalendarEventInput,
+  CreatePlanningGroupInput,
+  CreatePlanningTagInput,
+  CreateTodoInput,
+  DetachedPreviewWindowData,
+  DetachedPreviewWindowInput,
+  DingTalkBridgeState,
+  DingTalkConfig,
+  DingTalkConfigInput,
+  DingTalkTestResult,
+  EnvironmentCheckResult,
+  ExitPlanModeResponse,
+  FeishuBridgeState,
+  FeishuChatBinding,
+  FeishuConfig,
+  FeishuConfigInput,
+  FeishuPresenceReport,
+  FeishuTestResult,
+  FeishuUpdateBindingInput,
+  FetchModelsInput,
+  FetchModelsResult,
+  FileDialogResult,
+  FileEntry,
+  FileSearchResult,
+  ForkSessionInput,
+  GenerateTitleInput,
+  GetTaskOutputInput,
+  GetTaskOutputResult,
+  GitHubRelease,
+  GitHubReleaseListOptions,
+  GitRepoStatus,
+  InstallerDownloadRequest,
+  InstallerDownloadResult,
+  InstallerManifest,
+  InstallerProgressPayload,
+  KillProcessInput,
+  KnowledgeImportBatchResult,
+  KnowledgeItem,
+  KnowledgeLibrarySnapshot,
+  KnowledgeSearchResult,
+  ListSessionProcessesInput,
+  MemoryBacklink,
+  MemoryWikilinkTarget,
+  MessageSearchResult,
+  MoveSessionToWorkspaceInput,
+  OtherWorkspaceSkillsGroup,
+  PendingRequestsSnapshot,
+  PermissionRequest,
+  PermissionResponse,
+  PlanningAgentOperation,
+  PlanningChange,
+  PlanningGroup,
+  PlanningGroupScope,
+  PlanningReminder,
+  PlanningTag,
+  ProferPermissionMode,
+  ProviderType,
+  ProxyConfig,
+  ReasoningCapability,
+  RecentMessagesResult,
+  RewindSessionInput,
+  RewindSessionResult,
+  RuntimeStatus,
+  SDKMessage,
+  SessionHealth,
+  SessionProcessInfo,
+  SkillFileContent,
+  SkillFileNode,
+  SkillMeta,
+  SnoozePlanningReminderInput,
+  StartTodoAgentInput,
+  StartTodoAgentResult,
+  StopTaskInput,
+  StreamChunkEvent,
+  StreamCompleteEvent,
+  StreamErrorEvent,
+  StreamReasoningEvent,
+  StreamToolActivityEvent,
+  SystemPrompt,
+  SystemPromptConfig,
+  SystemPromptCreateInput,
+  SystemPromptUpdateInput,
+  SystemProxyDetectResult,
+  TeamMemoryApiResult,
+  TeamMemoryDocument,
+  TeamMemoryRevision,
+  Todo,
+  TodoAgentSessionActivation,
+  TodoListQuery,
+  UpdateAutomationInput,
+  UpdateCalendarEventInput,
+  UpdatePlanningGroupInput,
+  UpdatePlanningTagInput,
+  UpdateTodoInput,
+  WeChatBridgeState,
+  WeChatConfig,
+  WorkspaceAttachDirectoryInput,
+  WorkspaceAttachFileInput,
+  WorkspaceCapabilities,
+  WorkspaceMcpConfig,
+  WorkspaceMemorySummary,} from '@profer/shared'
+
+import type {
+  AppSettings,
+  CustomNotificationSound,
+  MicPermissionResult,
+  QuickTaskOpenSessionData,
+  QuickTaskSubmitInput,
+  TabletModeStatus,
+  TrayCreateSessionData,
+  TrayOpenAgentSessionData,
+  UserProfile,
+  VoiceDictationAudioChunkInput,
+  VoiceDictationCommitInput,
+  VoiceDictationCommitResult,
+  VoiceDictationResizeInput,
+  VoiceDictationSettings,
+  VoiceDictationSettingsUpdate,
+  VoiceDictationStartInput,
+  VoiceDictationStateEvent,
+  VoiceDictationStopInput,
+  VoiceDictationTestResult,
+  VoiceDictationTranscriptEvent,
+} from './index'
+
+export interface ElectronAPI {
+  // ===== 运行时相关 =====
+
+  /**
+   * 获取运行时状态
+   * @returns 运行时状态，包含 Bun、Git 等信息
+   */
+  getRuntimeStatus: () => Promise<RuntimeStatus | null>
+
+  /**
+   * 重新初始化运行时状态（重新跑 Node / Bun / Git / Shell 检测）
+   * 用户安装完 Git / Node 后触发，强制刷新缓存
+   */
+  reinitRuntime: () => Promise<RuntimeStatus>
+
+  /**
+   * 获取指定目录的 Git 仓库状态
+   * @param dirPath - 目录路径
+   * @returns Git 仓库状态
+   */
+  getGitRepoStatus: (dirPath: string) => Promise<GitRepoStatus | null>
+
+  /** 获取未暂存的变更文件列表 */
+  getUnstagedChanges: (dirPath: string, sessionPath?: string, workspaceFilesPath?: string, extraPaths?: string[], sessionId?: string) => Promise<import('@profer/shared').UnstagedChangesResult>
+  /** 获取单个文件的 diff */
+  getFileDiff: (input: import('@profer/shared').GetFileDiffInput) => Promise<string>
+  /** 获取未追踪文件内容 */
+  getUntrackedContent: (input: import('@profer/shared').GetFileDiffInput) => Promise<string>
+  /** 还原文件变更 */
+  revertFile: (input: import('@profer/shared').RevertFileInput) => Promise<void>
+  /** 使 git diff 缓存失效（Agent 写文件/git 突变后调用，传 changedPath 定向失效，不传全量失效） */
+  invalidateGitDiffCache: (changedPath?: string) => Promise<void>
+  /** 获取文件新旧版本内容 */
+  getDiffContents: (input: import('@profer/shared').GetFileDiffInput) => Promise<{ oldContent: string; newContent: string } | null>
+  /** 列出 Git Worktree */
+  listWorktrees: (repoPath: string, sessionId: string) => Promise<import('@profer/shared').WorktreeInfo[]>
+  /** 获取 Worktree 相对于基准分支的全量变更 */
+  getWorktreeChanges: (worktreePath: string, baseBranch: string, sessionId: string) => Promise<import('@profer/shared').UnstagedChangesResult>
+  /** 在独立窗口打开当前文件预览 */
+  openDetachedPreview: (input: DetachedPreviewWindowInput) => Promise<string | null>
+  /** 获取独立预览窗口数据 */
+  getDetachedPreviewData: (previewId: string) => Promise<DetachedPreviewWindowData | null>
+
+  // ===== Pi 受管浏览器（主进程 WebContentsView） =====
+  openAgentBrowser: (sessionId: string) => Promise<import('@profer/shared').BrowserViewState>
+  listAgentBrowserTabs: (sessionId: string) => Promise<import('@profer/shared').BrowserViewState>
+  createAgentBrowserTab: (input: import('@profer/shared').BrowserCreateTabInput) => Promise<import('@profer/shared').BrowserViewState>
+  selectAgentBrowserTab: (input: import('@profer/shared').BrowserTabInput) => Promise<import('@profer/shared').BrowserViewState>
+  closeAgentBrowserTab: (input: import('@profer/shared').BrowserTabInput) => Promise<import('@profer/shared').BrowserViewState | null>
+  getAgentBrowserState: (sessionId: string) => Promise<import('@profer/shared').BrowserViewState | null>
+  setAgentBrowserLayout: (layout: import('@profer/shared').BrowserViewLayout) => void
+  navigateAgentBrowser: (input: import('@profer/shared').BrowserNavigateInput) => Promise<import('@profer/shared').BrowserViewState>
+  goBackAgentBrowser: (sessionId: string) => Promise<import('@profer/shared').BrowserViewState>
+  goForwardAgentBrowser: (sessionId: string) => Promise<import('@profer/shared').BrowserViewState>
+  reloadAgentBrowser: (sessionId: string) => Promise<import('@profer/shared').BrowserViewState>
+  translateAgentBrowser: (input: import('@profer/shared').BrowserTabInput) => Promise<import('@profer/shared').BrowserTranslateResult>
+  /** 用户面板显式触发：将系统剪贴板文本粘贴到当前聚焦字段。 */
+  pasteAgentBrowserClipboard: (input: import('@profer/shared').BrowserTabInput) => Promise<import('@profer/shared').BrowserTranslateResult>
+  /** 订阅受管网页下载被拦截的脱敏事件。 */
+  onAgentBrowserDownloadBlocked: (callback: (event: import('@profer/shared').BrowserDownloadBlockedEvent) => void) => () => void
+  hideAgentBrowser: (sessionId: string) => Promise<void>
+  closeAgentBrowser: (sessionId: string) => Promise<void>
+  setAgentBrowserZoom: (input: import('@profer/shared').BrowserTabInput & { zoomFactor: number }) => Promise<import('@profer/shared').BrowserViewState>
+  onAgentBrowserStateChanged: (callback: (state: import('@profer/shared').BrowserViewState) => void) => () => void
+
+  // ===== 新标签页起始页 =====
+  getBrowserStartPage: () => Promise<import('@profer/shared').BrowserStartPageState>
+  addBrowserBookmark: (input: import('@profer/shared').BrowserAddBookmarkInput) => Promise<import('@profer/shared').BrowserStartPageState>
+  removeBrowserBookmark: (id: string) => Promise<import('@profer/shared').BrowserStartPageState>
+  updateBrowserHomeUrl: (url: string) => Promise<import('@profer/shared').BrowserStartPageState>
+  clearBrowserHistory: () => Promise<import('@profer/shared').BrowserStartPageState>
+
+  // ===== 通用工具 =====
+
+  /** 在系统默认浏览器中打开外部链接 */
+  openExternal: (url: string) => Promise<void>
+
+  // ===== 窗口控制（Windows 自定义标题栏）=====
+
+  /** 最小化窗口 */
+  windowMinimize: () => Promise<void>
+  /** 最大化/还原窗口 */
+  windowMaximize: () => Promise<void>
+  /** 关闭窗口 */
+  windowClose: () => Promise<void>
+  /** 窗口是否处于最大化状态 */
+  windowIsMaximized: () => Promise<boolean>
+  /** 订阅窗口最大化/还原事件 */
+  onWindowResize: (callback: () => void) => () => void
+
+  // ===== 渠道管理相关 =====
+
+  /** 获取所有渠道列表（apiKey 保持加密态） */
+  listChannels: () => Promise<Channel[]>
+  /** 获取官方模型最近可用性 */
+  getOfficialModelHealth: () => Promise<import('@profer/shared').OfficialChannelHealth[]>
+
+  /** 创建渠道（apiKey 为明文，主进程加密） */
+  createChannel: (input: ChannelCreateInput) => Promise<Channel>
+
+  /** 更新渠道 */
+  updateChannel: (id: string, input: ChannelUpdateInput) => Promise<Channel>
+
+  /** 删除渠道 */
+  deleteChannel: (id: string) => Promise<void>
+
+  /** 解密获取明文 API Key（仅在用户查看时调用） */
+  decryptApiKey: (channelId: string) => Promise<string>
+
+  /** 测试渠道连接 */
+  testChannel: (channelId: string) => Promise<ChannelTestResult>
+
+  /** 直接测试连接（无需已保存渠道，传入明文凭证） */
+  testChannelDirect: (input: FetchModelsInput) => Promise<ChannelTestResult>
+
+  /** 从供应商拉取可用模型列表（直接传入凭证，无需已保存渠道） */
+  fetchModels: (input: FetchModelsInput) => Promise<FetchModelsResult>
+
+  /** 查询渠道订阅 Plan 额度 */
+  getChannelPlanQuota: (channelId: string) => Promise<ChannelPlanQuotaResult>
+
+  /** 从服务端同步渠道到本地 */
+  syncChannelsFromServer: (serverBaseUrl: string, accessToken: string) => Promise<void>
+
+  /** 检查是否处于商业模式 */
+  getCommercialMode: () => Promise<boolean>
+
+  /** 获取账号能力（商业模式+自配权限+订阅等级）。force=true 时先拉服务端刷新再读，用于权限变更即时生效 */
+  getAccountCapabilities: (force?: boolean) => Promise<{ commercialMode: boolean; canSelfConfig: boolean; membershipTier: string }>
+
+  /** 获取构建目标 */
+  getBuildTarget: () => Promise<'oss' | 'commercial'>
+
+  // ===== 对话管理相关 =====
+
+  /** 获取对话列表 */
+  listConversations: () => Promise<ConversationMeta[]>
+
+  /** 创建对话 */
+  createConversation: (title?: string, modelId?: string, channelId?: string) => Promise<ConversationMeta>
+
+  /** 获取对话消息 */
+  getConversationMessages: (id: string) => Promise<ChatMessage[]>
+
+  /** 获取对话最近 N 条消息（分页加载） */
+  getRecentMessages: (id: string, limit: number) => Promise<RecentMessagesResult>
+
+  /** 更新对话标题 */
+  updateConversationTitle: (id: string, title: string) => Promise<ConversationMeta>
+
+  /** 更新对话使用的模型/渠道 */
+  updateConversationModel: (id: string, modelId?: string, channelId?: string) => Promise<ConversationMeta>
+
+  /** 删除对话 */
+  deleteConversation: (id: string) => Promise<void>
+
+  /** 切换对话置顶状态 */
+  togglePinConversation: (id: string) => Promise<ConversationMeta>
+
+  /** 切换对话归档状态 */
+  toggleArchiveConversation: (id: string) => Promise<ConversationMeta>
+
+  /** 搜索对话消息内容 */
+  searchConversationMessages: (query: string) => Promise<MessageSearchResult[]>
+
+  // ===== 教程 =====
+
+  /** 获取教程内容 */
+  getTutorialContent: () => Promise<string | null>
+
+  /** 创建欢迎对话（含教程附件） */
+  createWelcomeConversation: () => Promise<ConversationMeta | null>
+
+  // ===== 消息发送 =====
+
+  /** 发送消息（触发 AI 流式响应） */
+  sendMessage: (input: ChatSendInput) => Promise<void>
+
+  /** 向当前对话写入一条可见的资料引用记录。 */
+  addKnowledgeReferences: (conversationId: string, itemIds: string[]) => Promise<ChatMessage>
+
+  /** 中止生成 */
+  stopGeneration: (conversationId: string) => Promise<void>
+
+  /** 删除指定消息 */
+  deleteMessage: (conversationId: string, messageId: string) => Promise<ChatMessage[]>
+
+  /** 从指定消息开始截断（包含该消息） */
+  truncateMessagesFrom: (
+    conversationId: string,
+    messageId: string,
+    preserveFirstMessageAttachments?: boolean,
+  ) => Promise<ChatMessage[]>
+
+  /** 更新上下文分隔线 */
+  updateContextDividers: (conversationId: string, dividers: string[]) => Promise<ConversationMeta>
+
+  /** 生成对话标题 */
+  generateTitle: (input: GenerateTitleInput) => Promise<string | null>
+
+  // ===== 附件管理相关 =====
+
+  /** 保存附件到本地 */
+  saveAttachment: (input: AttachmentSaveInput) => Promise<AttachmentSaveResult>
+
+  /** 读取附件（返回 base64 字符串） */
+  readAttachment: (localPath: string) => Promise<string>
+
+  /** 另存图片到用户选择的位置（原生 Save As 对话框） */
+  saveImageAs: (localPath: string, defaultFilename: string) => Promise<boolean>
+
+  /** 保存应用内置资源文件到用户选择的位置（原生 Save As 对话框） */
+  saveResourceFileAs: (resourceRelativePath: string, defaultFilename: string) => Promise<boolean>
+
+  /** 删除附件 */
+  deleteAttachment: (localPath: string) => Promise<void>
+
+  /** 打开文件选择对话框 */
+  openFileDialog: () => Promise<FileDialogResult>
+
+  // ===== 通用个人资料库相关 =====
+
+  knowledge: {
+    importItems: (filePaths: string[]) => Promise<KnowledgeImportBatchResult>
+    listItems: () => Promise<KnowledgeItem[]>
+    getItem: (itemId: string) => Promise<{ meta: KnowledgeItem; text: string } | null>
+    deleteItem: (itemId: string) => Promise<{ itemId: string; deleted: boolean }>
+    searchItems: (query: string, itemIds?: string[], topK?: number) => Promise<KnowledgeSearchResult[]>
+    getLibrarySnapshot: () => Promise<KnowledgeLibrarySnapshot>
+    /** 在文件管理器中显示本地资料的受控副本。 */
+    showItemInFolder: (itemId: string) => Promise<void>
+  }
+
+  /** 提取附件文档的文本内容 */
+  extractAttachmentText: (localPath: string) => Promise<string>
+
+  // ===== 用户档案相关 =====
+
+  /** 获取用户档案 */
+  getUserProfile: () => Promise<UserProfile>
+
+  /** 更新用户档案 */
+  updateUserProfile: (updates: Partial<UserProfile>) => Promise<UserProfile>
+
+  // ===== 应用设置相关 =====
+
+  // ===== 皮肤管理 =====
+  getSkins: () => Promise<import('../types').SkinInfo[]>
+  getSkinCss: (id: string) => Promise<string | null>
+  getSkinPreview: (id: string) => Promise<string | null>
+  selectSkinZip: () => Promise<string | null>
+  selectSkinFolder: () => Promise<string | null>
+  installSkinZip: (path: string, replace?: boolean) => Promise<import('../types').SkinManagerResult>
+  installSkinFolder: (path: string, replace?: boolean) => Promise<import('../types').SkinManagerResult>
+  deleteUserSkin: (id: string) => Promise<import('../types').SkinManagerResult>
+  openUserSkinsFolder: () => Promise<void>
+  openSkinTemplateFolder: () => Promise<void>
+  refreshSkins: () => Promise<import('../types').SkinInfo[]>
+
+  /** 通知主进程 renderer 已完成首屏初始化 */
+  notifyRendererReady: () => void
+
+  /** 获取应用设置 */
+  getSettings: () => Promise<AppSettings>
+
+  /** 更新应用设置 */
+  updateSettings: (updates: Partial<AppSettings>) => Promise<AppSettings>
+
+  /** 同步更新应用设置（用于 beforeunload 场景） */
+  updateSettingsSync: (updates: Partial<AppSettings>) => boolean
+
+  /** 获取移动模式（试验版）状态与连接信息 */
+  getTabletModeStatus: () => Promise<TabletModeStatus>
+  /** 启用或关闭移动模式（试验版） */
+  setTabletModeEnabled: (enabled: boolean) => Promise<TabletModeStatus>
+  /** 设置移动模式服务端口（保存并热应用，服务运行中自动重启） */
+  setTabletModePort: (port: number) => Promise<TabletModeStatus>
+  /** 获取安卓版 APK 扫码下载信息（官网地址/二维码/文件名） */
+  getProferApkQr: () => Promise<{ url: string; dataUrl: string; fileName: string }>
+
+  /** 获取系统主题（是否深色模式） */
+  getSystemTheme: () => Promise<boolean>
+
+  /** 订阅系统主题变化事件（返回清理函数） */
+  onSystemThemeChanged: (callback: (isDark: boolean) => void) => () => void
+
+  /** 获取开机自启动状态 */
+  getAutoLaunch: () => Promise<boolean>
+
+  // ===== 自定义通知音效 =====
+
+  /** 添加自定义通知音效（sourcePath → 主进程复制 + 持久化） */
+  addCustomNotificationSound: (sourcePath: string, label: string) => Promise<CustomNotificationSound>
+  /** 删除自定义通知音效 */
+  removeCustomNotificationSound: (id: string) => Promise<CustomNotificationSound[]>
+  /** 获取自定义音效的文件 URL（用于 HTMLAudioElement 播放） */
+  getCustomSoundUrl: (fileName: string) => Promise<string>
+
+  // ===== 桌面通知（通过主进程弹出原生 Notification） =====
+
+  /** 通过主进程弹出桌面通知（Windows 点击可靠） */
+  showDesktopNotification: (title: string, body: string) => Promise<void>
+  /** 注册桌面通知点击回调（返回清理函数） */
+  onDesktopNotificationClicked: (callback: () => void) => () => void
+
+  /** 设置开机自启动 */
+  setAutoLaunch: (enabled: boolean) => Promise<void>
+
+  /** 订阅用户手动切换主题事件（跨窗口同步，返回清理函数） */
+  onThemeSettingsChanged: (callback: (payload: { themeMode: string; themeStyle: string; interfaceVariant?: string }) => void) => () => void
+
+  /** 订阅皮肤安装/删除/刷新事件（多窗口同步刷新，返回清理函数） */
+  onSkinsChanged: (callback: (payload: { deletedId: string | null }) => void) => () => void
+
+  // ===== Scratch Pad =====
+
+  /** 从磁盘加载 scratch-pad.md */
+  loadScratchPad: () => Promise<string>
+
+  /** 异步保存内容到 scratch-pad.md */
+  saveScratchPad: (content: string) => Promise<boolean>
+
+  /** 同步保存内容到 scratch-pad.md（beforeunload 场景） */
+  saveScratchPadSync: (content: string) => boolean
+
+  /** 导出 ScratchPad 内容为 Markdown 文件到指定目录 */
+  exportScratchPad: (markdown: string, dirPath: string, filename: string) => Promise<string>
+
+  /** 打开原生保存对话框，返回用户选择的路径 */
+  chooseExportPath: (defaultName: string) => Promise<string | null>
+
+  // ===== 应用图标切换 =====
+
+  /** 设置应用图标变体（传入 variant ID，如 'blue'、'cyberpunk'，'default' 恢复默认） */
+  setAppIcon: (variantId: string) => Promise<boolean>
+
+  /** 设置 Dock/Launcher 角标数量（0 表示清除） */
+  setDockBadgeCount: (count: number) => Promise<boolean>
+
+  // ===== 环境检测相关 =====
+
+  /** 执行环境检测 */
+  checkEnvironment: () => Promise<EnvironmentCheckResult>
+
+  // ===== 第三方安装包（Git / Node.js）相关 =====
+
+  /** 获取安装包清单（远程，失败回退内置） */
+  fetchInstallerManifest: () => Promise<InstallerManifest>
+
+  /** 开始下载指定安装包，resolve 时文件已落地并通过 sha256 校验 */
+  downloadInstaller: (req: InstallerDownloadRequest) => Promise<InstallerDownloadResult>
+
+  /** 取消指定 key 的进行中下载 */
+  cancelInstallerDownload: (key: string) => Promise<boolean>
+
+  /** 拉起已下载的安装程序（等效双击） */
+  launchInstaller: (filePath: string) => Promise<void>
+
+  /** 订阅下载进度事件，返回取消订阅函数 */
+  onInstallerProgress: (
+    callback: (payload: InstallerProgressPayload) => void,
+  ) => () => void
+
+  // ===== 代理配置相关 =====
+
+  /** 获取代理配置 */
+  getProxySettings: () => Promise<ProxyConfig>
+
+  /** 更新代理配置 */
+  updateProxySettings: (config: ProxyConfig) => Promise<void>
+
+  /** 检测系统代理 */
+  detectSystemProxy: () => Promise<SystemProxyDetectResult>
+
+  // ===== 流式事件订阅（返回清理函数） =====
+
+  /** 订阅内容片段事件 */
+  onStreamChunk: (callback: (event: StreamChunkEvent) => void) => () => void
+
+  /** 订阅推理片段事件 */
+  onStreamReasoning: (callback: (event: StreamReasoningEvent) => void) => () => void
+
+  /** 订阅流式完成事件 */
+  onStreamComplete: (callback: (event: StreamCompleteEvent) => void) => () => void
+
+  /** 订阅流式错误事件 */
+  onStreamError: (callback: (event: StreamErrorEvent) => void) => () => void
+
+  /** 订阅流式工具活动事件 */
+  onStreamToolActivity: (callback: (event: StreamToolActivityEvent) => void) => () => void
+
+  // ===== Agent 会话管理相关 =====
+
+  /** 获取 Agent 会话列表 */
+  listAgentSessions: () => Promise<AgentSessionMeta[]>
+
+  /** 创建 Agent 会话 */
+  createAgentSession: (title?: string, channelId?: string, workspaceId?: string, modelId?: string) => Promise<AgentSessionMeta>
+
+  /** 为项目创建或复用隐藏的 Agent 草稿会话 */
+  ensureProjectDraftAgentSession: (workspaceId: string, channelId?: string, modelId?: string) => Promise<AgentSessionMeta>
+
+  /** 获取 Agent 会话 SDKMessage（Phase 4 新格式） */
+  getAgentSessionSDKMessages: (id: string) => Promise<SDKMessage[]>
+
+  /** 更新 Agent 会话标题 */
+  updateAgentSessionTitle: (id: string, title: string) => Promise<AgentSessionMeta>
+
+  /** 更新空闲 Agent 会话的渠道与模型 */
+  updateAgentSessionModel: (id: string, channelId?: string, modelId?: string) => Promise<AgentSessionMeta>
+
+  /** 删除 Agent 会话 */
+  deleteAgentSession: (id: string) => Promise<void>
+
+  /** 迁移 Chat 对话记录到 Agent 会话 */
+  migrateChatToAgent: (conversationId: string, agentSessionId: string) => Promise<void>
+
+  /** 切换 Agent 会话置顶状态 */
+  togglePinAgentSession: (id: string) => Promise<AgentSessionMeta>
+
+  /** 清除 Agent 会话完成状态（兼容清除旧版 manualWorking） */
+  clearAgentCompletionState: (id: string) => Promise<AgentSessionMeta>
+
+  /** 切换 Agent 会话归档状态 */
+  toggleArchiveAgentSession: (id: string) => Promise<AgentSessionMeta>
+
+  /** 搜索 Agent 会话消息内容 */
+  searchAgentSessionMessages: (query: string) => Promise<AgentMessageSearchResult[]>
+
+  /** 搜索当前工作区可引用的 Agent 会话 */
+  searchAgentSessionReferences: (input: AgentSessionReferenceSearchInput) => Promise<AgentSessionReferenceSearchResult[]>
+
+  /** 迁移 Agent 会话到另一个工作区 */
+  moveAgentSessionToWorkspace: (input: MoveSessionToWorkspaceInput) => Promise<AgentSessionMeta>
+  listSessionProcesses: (input: ListSessionProcessesInput) => Promise<SessionProcessInfo[]>
+  getSessionProcessCount: (sessionId: string) => Promise<number>
+  killProcess: (input: KillProcessInput) => Promise<{ ok: boolean; message: string }>
+  /** Pi 运行进程登记或状态变化（用于即时刷新服务栏） */
+  onRuntimeProcessesChanged: (callback: (data: { sessionId: string }) => void) => () => void
+
+  /** 分叉 Agent 会话 */
+  forkAgentSession: (input: ForkSessionInput) => Promise<AgentSessionMeta>
+
+  /** 快照回退（同一会话内回退到指定点，恢复文件 + 截断对话） */
+  rewindSession: (input: RewindSessionInput) => Promise<RewindSessionResult>
+
+  /** 扫描所有会话的孤儿记录和文件系统不一致 */
+  findOrphanSessions: () => Promise<SessionHealth[]>
+
+  /** 生成 Agent 会话标题 */
+  generateAgentTitle: (input: AgentGenerateTitleInput) => Promise<string | null>
+
+  /** 发送 Agent 消息 */
+  sendAgentMessage: (input: AgentSendInput) => Promise<void>
+
+  /** 将资料导入当前 Agent session 的受控 allowlist。 */
+  addAgentKnowledgeReferences: (sessionId: string, itemIds: string[]) => Promise<import('@profer/shared').KnowledgeReference[]>
+  /** 获取当前 Agent session 已导入资料。 */
+  getAgentKnowledgeReferences: (sessionId: string) => Promise<import('@profer/shared').KnowledgeReference[]>
+  /** 撤销当前 Agent session 对一份资料的访问授权。 */
+  removeAgentKnowledgeReference: (sessionId: string, itemId: string) => Promise<import('@profer/shared').KnowledgeReference[]>
+
+  /** 中止 Agent 执行 */
+  stopAgent: (sessionId: string) => Promise<void>
+
+  // ===== Agent 队列消息 =====
+
+  /** 流式追加发送 Agent 消息（Agent 运行中） */
+  queueAgentMessage: (input: AgentQueueMessageInput) => Promise<string>
+
+  // ===== Agent 后台任务管理 =====
+
+  /** 获取任务输出 */
+  getTaskOutput: (input: GetTaskOutputInput) => Promise<GetTaskOutputResult>
+
+  /** 停止任务 */
+  stopTask: (input: StopTaskInput) => Promise<void>
+
+  // ===== Agent 工作区管理相关 =====
+
+  /** 获取 Agent 工作区列表 */
+  listAgentWorkspaces: () => Promise<AgentWorkspace[]>
+
+  /** 创建 Agent 工作区 */
+  createAgentWorkspace: (name: string) => Promise<AgentWorkspace>
+
+  /** 更新 Agent 工作区 */
+  updateAgentWorkspace: (id: string, updates: { name: string }) => Promise<AgentWorkspace>
+
+  /** 删除 Agent 工作区 */
+  deleteAgentWorkspace: (id: string) => Promise<void>
+
+  /** 重排工作区顺序 */
+  reorderAgentWorkspaces: (orderedIds: string[]) => Promise<AgentWorkspace[]>
+
+  // ===== 工作区能力（MCP + Skill） =====
+
+  /** 获取工作区能力摘要 */
+  getWorkspaceCapabilities: (workspaceSlug: string) => Promise<WorkspaceCapabilities>
+
+  /** 获取工作区 MCP 配置 */
+  getWorkspaceMcpConfig: (workspaceSlug: string) => Promise<WorkspaceMcpConfig>
+
+  /** 保存工作区 MCP 配置 */
+  saveWorkspaceMcpConfig: (workspaceSlug: string, config: WorkspaceMcpConfig) => Promise<void>
+
+  /** 测试 MCP 服务器连接 */
+  testMcpServer: (name: string, entry: import('@profer/shared').McpServerEntry) => Promise<{ success: boolean; message: string }>
+
+  /** 获取工作区 Skill 列表（含活跃和不活跃） */
+  getWorkspaceSkills: (workspaceSlug: string) => Promise<SkillMeta[]>
+
+  /** 获取工作区 Skills 目录绝对路径 */
+  getWorkspaceSkillsDir: (workspaceSlug: string) => Promise<string>
+
+  /** 删除工作区 Skill */
+  deleteWorkspaceSkill: (workspaceSlug: string, skillSlug: string) => Promise<void>
+
+  /** 切换工作区 Skill 启用/禁用 */
+  toggleWorkspaceSkill: (workspaceSlug: string, skillSlug: string, enabled: boolean) => Promise<void>
+
+  /** 获取其他工作区的 Skill 列表 */
+  getOtherWorkspaceSkills: (currentSlug: string) => Promise<OtherWorkspaceSkillsGroup[]>
+
+  /** 获取默认 Skills 的 slug 列表（来自 ~/.proma/default-skills/） */
+  getDefaultSkillSlugs: () => Promise<string[]>
+
+  /** 从其他工作区导入 Skill */
+  importSkillFromWorkspace: (targetSlug: string, sourceSlug: string, skillSlug: string) => Promise<SkillMeta>
+
+  /** 从源工作区同步更新已导入的 Skill */
+  updateSkillFromSource: (targetSlug: string, skillSlug: string) => Promise<SkillMeta>
+
+  /** 读取 SKILL.md 全文内容 */
+  readSkillContent: (workspaceSlug: string, skillSlug: string) => Promise<string>
+
+  /** 写入 SKILL.md 全文内容 */
+  writeSkillContent: (workspaceSlug: string, skillSlug: string, content: string) => Promise<void>
+
+  /** 列出 Skill 目录下的子文件树（不含 SKILL.md） */
+  listSkillFiles: (workspaceSlug: string, skillSlug: string) => Promise<import('@profer/shared').SkillFileNode[]>
+
+  /** 读取 Skill 目录下的子文件内容 */
+  readSkillFile: (workspaceSlug: string, skillSlug: string, relativePath: string) => Promise<import('@profer/shared').SkillFileContent>
+
+  /** 写入 Skill 目录下的子文件内容（文本） */
+  writeSkillFile: (workspaceSlug: string, skillSlug: string, relativePath: string, content: string) => Promise<void>
+
+  /** 在 Skill 目录下创建文件或目录 */
+  createSkillEntry: (workspaceSlug: string, skillSlug: string, relativePath: string, type: 'file' | 'directory') => Promise<void>
+
+  /** 删除 Skill 目录下的文件或目录 */
+  deleteSkillEntry: (workspaceSlug: string, skillSlug: string, relativePath: string) => Promise<void>
+
+  /** 重命名/移动 Skill 目录下的文件或目录 */
+  renameSkillEntry: (workspaceSlug: string, skillSlug: string, fromRelative: string, toRelative: string) => Promise<void>
+
+  /** 刷新 renderer 后重新绑定并回放仍在运行的 Agent 流 */
+  restoreActiveAgentStreams: () => Promise<string[]>
+
+  /** 订阅 Agent 流式事件（返回清理函数） */
+  onAgentStreamEvent: (callback: (event: AgentStreamEvent) => void) => () => void
+
+  /** 订阅 Agent 流式完成事件 */
+  onAgentStreamComplete: (callback: (data: AgentStreamCompletePayload) => void) => () => void
+
+  /** 订阅 Agent 流式错误事件 */
+  onAgentStreamError: (callback: (data: { sessionId: string; error: string }) => void) => () => void
+
+  /** 订阅 Agent 标题自动更新事件 */
+  onAgentTitleUpdated: (callback: (data: { sessionId: string; title: string }) => void) => () => void
+
+  /** 订阅 Agent 会话元数据更新事件 */
+  onAgentSessionUpdated: (callback: (data: { session: AgentSessionMeta }) => void) => () => void
+
+  // ===== Agent 权限系统 =====
+
+  /** 响应权限请求 */
+  respondPermission: (response: PermissionResponse) => Promise<void>
+
+  /** 热切换指定会话的权限模式（运行中生效，仅影响该 session） */
+  updateSessionPermissionMode: (sessionId: string, mode: ProferPermissionMode) => Promise<void>
+  /** 切换当前会话的 ChatGPT Codex Fast Mode。 */
+  updateSessionCodexFastMode: (sessionId: string, enabled: boolean) => Promise<AgentSessionMeta>
+  /** 切换当前会话的 ChatGPT Codex 推理档位（跨会话持久化）。 */
+  updateSessionOpenAIThinkingLevel: (sessionId: string, level: AgentThinkingLevel | null) => Promise<AgentSessionMeta>
+  /** 查询某 Pi 模型可用的推理档位能力（renderer 思考档位菜单动态展示）。 */
+  getPiReasoningCapability: (provider: ProviderType, modelId: string | undefined) => Promise<ReasoningCapability | undefined>
+
+  /** 切换空闲会话的 Agent runtime；跨 runtime 时清除旧 SDK session ID。 */
+  updateSessionAgentRuntime: (sessionId: string, runtime: AgentRuntime) => Promise<AgentSessionMeta>
+
+  /** 获取工作区记忆摘要 */
+  getWorkspaceMemorySummary: (workspaceSlug: string) => Promise<WorkspaceMemorySummary>
+  /** 获取工作区每日 Token 消耗，用于热力图展示。团队工作区返回空数组 */
+  getWorkspaceHeatmapDaily: (workspaceId: string) => Promise<Array<{ date: string; tokens: number }>>
+  /** 读取工作区 CLAUDE.md */
+  readWorkspaceClaudeMd: (workspaceSlug: string) => Promise<SkillFileContent>
+  /** 写入工作区 CLAUDE.md */
+  writeWorkspaceClaudeMd: (workspaceSlug: string, content: string) => Promise<void>
+  /** 列出工作区 auto memory 文件树 */
+  listWorkspaceAutoMemoryFiles: (workspaceSlug: string) => Promise<SkillFileNode[]>
+  /** 读取工作区 auto memory 文件 */
+  readWorkspaceAutoMemoryFile: (workspaceSlug: string, relativePath: string) => Promise<SkillFileContent>
+  /** 写入工作区 auto memory 文件 */
+  writeWorkspaceAutoMemoryFile: (workspaceSlug: string, relativePath: string, content: string) => Promise<void>
+  /** 列出工作区 memory-archive 主题记忆文件树 */
+  listWorkspaceMemoryArchiveFiles: (workspaceSlug: string) => Promise<SkillFileNode[]>
+  /** 读取工作区 memory-archive 主题记忆文件 */
+  readWorkspaceMemoryArchiveFile: (workspaceSlug: string, relativePath: string) => Promise<SkillFileContent>
+  /** 写入工作区 memory-archive 主题记忆文件 */
+  writeWorkspaceMemoryArchiveFile: (workspaceSlug: string, relativePath: string, content: string) => Promise<void>
+  /** 搜索工作区 memory-archive 正文 */
+  searchMemoryArchive: (workspaceSlug: string, query: string, topK?: number) => Promise<Array<{ relativePath: string; content: string; startIndex: number; endIndex: number; score: number; matchedTokens: string[] }>>
+  /** 解析双链名称 → 命中记忆文件 */
+  resolveMemoryWikilink: (workspaceSlug: string, name: string) => Promise<MemoryWikilinkTarget | null>
+  /** 查询记忆反链：列出引用过当前文件的其它记忆文件 */
+  getMemoryBacklinks: (workspaceSlug: string, currentAbsolutePath: string, currentLinkName: string) => Promise<MemoryBacklink[]>
+
+  // ===== Chat 工具管理 =====
+
+  /** 获取所有工具信息 */
+  getChatTools: () => Promise<ChatToolInfo[]>
+
+  /** 获取工具凭据 */
+  getChatToolCredentials: (toolId: string) => Promise<Record<string, string>>
+
+  /** 更新工具开关状态 */
+  updateChatToolState: (toolId: string, state: ChatToolState) => Promise<void>
+
+  /** 更新工具凭据 */
+  updateChatToolCredentials: (toolId: string, credentials: Record<string, string>) => Promise<void>
+
+  /** 创建自定义工具 */
+  createCustomChatTool: (meta: ChatToolMeta) => Promise<void>
+
+  /** 删除自定义工具 */
+  deleteCustomChatTool: (toolId: string) => Promise<void>
+
+  /** 监听自定义工具配置变更 */
+  onCustomToolChanged: (callback: () => void) => () => void
+
+  /** 测试工具连接 */
+  testChatTool: (toolId: string) => Promise<{ success: boolean; message: string }>
+
+  // ===== AskUserQuestion 交互式问答 =====
+
+  /** 响应 AskUser 请求 */
+  respondAskUser: (response: AskUserResponse) => Promise<void>
+
+  // ===== ExitPlanMode 计划审批 =====
+
+  /** 响应 ExitPlanMode 请求 */
+  respondExitPlanMode: (response: ExitPlanModeResponse) => Promise<void>
+
+  /** 获取所有待处理的交互请求快照（渲染进程重载后恢复状态） */
+  getPendingRequests: () => Promise<PendingRequestsSnapshot>
+
+  // ===== Project Graph =====
+
+  /** 获取当前会话的 Task Graph */
+  getGraph: (sessionId: string) => Promise<import('@profer/project-core').TaskGraph>
+
+  /** 获取当前会话的 Graph 摘要 */
+  getGraphSummary: (sessionId: string) => Promise<import('@profer/project-core').GraphSummary>
+
+  /** 追加 Graph 事件到 JSONL（渲染进程主动持久化） */
+  appendGraphEvent: (sessionId: string, event: import('@profer/project-core').GraphEvent) => Promise<void>
+
+  /** 回溯放弃抽取：通读会话增量轮次抽取放弃方向写进图，返回刷新后的图 */
+  runRetrospective: (sessionId: string) => Promise<import('@profer/project-core').RetrospectiveResult>
+
+  // ===== Agent 附件 =====
+
+  /** 保存文件到 Agent session 工作目录 */
+  saveFilesToAgentSession: (input: AgentSaveFilesInput) => Promise<AgentSavedFile[]>
+
+  /** 保存文件到工作区文件目录 */
+  saveFilesToWorkspaceFiles: (input: AgentSaveWorkspaceFilesInput) => Promise<AgentSavedFile[]>
+
+  /** 获取工作区文件目录路径 */
+  getWorkspaceFilesPath: (workspaceSlug: string) => Promise<string>
+
+  /** 打开文件夹选择对话框 */
+  openFolderDialog: () => Promise<{ path: string; name: string } | null>
+
+  /** 附加外部目录到 Agent 会话 */
+  attachDirectory: (input: AgentAttachDirectoryInput) => Promise<string[]>
+
+  /** 移除会话的附加目录 */
+  detachDirectory: (input: AgentAttachDirectoryInput) => Promise<string[]>
+
+  /** 附加外部文件到 Agent 会话 */
+  attachFile: (input: AgentAttachFileInput) => Promise<string[]>
+
+  /** 移除会话的附加文件 */
+  detachFile: (input: AgentAttachFileInput) => Promise<string[]>
+
+  /** 附加外部目录到工作区（所有会话可访问） */
+  attachWorkspaceDirectory: (input: WorkspaceAttachDirectoryInput) => Promise<string[]>
+
+  /** 移除工作区的附加目录 */
+  detachWorkspaceDirectory: (input: WorkspaceAttachDirectoryInput) => Promise<string[]>
+
+  /** 附加外部文件到工作区（所有会话可访问） */
+  attachWorkspaceFile: (input: WorkspaceAttachFileInput) => Promise<string[]>
+
+  /** 移除工作区的附加文件 */
+  detachWorkspaceFile: (input: WorkspaceAttachFileInput) => Promise<string[]>
+
+  /** 获取工作区附加目录列表 */
+  getWorkspaceDirectories: (workspaceSlug: string) => Promise<string[]>
+
+  /** 获取工作区附加文件列表 */
+  getWorkspaceAttachedFiles: (workspaceSlug: string) => Promise<string[]>
+  /** 获取工作区 worktree 仓库配置列表 */
+  getWorktreeRepos: (workspaceSlug: string) => Promise<import('@profer/shared').WorkspaceWorktreeRepo[]>
+  /** 添加 worktree 仓库到工作区配置 */
+  addWorktreeRepo: (workspaceSlug: string, repo: import('@profer/shared').WorkspaceWorktreeRepo) => Promise<import('@profer/shared').WorkspaceWorktreeRepo[]>
+  /** 从工作区配置移除 worktree 仓库 */
+  removeWorktreeRepo: (workspaceSlug: string, repoPath: string) => Promise<import('@profer/shared').WorkspaceWorktreeRepo[]>
+
+  // ===== Agent 文件系统操作 =====
+
+  /** 获取 session 工作路径 */
+  getAgentSessionPath: (workspaceId: string, sessionId: string) => Promise<string | null>
+
+  /** 列出目录内容 */
+  listDirectory: (dirPath: string) => Promise<FileEntry[]>
+
+  /** 删除文件/目录 */
+  deleteFile: (filePath: string) => Promise<void>
+
+  /** 移动文件/目录到系统回收站 */
+  moveToTrash: (filePath: string) => Promise<void>
+
+  /** 递归读取目录中所有文件 */
+  readDirectoryRecursive: (dirPath: string) => Promise<Array<{ relativePath: string; data: Uint8Array }>>
+
+  /** 打开原生文件夹选择对话框，递归读取所有文件并返回 */
+  selectAndUploadFolder: () => Promise<Array<{ relativePath: string; data: Uint8Array; sourcePath?: string }> | null>
+
+  /** 用系统默认应用打开文件 */
+  openFile: (filePath: string) => Promise<void>
+
+  /** 将剪贴板文本写入临时预览文件并返回绝对路径 */
+  writeClipboardPreview: (filename: string, content: string) => Promise<string>
+
+  /** 用系统默认应用打开任意文件（无工作区限制） */
+  systemOpenFile: (filePath: string, appName?: string, access?: import('@profer/shared').FileAccessOptions) => Promise<void>
+
+  /** 扫描系统中可用的编辑器应用（仅 macOS） */
+  scanEditors: () => Promise<import('@profer/shared').EditorApp[]>
+
+  /** 查询本机为该文件类型注册的默认打开应用（含图标 dataURL） */
+  getDefaultAppForFile: (filePath: string, access?: import('@profer/shared').FileAccessOptions) => Promise<import('@profer/shared').DefaultAppInfo | null>
+
+  /** 在系统文件管理器中显示文件 */
+  showInFolder: (filePath: string) => Promise<void>
+
+  /** 在系统文件管理器中显示文件（无工作区限制，支持候选基础目录） */
+  showItemInFolder: (filePath: string, candidateBasePaths?: string[]) => Promise<boolean>
+
+  /** 解析文件路径并读取内容（供内联预览使用） */
+  resolveAndReadFile: (filePath: string, access?: import('@profer/shared').FileAccessOptions) => Promise<{ resolvedPath: string; content: string } | null>
+
+  /** 写入文本文件（供 Markdown 内联编辑使用） */
+  writeTextFile: (filePath: string, content: string, access?: import('@profer/shared').FileAccessOptions) => Promise<boolean>
+
+  /** 仅解析文件路径（供 PDF/图片等用 profer-file:// 加载） */
+  resolveFilePath: (filePath: string, access?: import('@profer/shared').FileAccessOptions) => Promise<import('@profer/shared').ResolvedFileUrl | null>
+
+  /** 解析 HTML 预览路径，并授权加载同目录的相对资源 */
+  resolveHtmlPreviewPath: (filePath: string, access?: import('@profer/shared').FileAccessOptions) => Promise<import('@profer/shared').ResolvedFileUrl | null>
+
+  /** 注册文件路径到 profer-file:// 协议（不做路径校验，供团队文件预览） */
+  registerPreviewPath: (filePath: string) => Promise<string | null>
+
+  /** 为内联 PDF 预览生成临时 HTML 文件，返回文件路径 */
+  preparePdfPreview: (filePath: string, access?: import('@profer/shared').FileAccessOptions) => Promise<{ tmpHtmlUrl: string } | null>
+
+  /** 读取文件为 base64（带路径校验，供内联图片预览等） */
+  readBinaryBase64: (filePath: string, access?: import('@profer/shared').FileAccessOptions, maxSize?: number) => Promise<string | null>
+
+  /** DOCX 转 HTML（内联预览） */
+  docxToHtml: (filePath: string, access?: import('@profer/shared').FileAccessOptions) => Promise<{ resolvedPath: string; html: string } | null>
+
+  /** XLSX/PPTX 转 HTML（内联预览） */
+  officeToHtml: (filePath: string, access?: import('@profer/shared').FileAccessOptions) => Promise<import('@profer/shared').OfficePreviewResult | null>
+
+  /** 截图导出：将 HTML 渲染为 PNG 并复制到剪贴板或保存文件 */
+  screenshotCapture: (input: { html: string; isDark: boolean; width?: number; mode: 'clipboard' | 'file'; css?: string; themeClass?: string }) => Promise<{ success: boolean; message: string; filePath?: string }>
+
+  /** 重命名文件/目录 */
+  renameFile: (filePath: string, newName: string) => Promise<void>
+
+  /** 移动文件/目录到目标目录 */
+  moveFile: (filePath: string, targetDir: string) => Promise<void>
+
+  /** 列出附加目录内容 */
+  listAttachedDirectory: (dirPath: string, access?: import('@profer/shared').FileAccessOptions) => Promise<FileEntry[]>
+
+  /** 读取附加目录文件内容为 base64（限制在已附加目录范围内） */
+  readAttachedFile: (filePath: string, sessionId?: string, workspaceSlug?: string) => Promise<string>
+
+  /** 在文件管理器中显示附加目录文件 */
+  showAttachedInFolder: (filePath: string, access?: import('@profer/shared').FileAccessOptions) => Promise<void>
+
+  /** 重命名附加目录文件/目录（无工作区路径限制） */
+  renameAttachedFile: (filePath: string, newName: string, access?: import('@profer/shared').FileAccessOptions) => Promise<void>
+
+  /** 移动附加目录文件/目录（无工作区路径限制） */
+  moveAttachedFile: (filePath: string, targetDir: string, access?: import('@profer/shared').FileAccessOptions) => Promise<void>
+
+  /** 检查路径类型（文件 or 目录），用于拖拽检测 */
+  checkPathsType: (paths: string[]) => Promise<{ directories: string[]; files: string[] }>
+
+  /** 获取拖拽文件的本地路径（替代已废弃的 File.path） */
+  getPathForFile: (file: File) => string
+
+  /** 搜索工作区文件（用于 @ 引用，支持附加目录） */
+  searchWorkspaceFiles: (rootPath: string, query: string, limit?: number, additionalPaths?: string[], sessionPaths?: string[]) => Promise<FileSearchResult>
+
+  // ===== 系统提示词管理 =====
+
+  /** 获取系统提示词配置 */
+  getSystemPromptConfig: () => Promise<SystemPromptConfig>
+
+  /** 创建提示词 */
+  createSystemPrompt: (input: SystemPromptCreateInput) => Promise<SystemPrompt>
+
+  /** 更新提示词 */
+  updateSystemPrompt: (id: string, input: SystemPromptUpdateInput) => Promise<SystemPrompt>
+
+  /** 删除提示词 */
+  deleteSystemPrompt: (id: string) => Promise<void>
+
+  /** 更新追加日期时间和用户名开关 */
+  updateAppendSetting: (enabled: boolean) => Promise<void>
+
+  /** 设置默认提示词 */
+  setDefaultPrompt: (id: string | null) => Promise<void>
+
+  // ===== 自动更新 =====
+
+  /** 更新 API */
+  updater?: {
+    checkForUpdates: () => Promise<void>
+    getStatus: () => Promise<{
+      status: 'idle' | 'checking' | 'available' | 'downloading' | 'downloaded' | 'not-available' | 'error'
+      version?: string
+      releaseNotes?: string
+      progress?: { percent: number; transferred: number; total: number; bytesPerSecond: number }
+      error?: string
+    }>
+    onStatusChanged: (callback: (status: {
+      status: 'idle' | 'checking' | 'available' | 'downloading' | 'downloaded' | 'not-available' | 'error'
+      version?: string
+      releaseNotes?: string
+      progress?: { percent: number; transferred: number; total: number; bytesPerSecond: number }
+      error?: string
+    }) => void) => () => void
+    quitAndInstall: () => Promise<void>
+    /** 版本更新日志（内置本地 CHANGELOG） */
+    getChangelog: () => Promise<ChangelogEntry[]>
+  }
+
+  // GitHub Release
+  getLatestRelease: () => Promise<GitHubRelease | null>
+  listReleases: (options?: GitHubReleaseListOptions) => Promise<GitHubRelease[]>
+  getReleaseByTag: (tag: string) => Promise<GitHubRelease | null>
+
+  // 工作区文件变化通知
+  onCapabilitiesChanged: (callback: () => void) => () => void
+  onWorkspaceFilesChanged: (callback: () => void) => () => void
+
+  // ===== 飞书集成 =====
+
+  /** 获取飞书配置 */
+  getFeishuConfig: () => Promise<FeishuConfig>
+  /** 获取解密后的 App Secret */
+  getDecryptedFeishuSecret: () => Promise<string>
+  /** 保存飞书配置（appSecret 为明文） */
+  saveFeishuConfig: (input: FeishuConfigInput) => Promise<FeishuConfig>
+  /** 测试飞书连接 */
+  testFeishuConnection: (appId: string, appSecret: string) => Promise<FeishuTestResult>
+  /** 启动飞书 Bridge */
+  startFeishuBridge: () => Promise<void>
+  /** 停止飞书 Bridge */
+  stopFeishuBridge: () => Promise<void>
+  /** 获取飞书 Bridge 状态 */
+  getFeishuStatus: () => Promise<FeishuBridgeState>
+  /** 获取活跃绑定列表 */
+  listFeishuBindings: () => Promise<FeishuChatBinding[]>
+  /** 更新绑定（修改工作区/会话） */
+  updateFeishuBinding: (input: FeishuUpdateBindingInput) => Promise<FeishuChatBinding | null>
+  /** 移除绑定 */
+  removeFeishuBinding: (chatId: string) => Promise<boolean>
+  /** 上报用户在场状态 */
+  reportFeishuPresence: (report: FeishuPresenceReport) => Promise<void>
+  /** 订阅飞书 Bridge 状态变化 */
+  onFeishuStatusChanged: (callback: (state: FeishuBridgeState) => void) => () => void
+
+  // --- 多 Bot v2 API ---
+
+  /** 获取多 Bot 配置 */
+  getFeishuMultiConfig: () => Promise<import('@profer/shared').FeishuMultiBotConfig>
+  /** 保存单个 Bot 配置 */
+  saveFeishuBotConfig: (input: import('@profer/shared').FeishuBotConfigInput) => Promise<import('@profer/shared').FeishuBotConfig>
+  /** 获取单个 Bot 解密后的 App Secret */
+  getDecryptedFeishuBotSecret: (botId: string) => Promise<string>
+  /** 删除 Bot */
+  removeFeishuBot: (botId: string) => Promise<boolean>
+  /** 启动单个 Bot */
+  startFeishuBot: (botId: string) => Promise<void>
+  /** 停止单个 Bot */
+  stopFeishuBot: (botId: string) => Promise<void>
+  /** 获取多 Bot 状态 */
+  getFeishuMultiStatus: () => Promise<import('@profer/shared').FeishuMultiBridgeState>
+
+  // --- 扫码注册 ---
+
+  /** 启动扫码注册流程，等待用户扫码 + 飞书确认后返回 App ID/Secret */
+  registerFeishuApp: () => Promise<import('@profer/shared').FeishuRegisterAppResult>
+  /** 取消正在进行的扫码注册流程 */
+  cancelFeishuRegistration: () => Promise<void>
+  /** 监听二维码 URL 生成 */
+  onFeishuRegisterQrcode: (callback: (payload: import('@profer/shared').FeishuRegisterAppQRCode) => void) => () => void
+  /** 监听注册流程状态变化 */
+  onFeishuRegisterStatus: (callback: (payload: import('@profer/shared').FeishuRegisterAppStatus) => void) => () => void
+
+  // ===== 钉钉集成 =====
+
+  /** 获取钉钉配置 */
+  getDingTalkConfig: () => Promise<DingTalkConfig>
+  /** 获取解密后的 Client Secret */
+  getDecryptedDingTalkSecret: () => Promise<string>
+  /** 保存钉钉配置（clientSecret 为明文） */
+  saveDingTalkConfig: (input: DingTalkConfigInput) => Promise<DingTalkConfig>
+  /** 测试钉钉连接 */
+  testDingTalkConnection: (clientId: string, clientSecret: string) => Promise<DingTalkTestResult>
+  /** 启动钉钉 Bridge */
+  startDingTalkBridge: () => Promise<void>
+  /** 停止钉钉 Bridge */
+  stopDingTalkBridge: () => Promise<void>
+  /** 获取钉钉 Bridge 状态 */
+  getDingTalkStatus: () => Promise<DingTalkBridgeState>
+  /** 订阅钉钉 Bridge 状态变化 */
+  onDingTalkStatusChanged: (callback: (state: DingTalkBridgeState) => void) => () => void
+
+  // --- 钉钉多 Bot v2 API ---
+
+  /** 获取多 Bot 配置 */
+  getDingTalkMultiConfig: () => Promise<import('@profer/shared').DingTalkMultiBotConfig>
+  /** 保存单个 Bot 配置 */
+  saveDingTalkBotConfig: (input: import('@profer/shared').DingTalkBotConfigInput) => Promise<import('@profer/shared').DingTalkBotConfig>
+  /** 获取单个 Bot 解密后的 Client Secret */
+  getDecryptedDingTalkBotSecret: (botId: string) => Promise<string>
+  /** 删除 Bot */
+  removeDingTalkBot: (botId: string) => Promise<boolean>
+  /** 启动单个 Bot */
+  startDingTalkBot: (botId: string) => Promise<void>
+  /** 停止单个 Bot */
+  stopDingTalkBot: (botId: string) => Promise<void>
+  /** 获取多 Bot 状态 */
+  getDingTalkMultiStatus: () => Promise<import('@profer/shared').DingTalkMultiBridgeState>
+
+  // ===== 微信集成 =====
+
+  /** 获取微信配置 */
+  getWeChatConfig: () => Promise<WeChatConfig>
+  /** 开始扫码登录 */
+  startWeChatLogin: () => Promise<void>
+  /** 登出微信 */
+  logoutWeChat: () => Promise<void>
+  /** 启动微信 Bridge（用已有凭证） */
+  startWeChatBridge: () => Promise<void>
+  /** 停止微信 Bridge */
+  stopWeChatBridge: () => Promise<void>
+  /** 获取微信 Bridge 状态 */
+  getWeChatStatus: () => Promise<WeChatBridgeState>
+  /** 订阅微信 Bridge 状态变化 */
+  onWeChatStatusChanged: (callback: (state: WeChatBridgeState) => void) => () => void
+
+  /** 订阅菜单关闭标签页事件（Cmd+W 被菜单拦截后转发） */
+  onMenuCloseTab: (callback: () => void) => () => void
+
+  // ===== 快速任务窗口 =====
+
+  /** 提交快速任务 */
+  submitQuickTask: (input: QuickTaskSubmitInput) => Promise<void>
+  /** 隐藏快速任务窗口 */
+  hideQuickTask: () => Promise<void>
+  /** 重新注册全局快捷键（设置变更后） */
+  reregisterGlobalShortcuts: () => Promise<Record<string, boolean>>
+  /** 订阅快速任务窗口聚焦事件 */
+  onQuickTaskFocus: (callback: () => void) => () => void
+  /** 订阅快速任务打开会话事件（主窗口接收，由渲染进程负责创建会话） */
+  onQuickTaskOpenSession: (callback: (data: QuickTaskOpenSessionData) => void) => () => void
+
+  // ===== 语音输入 =====
+
+  /** 获取语音输入设置 */
+  getVoiceDictationSettings: () => Promise<VoiceDictationSettings>
+  /** 更新语音输入设置 */
+  updateVoiceDictationSettings: (updates: VoiceDictationSettingsUpdate) => Promise<VoiceDictationSettings>
+  /** 测试语音输入连接 */
+  testVoiceDictationConnection: (updates?: VoiceDictationSettingsUpdate) => Promise<VoiceDictationTestResult>
+  /** 唤起或停止语音输入浮窗 */
+  toggleVoiceDictation: () => Promise<void>
+  /** 开始语音输入会话 */
+  startVoiceDictation: (input: VoiceDictationStartInput) => Promise<void>
+  /** 发送语音音频分片 */
+  sendVoiceDictationAudio: (input: VoiceDictationAudioChunkInput) => Promise<void>
+  /** 停止语音输入会话 */
+  stopVoiceDictation: (input: VoiceDictationStopInput) => Promise<void>
+  /** 取消语音输入会话 */
+  cancelVoiceDictation: (input: VoiceDictationStopInput) => Promise<void>
+  /** 输出最终语音文本 */
+  commitVoiceDictation: (input: VoiceDictationCommitInput) => Promise<VoiceDictationCommitResult>
+  /** 隐藏语音输入窗口 */
+  hideVoiceDictation: () => Promise<void>
+  /** 调整语音输入窗口高度 */
+  resizeVoiceDictation: (input: VoiceDictationResizeInput) => Promise<void>
+  /** 订阅语音输入窗口显示事件 */
+  onVoiceDictationShown: (callback: () => void) => () => void
+  /** 订阅语音输入停止请求事件 */
+  onVoiceDictationToggleStop: (callback: () => void) => () => void
+  /** 订阅语音输入转写事件 */
+  onVoiceDictationTranscript: (callback: (event: VoiceDictationTranscriptEvent) => void) => () => void
+  /** 订阅语音输入状态事件 */
+  onVoiceDictationState: (callback: (event: VoiceDictationStateEvent) => void) => () => void
+  /** 订阅主窗口插入语音文本事件 */
+  onVoiceDictationInsertText: (callback: (data: { text: string }) => void) => () => void
+
+  /** 检查麦克风权限状态 */
+  checkMicrophonePermission: () => Promise<MicPermissionResult>
+  /** 请求麦克风权限（仅 macOS 有效） */
+  requestMicrophonePermission: () => Promise<MicPermissionResult>
+
+  // ===== 菜单栏 =====
+
+  /** 订阅菜单栏打开 Agent 会话事件 */
+  onTrayOpenAgentSession: (callback: (data: TrayOpenAgentSessionData) => void) => () => void
+  /** 订阅菜单栏创建会话事件 */
+  onTrayCreateSession: (callback: (data: TrayCreateSessionData) => void) => () => void
+
+  // ===== 数据迁移 =====
+
+  /** 获取工作区导出预览信息 */
+  migrationGetExportPreview: (workspaceId: string) => Promise<unknown>
+  /** 获取所有工作区的 Skills/MCP 预览（团队分发模式） */
+  migrationGetShareExportPreview: () => Promise<unknown>
+  /** 执行导出 */
+  migrationExport: (options: unknown) => Promise<MigrationExportResult>
+  /** 执行 v2 多工作区导出 */
+  migrationExportV2: (options: unknown) => Promise<MigrationExportResult>
+  /** 解析导入文件，返回预览信息 */
+  migrationParseImportFile: (filePath: string) => Promise<unknown>
+  /** 确认导入 */
+  migrationConfirmImport: (options: unknown) => Promise<{ success: boolean }>
+  /** 打开文件选择对话框（选择 .profer-backup 或 .profer-share） */
+  migrationOpenFileDialog: () => Promise<string | null>
+  /** 打开文件保存对话框（选择导出路径） */
+  migrationSaveFileDialog: (mode: string) => Promise<string | null>
+  /** 订阅双击迁移文件触发的导入事件 */
+  onMigrationOpenImportFile: (callback: (data: { filePath: string }) => void) => () => void
+
+  // ===== 存储管理 =====
+
+  /** 获取各目录存储统计 */
+  getStorageStats: () => Promise<unknown>
+  /** 按选项清理存储 */
+  cleanupStorage: (options: unknown) => Promise<unknown>
+  /** 清理临时文件（快速） */
+  cleanupTempStorage: () => Promise<unknown>
+  /** 取消迁移导入（清理临时解压目录） */
+  migrationCancelImport: (tempDir: string) => Promise<void>
+
+  // ===== 任务 / 日程（Planning）=====
+  /** 打开或聚焦单例独立任务/日程窗口。 */
+  openPlanningWindow: () => Promise<void>
+  listTodos: (input?: TodoListQuery & { workspaceId?: string }) => Promise<Todo[]>
+  createTodo: (input: CreateTodoInput) => Promise<Todo>
+  startTodoAgent: (input: StartTodoAgentInput) => Promise<StartTodoAgentResult>
+  updateTodo: (input: UpdateTodoInput) => Promise<Todo | undefined>
+  deleteTodo: (id: string, workspaceId?: string) => Promise<boolean>
+  listCalendarEvents: (input?: CalendarEventListQuery & { workspaceId?: string }) => Promise<CalendarEvent[]>
+  createCalendarEvent: (input: CreateCalendarEventInput) => Promise<CalendarEvent>
+  updateCalendarEvent: (input: UpdateCalendarEventInput) => Promise<CalendarEvent | undefined>
+  deleteCalendarEvent: (id: string, workspaceId?: string) => Promise<boolean>
+  listPlanningGroups: (scope: PlanningGroupScope, workspaceId?: string) => Promise<PlanningGroup[]>
+  createPlanningGroup: (input: CreatePlanningGroupInput) => Promise<PlanningGroup>
+  updatePlanningGroup: (input: UpdatePlanningGroupInput) => Promise<PlanningGroup | undefined>
+  deletePlanningGroup: (scope: PlanningGroupScope, id: string, workspaceId?: string) => Promise<boolean>
+  listPlanningTags: (workspaceId?: string) => Promise<PlanningTag[]>
+  createPlanningTag: (input: CreatePlanningTagInput) => Promise<PlanningTag>
+  updatePlanningTag: (input: UpdatePlanningTagInput) => Promise<PlanningTag | undefined>
+  deletePlanningTag: (id: string, workspaceId?: string) => Promise<boolean>
+  listActivePlanningReminders: (workspaceId?: string) => Promise<ActivePlanningReminder[]>
+  acknowledgePlanningReminder: (id: string, workspaceId?: string) => Promise<PlanningReminder | undefined>
+  snoozePlanningReminder: (input: SnoozePlanningReminderInput, workspaceId?: string) => Promise<PlanningReminder | undefined>
+  onPlanningRemindersDue: (callback: (reminders: ActivePlanningReminder[]) => void) => () => void
+  onPlanningChanged: (callback: (change: PlanningChange) => void) => () => void
+  onPlanningAgentOperation: (callback: (operation: PlanningAgentOperation) => void) => () => void
+  /** 独立规划窗口启动 Todo Agent 时，主窗口在此接收会话交接并接管打开/发送任务。 */
+  onTodoAgentSessionReady: (callback: (activation: TodoAgentSessionActivation) => void) => () => void
+
+  // ===== 定时任务（Automation）=====
+  /** 获取全部定时任务 */
+  listAutomations: () => Promise<Automation[]>
+  /** 创建定时任务 */
+  createAutomation: (input: CreateAutomationInput) => Promise<Automation>
+  /** 更新定时任务 */
+  updateAutomation: (input: UpdateAutomationInput) => Promise<Automation | undefined>
+  /** 删除定时任务 */
+  deleteAutomation: (id: string) => Promise<boolean>
+  /** 切换启用/暂停 */
+  toggleAutomation: (id: string, active: boolean) => Promise<Automation | undefined>
+  /** 立即运行一次 */
+  runAutomationNow: (id: string) => Promise<void>
+  /** 订阅任务列表变更事件 */
+  onAutomationChanged: (callback: () => void) => () => void
+
+  // ===== 身份认证（Phase 1: 占位类型）=====
+  auth: {
+    getDeviceIdentity: () => Promise<import('../types/identity').DeviceIdentity>
+    getUserIdentity: () => Promise<import('../types/identity').UserIdentity>
+    updateProfile: (updates: Record<string, unknown>) => Promise<import('../types/identity').UserIdentity>
+    login: (credentials: Record<string, unknown>) => Promise<unknown>
+    register: (credentials: { email: string; password: string; displayName: string; inviteCode?: string; otpToken?: string; emailOtp?: string }) => Promise<unknown>
+    getRegistrationOptions: () => Promise<{ openRegistration: boolean }>
+    sendRegistrationOtp: (email: string) => Promise<{ success: boolean; otpToken?: string; resendAfterSec?: number; error?: string }>
+    verifyRegistrationOtp: (email: string, otpToken: string, code: string) => Promise<{ success: boolean; error?: string }>
+    logout: () => Promise<{ channelsCleared?: boolean; channelsBackedUp?: boolean; warning?: string }>
+    listDevices: () => Promise<{ ok: boolean; devices?: Array<{ id: string; deviceId: string | null; deviceName: string; platform: string | null; appVersion?: string | null; createdAt: number; lastUsedAt: number }>; currentDeviceId?: string; error?: string }>
+    revokeDevice: (slotId: string) => Promise<{ ok: boolean; error?: string }>
+    getAuthStatus: () => Promise<{ isLoggedIn: boolean; teamAccountId?: string; teamEmail?: string }>
+    getServerInfo: () => Promise<Array<{ baseUrl: string; email: string; isLoggedIn: boolean }>>
+    getTeamAuth: () => Promise<{ baseUrl: string; token: string; teamEmail?: string; teamAccountId?: string } | null>
+  }
+
+  // ===== 同步（Phase 1: 占位类型）=====
+  sync: {
+    getStatus: (workspaceId?: string) => Promise<{ workspaces: unknown[] }>
+    triggerSync: (workspaceId: string) => Promise<void>
+    getPendingChanges: (workspaceId: string) => Promise<unknown[]>
+    discardPendingChanges: (workspaceId: string) => Promise<void>
+    onStatusChanged: (callback: (data: unknown) => void) => () => void
+  }
+
+  // ===== 团队管理（Phase 1: 占位类型）=====
+  team: {
+    listWorkspaces: () => Promise<import('@profer/shared').AgentWorkspace[]>
+    onWorkspacesSynced: (callback: () => void) => () => void
+    createWorkspace: (name: string) => Promise<import('@profer/shared').AgentWorkspace>
+    deleteWorkspace: (workspaceId: string) => Promise<void>
+    getMembers: (workspaceId: string) => Promise<unknown[]>
+    createInvitation: (input: { workspaceId: string; email: string; role: string }) => Promise<unknown>
+    listInvitations: (workspaceId: string) => Promise<unknown[]>
+    cancelInvitation: (input: { workspaceId: string; invitationId: string }) => Promise<void>
+    getStats: (workspaceId: string) => Promise<{ totalSize: number; fileCount: number; dirCount: number; memberCount: number; onlineCount: number; pendingInvites: number } | null>
+    verifyInvitation: (token: string) => Promise<unknown>
+    acceptInvitation: (token: string) => Promise<import('@profer/shared').AgentWorkspace>
+    declineInvitation: (token: string) => Promise<void>
+    updateMemberRole: (input: { workspaceId: string; userId: string; role: string }) => Promise<void>
+    removeMember: (input: { workspaceId: string; userId: string }) => Promise<void>
+    leaveWorkspace: (workspaceId: string) => Promise<void>
+    transferOwnership: (input: { workspaceId: string; targetUserId: string }) => Promise<void>
+    restoreWorkspace: (workspaceId: string) => Promise<void>
+    getAuditLogs: (workspaceId: string, limit?: number, before?: number) => Promise<Array<{ action: string; user_email: string; entity_type: string; entity_id: string; detail: string; created_at: number }>>
+    getAnnouncements: (workspaceId: string) => Promise<Array<{ id: string; workspaceId: string; authorId: string; authorName: string; title: string; content: string; isPinned: boolean; createdAt: number; updatedAt: number }>>
+    createAnnouncement: (workspaceId: string, title: string, content: string, isPinned: boolean) => Promise<unknown>
+    deleteAnnouncement: (workspaceId: string, announcementId: string) => Promise<{ success: boolean }>
+    getNotificationSettings: () => Promise<{ enabled: boolean; fileUpload: boolean; fileDelete: boolean; memberJoin: boolean; memberLeave: boolean; invitation: boolean }>
+    updateNotificationSettings: (settings: { enabled?: boolean; fileUpload?: boolean; fileDelete?: boolean; memberJoin?: boolean; memberLeave?: boolean; invitation?: boolean }) => Promise<void>
+  }
+
+  // ===== SSE 实时事件 =====
+  sse: {
+    connect: (workspaceId: string) => Promise<void>
+    disconnect: (workspaceId: string) => Promise<void>
+    disconnectAll: () => Promise<void>
+    onEvent: (callback: (workspaceId: string, event: { type: string; data: unknown; workspaceId: string; timestamp: number }) => void) => () => void
+    onConnectionChanged: (callback: (status: { workspaceId: string; status: string }) => void) => () => void
+  }
+
+  // ===== 技能市场 =====
+  skillMarketplace: {
+    publish: (input: { workspaceId: string; workspaceSlug: string; skillSlug: string }) => Promise<{ success: boolean; skillSlug: string }>
+    unpublish: (input: { workspaceId: string; workspaceSlug: string; skillSlug: string }) => Promise<{ success: boolean; skillSlug: string }>
+    listTeamSkills: (workspaceId: string) => Promise<Array<{ slug: string; name: string; description: string; version: string; publishedBy: string; publishedAt: number }>>
+    installTeamSkill: (input: { workspaceId: string; skillSlug: string; targetWorkspaceSlug: string }) => Promise<{ success: boolean; skillSlug: string }>
+    checkForUpdates: (workspaceSlug: string) => Promise<Array<import('@profer/shared').SkillMeta>>
+  }
+
+  // ===== 团队共享知识记忆 =====
+  teamMemory: {
+    list: (workspaceId: string, includeArchived?: boolean) => Promise<TeamMemoryApiResult<Array<Omit<TeamMemoryDocument, 'content'>>>>
+    read: (workspaceId: string, memoryId: string) => Promise<TeamMemoryApiResult<TeamMemoryDocument>>
+    create: (workspaceId: string, input: { path: string; title: string; content: string; changeSummary?: string }) => Promise<TeamMemoryApiResult<TeamMemoryDocument>>
+    update: (workspaceId: string, memoryId: string, input: { expectedVersion: number; path?: string; title?: string; content?: string; changeSummary?: string }) => Promise<TeamMemoryApiResult<TeamMemoryDocument>>
+    listRevisions: (workspaceId: string, memoryId: string) => Promise<TeamMemoryApiResult<TeamMemoryRevision[]>>
+    archive: (workspaceId: string, memoryId: string) => Promise<TeamMemoryApiResult<TeamMemoryDocument>>
+    unarchive: (workspaceId: string, memoryId: string) => Promise<TeamMemoryApiResult<TeamMemoryDocument>>
+  }
+
+  // ===== 团队文件操作 =====
+  teamFile: {
+    upload: (input: { workspaceId: string; workspaceSlug: string; fileName: string; fileData: Uint8Array; sourcePath?: string }) => Promise<{ success: boolean; path: string; size: number; error?: string }>
+    download: (input: { workspaceId: string; workspaceSlug: string; filePath: string; uploadedBy?: string; sha256?: string }) => Promise<string | null>
+    delete: (input: { workspaceId: string; workspaceSlug: string; filePath: string }) => Promise<boolean>
+    getManifest: (workspaceId: string, workspaceSlug?: string) => Promise<Array<{ name: string; path: string; isDirectory: boolean; size: number; modifiedAt: number; sha256: string; fileId?: string; uploadedBy: string; uploadedByName: string; localExists?: boolean; syncStatus?: 'synced' | 'cloud-only' }> | null>
+    createDirectory: (input: { workspaceId: string; dirPath: string }) => Promise<boolean>
+    move: (input: { workspaceId: string; workspaceSlug: string; fromPath: string; toDir: string }) => Promise<{ success: boolean; fromPath: string; toPath?: string; error?: string }>
+    rename: (input: { workspaceId: string; workspaceSlug: string; path: string; newName: string }) => Promise<{ success: boolean; fromPath: string; toPath?: string; error?: string } | null>
+    search: (workspaceId: string, options: { q: string; page?: number; limit?: number }) => Promise<{ files: Array<{ name: string; path: string; isDirectory: boolean; size: number; modifiedAt: number; sha256: string; uploadedBy: string; uploadedByName: string }>; total: number; page: number; limit: number; totalPages: number } | null>
+    getMetadata: (workspaceId: string, fileId: string) => Promise<{ ok: boolean; status?: number; data?: unknown; error?: string }>
+    patchMetadata: (workspaceId: string, fileId: string, body: Record<string, unknown>) => Promise<{ ok: boolean; status?: number; data?: unknown; error?: string }>
+    getTags: (workspaceId: string) => Promise<{ ok: boolean; data?: unknown; error?: string }>
+    getStatuses: (workspaceId: string) => Promise<{ ok: boolean; data?: unknown; error?: string }>
+    setPreference: (workspaceId: string, fileId: string, body: Record<string, unknown>) => Promise<{ ok: boolean; status?: number; error?: string }>
+    getActivities: (workspaceId: string, fileId: string, cursor?: string) => Promise<{ ok: boolean; data?: unknown; error?: string }>
+    listTrash: (workspaceId: string) => Promise<{ ok: boolean; status?: number; data?: import('@profer/shared').TeamTrashEntry[]; error?: string }>
+    restoreTrash: (workspaceId: string, entryId: string) => Promise<{ ok: boolean; status?: number; data?: { success: boolean; restoredPath: string }; error?: string }>
+    purgeTrash: (workspaceId: string, entryId: string) => Promise<{ ok: boolean; status?: number; data?: { success: boolean; state: string }; error?: string }>
+  }
+}
+
+interface MigrationExportResult {
+  success: boolean
+  filePath: string
+  warnings?: string[]
+}
+
+declare global {
+  interface Window {
+    electronAPI: ElectronAPI
+  }
+}
+

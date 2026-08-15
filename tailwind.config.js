@@ -2,7 +2,19 @@
 export default {
   darkMode: 'class',
   content: [
-    './src/**/*.{js,ts,jsx,tsx}',
+    './src/renderer/**/*.{js,ts,jsx,tsx}',
+  ],
+  // 特殊主题 class 由 applyThemeToDOM 在运行时拼接为 `theme-${style}`，
+  // 静态扫描无法发现，必须显式保留对应的 globals.css token 规则。
+  safelist: [
+    'theme-ocean-light',
+    'theme-ocean-dark',
+    'theme-forest-light',
+    'theme-forest-dark',
+    'theme-slate-light',
+    'theme-slate-dark',
+    'theme-terminal-dark',
+    'theme-mist-paper-dark',
   ],
   theme: {
     extend: {
