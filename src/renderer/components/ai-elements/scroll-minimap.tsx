@@ -67,10 +67,12 @@ function pushDebugLog(line: string): void {
   try {
     if (!debugHudEl) {
       debugHudEl = document.createElement('div')
+      // 不透明黑底（方便截图 OCR）+ 可长按选中复制（pointer-events:auto + user-select:text）
       debugHudEl.style.cssText =
-        'position:fixed;top:56px;right:8px;z-index:99999;background:rgba(0,0,0,.85);' +
-        'color:#4ade80;padding:6px 8px;border-radius:8px;font:10px/1.5 monospace;' +
-        'max-width:74vw;max-height:44vh;overflow:auto;white-space:pre-wrap;pointer-events:none;text-align:left;'
+        'position:fixed;bottom:8px;left:8px;right:auto;top:auto;z-index:99999;background:#000;' +
+        'color:#4ade80;padding:8px 10px;border-radius:8px;border:1px solid #22c55e;' +
+        'font:12px/1.5 monospace;max-width:80vw;max-height:38vh;overflow:auto;white-space:pre-wrap;' +
+        'pointer-events:auto;user-select:text;-webkit-user-select:text;text-align:left;'
       document.body.appendChild(debugHudEl)
     }
     debugHudEnabled = true
@@ -79,6 +81,52 @@ function pushDebugLog(line: string): void {
       : '◆ OPEN: 无\n──\n'
     debugHudEl.textContent = '── Minimap Debug ──\n' + openBlock + debugLogs.slice(-10).join('\n')
   } catch { /* 调试失败忽略 */ }
+}
+
+/** 构造元素 DOM 链摘要（定位面板来源用） */
+function buildChain(el: HTMLElement): string {
+  const parts: string[] = []
+  let cur: HTMLElement | null = el
+  for (let i = 0; i < 5 && cur; i++) {
+    const cls = String(cur.className).split(' ').filter(Boolean).slice(0, 3).join('.')
+    parts.push(`${cur.tagName.toLowerCase()}${cls ? '.' + cls : ''}`)
+    cur = cur.parentElement
+  }
+  return parts.join(' < ')
+}
+
+/**
+ * DOM 级面板探测器：不依赖 hovered 状态，直接观察「消息导航」面板元素是否真的出现在 DOM。
+ * 若面板出现但 hoveredLogs 为 0 → 面板不是本组件 hovered 控制的，存在其他渲染路径。
+ */
+let domDetectStarted = false
+function startDomPanelDetector(): void {
+  if (domDetectStarted || typeof document === 'undefined' || !document.body) return
+  domDetectStarted = true
+  let lastKey = ''
+  const scan = (): void => {
+    const mm = document.querySelector<HTMLElement>('[data-minimap-panel]')
+    const titled = Array.from(document.querySelectorAll<HTMLElement>('span,div')).find(
+      (el) => el.childElementCount === 0 && el.textContent?.trim() === '消息导航'
+    )
+    const key = mm ? 'minimap-panel' : titled ? 'titled-消息导航' : ''
+    if (key !== lastKey) {
+      lastKey = key
+      const el = mm ?? titled
+      if (key) {
+        pushDebugLog(`PANEL-DOM APPEAR [${key}] | hoveredLogs=${debugOpenEvents.length} | ${el ? buildChain(el) : ''}`)
+      } else {
+        pushDebugLog('PANEL-DOM gone')
+      }
+    }
+  }
+  scan()
+  const observer = new MutationObserver(scan)
+  observer.observe(document.body, { childList: true, subtree: true })
+}
+if (typeof document !== 'undefined') {
+  if (document.body) startDomPanelDetector()
+  else document.addEventListener('DOMContentLoaded', startDomPanelDetector)
 }
 
 // ── Markdown 预览配置（轻量级，禁用重量级渲染） ──
