@@ -3,10 +3,15 @@
  *
  * 能力（dev 版标配）：
  *  - 显式 debugLog(...) 调用 + 自动捕获 console.warn / console.error，喂进屏显浮窗
- *  - 可折叠：小胶囊（右下角悬浮）↔ 展开面板
+ *  - 可折叠：胶囊（嵌入输入框 toolbar、发送按钮左侧、水平对齐）↔ 展开面板（悬浮在输入框上方）
  *  - 可复制：navigator.clipboard 优先，execCommand 降级（WebView 兼容）
  *  - 不透明黑底：手机截图 OCR 友好
  *  - 日志最近 MAX_LOG 条，自动滚动
+ *
+ * 定位机制：胶囊不固定在视口角落（会遮挡输入框发送按钮，导致发不出消息），
+ * 而是嵌入 InputToolbarOverflow 的 trailing 容器（与发送按钮同一行、水平对齐）。
+ * 展开面板悬浮在输入框正上方，不遮挡输入。composer 随 React 重渲染重建时，
+ * MutationObserver 检测到胶囊脱离工具栏后自动重新挂载。
  *
  * 启用条件：import.meta.env.DEV（本地 vite 联调）或 window.__POCKET_BUILD__ === 'dev'
  * （dev 变体 APK，由 build-apk.mjs 在 sync-web 后向 web/index.html 注入标记）。
@@ -30,11 +35,14 @@ type HudLogEntry = {
 }
 
 const logs: HudLogEntry[] = []
-let rootEl: HTMLDivElement | null = null
+let capEl: HTMLButtonElement | null = null
+let panelEl: HTMLDivElement | null = null
 let listEl: HTMLDivElement | null = null
-let initialized = false
+/** 胶囊当前挂载的容器（toolbar trailing 容器或 body）；用于 MutationObserver 判断是否脱离 */
+let capHostEl: HTMLElement | null = null
 let followBottom = true
 let copyResetTimer: ReturnType<typeof setTimeout> | null = null
+let observer: MutationObserver | null = null
 
 /** 是否启用 HUD：本地 vite 联调（import.meta.env.DEV）或 dev 变体 APK（__POCKET_BUILD__） */
 function isHudEnabled(): boolean {
@@ -79,36 +87,74 @@ export function debugLog(...args: unknown[]): void {
   pushLog('log', args)
 }
 
+/**
+ * 找到输入框工具栏（InputToolbarOverflow）的 trailing 容器——发送/停止按钮所在行，
+ * 把胶囊插到它的最前面（即发送按钮左侧）。找不到时胶囊暂挂 body 并隐藏（避免遮挡），
+ * 待 MutationObserver 检测到工具栏出现后再移入。
+ */
+function mountCap(): void {
+  if (!capEl) return
+  const toolbar = document.querySelector<HTMLElement>('[data-profer-navigation-region="toolbar"]')
+  if (toolbar) {
+    // trailing 容器是 toolbar 的最后一个 div 子元素；找不到则直接挂到 toolbar
+    let host: HTMLElement | null = null
+    const children = Array.from(toolbar.children).filter((el) => el.tagName === 'DIV')
+    const last = children[children.length - 1]
+    if (last) host = last as HTMLElement
+    host = host ?? toolbar
+    if (capEl.parentElement !== host) host.appendChild(capEl)
+    capEl.style.display = 'inline-flex'
+    capHostEl = host
+  } else {
+    if (capEl.parentElement !== document.body) document.body.appendChild(capEl)
+    // toolbar 未渲染（连接页等）：隐藏胶囊，避免浮动遮挡输入区域
+    capEl.style.display = 'none'
+    capHostEl = null
+  }
+}
+
+/** 展开面板悬浮在输入框正上方：面板 bottom = 工具栏顶部再上移 8px，不遮挡输入框 */
+function positionPanel(): void {
+  if (!panelEl || !capEl) return
+  const host = capHostEl?.closest('[data-profer-navigation-region="toolbar"]')
+    ?? document.querySelector('[data-profer-navigation-region="toolbar"]')
+  let top = 0
+  if (host) top = host.getBoundingClientRect().top
+  panelEl.style.position = 'fixed'
+  panelEl.style.left = '50%'
+  panelEl.style.transform = 'translateX(-50%)'
+  panelEl.style.bottom = `${Math.max(8, window.innerHeight - top + 8)}px`
+  // 面板高度上限：视口高度减去输入框区域高度与顶部间距，避免超出屏幕
+  panelEl.style.maxHeight = `calc(100dvh - ${Math.max(8, window.innerHeight - top) + 16}px)`
+}
+
 function ensureDom(): void {
-  if (rootEl) return
+  if (panelEl) return
   const style = document.createElement('style')
-  style.textContent = `#pocket-debug-hud{position:fixed;right:14px;bottom:14px;z-index:99999;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12px;line-height:1.5;color-scheme:dark}
-#pocket-debug-hud *{box-sizing:border-box}
-#pocket-debug-hud-cap{display:flex;align-items:center;gap:6px;padding:8px 14px;background:rgba(0,0,0,.92);color:#4ade80;border:1px solid #374151;border-radius:999px;cursor:pointer;font-size:12px;font-family:inherit;-webkit-tap-highlight-color:transparent;touch-action:manipulation;user-select:none}
-#pocket-debug-hud-panel{display:flex;flex-direction:column;width:min(92vw,420px);max-height:60vh;background:#000;color:#e5e7eb;border:1px solid #374151;border-radius:10px;overflow:hidden;box-shadow:0 8px 24px rgba(0,0,0,.6)}
-#pocket-debug-hud .hud-header{display:flex;align-items:center;gap:6px;padding:8px 10px;background:#111827;border-bottom:1px solid #374151}
-#pocket-debug-hud .hud-header span{flex:1;font-weight:600;color:#9ca3af;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-#pocket-debug-hud .hud-header button{padding:3px 10px;font-size:12px;color:#d1d5db;background:#1f2937;border:1px solid #374151;border-radius:6px;cursor:pointer;touch-action:manipulation}
-#pocket-debug-hud .hud-header button:active{background:#374151}
-#pocket-debug-hud .hud-list{flex:1;overflow-y:auto;padding:6px 10px;background:#000;-webkit-overflow-scrolling:touch;overscroll-behavior:contain}
-#pocket-debug-hud .hud-line{white-space:pre-wrap;word-break:break-all;color:#d1d5db;padding:1px 0}
-#pocket-debug-hud .hud-warn{color:#fbbf24}
-#pocket-debug-hud .hud-error{color:#f87171}`
+  style.textContent = `#pocket-debug-hud-cap{display:inline-flex;align-items:center;gap:3px;height:36px;padding:0 11px;border-radius:999px;background:rgba(0,0,0,.85);color:#4ade80;border:1px solid #374151;font-size:11px;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;cursor:pointer;-webkit-tap-highlight-color:transparent;touch-action:manipulation;user-select:none;line-height:1;white-space:nowrap;flex-shrink:0}
+#pocket-debug-hud-cap:active{background:rgba(0,0,0,1)}
+#pocket-debug-hud-panel{position:fixed;display:flex;flex-direction:column;width:min(94vw,420px);background:#000;color:#e5e7eb;border:1px solid #374151;border-radius:10px;overflow:hidden;box-shadow:0 8px 24px rgba(0,0,0,.6);z-index:99999;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12px;line-height:1.5;color-scheme:dark}
+#pocket-debug-hud-panel *{box-sizing:border-box}
+#pocket-debug-hud-panel .hud-header{display:flex;align-items:center;gap:6px;padding:8px 10px;background:#111827;border-bottom:1px solid #374151}
+#pocket-debug-hud-panel .hud-header span{flex:1;font-weight:600;color:#9ca3af;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#pocket-debug-hud-panel .hud-header button{padding:3px 10px;font-size:12px;color:#d1d5db;background:#1f2937;border:1px solid #374151;border-radius:6px;cursor:pointer;touch-action:manipulation}
+#pocket-debug-hud-panel .hud-header button:active{background:#374151}
+#pocket-debug-hud-panel .hud-list{flex:1;overflow-y:auto;padding:6px 10px;background:#000;-webkit-overflow-scrolling:touch;overscroll-behavior:contain}
+#pocket-debug-hud-panel .hud-line{white-space:pre-wrap;word-break:break-all;color:#d1d5db;padding:1px 0}
+#pocket-debug-hud-panel .hud-warn{color:#fbbf24}
+#pocket-debug-hud-panel .hud-error{color:#f87171}`
   document.head.appendChild(style)
 
-  rootEl = document.createElement('div')
-  rootEl.id = 'pocket-debug-hud'
+  capEl = document.createElement('button')
+  capEl.id = 'pocket-debug-hud-cap'
+  capEl.type = 'button'
+  capEl.setAttribute('aria-label', '打开调试日志')
+  capEl.textContent = '🐞 0'
+  capEl.addEventListener('click', () => setExpanded(true))
 
-  const cap = document.createElement('button')
-  cap.id = 'pocket-debug-hud-cap'
-  cap.type = 'button'
-  cap.setAttribute('aria-label', '打开调试日志')
-  cap.textContent = '🐞 0'
-  cap.addEventListener('click', () => setExpanded(true))
-
-  const panel = document.createElement('div')
-  panel.id = 'pocket-debug-hud-panel'
-  panel.style.display = 'none'
+  panelEl = document.createElement('div')
+  panelEl.id = 'pocket-debug-hud-panel'
+  panelEl.style.display = 'none'
 
   const header = document.createElement('div')
   header.className = 'hud-header'
@@ -135,16 +181,16 @@ function ensureDom(): void {
     followBottom = list.scrollHeight - list.scrollTop - list.clientHeight < 24
   })
 
-  panel.append(header, list)
-  rootEl.append(cap, panel)
-  document.body.appendChild(rootEl)
+  panelEl.append(header, list)
+  document.body.appendChild(panelEl)
   listEl = list
+  mountCap()
   render()
   updateBadge()
 }
 
 function render(): void {
-  if (!listEl || !initialized) return
+  if (!listEl) return
   listEl.textContent = ''
   for (const e of logs) {
     const line = document.createElement('div')
@@ -156,20 +202,20 @@ function render(): void {
 }
 
 function updateBadge(): void {
-  if (!rootEl) return
-  const cap = rootEl.querySelector<HTMLButtonElement>('#pocket-debug-hud-cap')
-  if (cap) cap.textContent = `🐞 ${logs.length}`
+  if (capEl) capEl.textContent = `🐞 ${logs.length}`
 }
 
 function setExpanded(v: boolean): void {
-  if (!rootEl) return
-  const cap = rootEl.querySelector<HTMLButtonElement>('#pocket-debug-hud-cap')
-  const panel = rootEl.querySelector<HTMLDivElement>('#pocket-debug-hud-panel')
-  if (cap) cap.style.display = v ? 'none' : 'flex'
-  if (panel) panel.style.display = v ? 'flex' : 'none'
-  if (v && listEl) {
-    followBottom = true
-    listEl.scrollTop = listEl.scrollHeight
+  if (!panelEl) return
+  if (v) {
+    positionPanel()
+    panelEl.style.display = 'flex'
+    if (listEl) {
+      followBottom = true
+      listEl.scrollTop = listEl.scrollHeight
+    }
+  } else {
+    panelEl.style.display = 'none'
   }
 }
 
@@ -204,7 +250,7 @@ function legacyCopy(text: string): void {
 
 /** 复制按钮短暂显示「已复制」反馈 */
 function flashCopyState(): void {
-  const btn = rootEl?.querySelector<HTMLButtonElement>('#pocket-debug-hud-panel .hud-header button')
+  const btn = panelEl?.querySelector<HTMLButtonElement>('.hud-header button')
   if (!btn) return
   if (copyResetTimer) clearTimeout(copyResetTimer)
   const original = btn.textContent
@@ -219,6 +265,25 @@ function clearLogs(): void {
   logs.length = 0
   render()
   updateBadge()
+}
+
+/**
+ * 监听 body 的子树变化：composer（含 toolbar）随 React 重渲染可能整体重建，
+ * 导致胶囊脱离工具栏；检测到后重新挂载回发送按钮左侧。
+ */
+function startObserver(): void {
+  if (observer) return
+  let raf = 0
+  observer = new MutationObserver(() => {
+    cancelAnimationFrame(raf)
+    raf = requestAnimationFrame(() => {
+      if (!capEl) return
+      // 胶囊已脱离目标容器（或宿主被重建、断开）时重新挂载
+      const hostConnected = capHostEl ? capHostEl.isConnected : false
+      if (capEl.parentElement !== capHostEl || !hostConnected) mountCap()
+    })
+  })
+  observer.observe(document.body, { childList: true, subtree: true })
 }
 
 let consolePatched = false
@@ -237,10 +302,11 @@ function installConsoleCapture(): void {
  * 非 dev 环境（release APK / import.meta.env.PROD）为空操作。
  */
 export function initDebugHud(): void {
-  if (initialized) return
-  initialized = true
   if (typeof document === 'undefined') return
   if (!isHudEnabled()) return
   ensureDom()
   installConsoleCapture()
+  startObserver()
+  // 视口尺寸变化（横竖屏切换/键盘弹出）时重算面板位置
+  window.addEventListener('resize', () => { if (panelEl && panelEl.style.display !== 'none') positionPanel() })
 }
