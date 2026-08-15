@@ -78,6 +78,8 @@ function applyConfig(c) {
   writeFileSync(capConfig, t)
 
   let g = readFileSync(appGradle, 'utf8')
+  // applicationId 需直接改：实测 cap sync 不会用 capacitor.config 的 appId 覆盖 build.gradle
+  g = g.replace(/applicationId "[^"]*"/, `applicationId "${c.appId}"`)
   g = g.replace(/versionCode \d+/, `versionCode ${c.versionCode}`)
   g = g.replace(/versionName "[^"]*"/, `versionName "${c.versionName}"`)
   writeFileSync(appGradle, g)
@@ -85,6 +87,8 @@ function applyConfig(c) {
   let s = readFileSync(stringsXml, 'utf8')
   s = s.replace(/<string name="app_name">[^<]*<\/string>/, `<string name="app_name">${c.appName}</string>`)
   s = s.replace(/<string name="title_activity_main">[^<]*<\/string>/, `<string name="title_activity_main">${c.appName}</string>`)
+  s = s.replace(/<string name="package_name">[^<]*<\/string>/, `<string name="package_name">${c.appId}</string>`)
+  s = s.replace(/<string name="custom_url_scheme">[^<]*<\/string>/, `<string name="custom_url_scheme">${c.appId}</string>`)
   writeFileSync(stringsXml, s)
 }
 
