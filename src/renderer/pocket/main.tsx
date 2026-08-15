@@ -37,6 +37,7 @@ import { appModeAtom } from '@/atoms/app-mode'
 import { initPocketUiScale } from '@/atoms/ui-scale'
 import { initPocketScreenOrientation } from '@/lib/pocket-screen-orientation'
 import { getPocketPendingNotification, normalizeWsUrl, setPocketKeepaliveForeground, startPocketKeepalive, stopPocketKeepalive } from '@/lib/pocket-keepalive'
+import { initDebugHud, debugLog } from '@/lib/debug-hud'
 import { UiScaleContainer } from '@/components/UiScaleContainer'
 import { Button } from '@/components/ui/button'
 import { AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogFooter, AlertDialogTitle, AlertDialogDescription, AlertDialogAction, AlertDialogCancel } from '@/components/ui/alert-dialog'
@@ -913,6 +914,10 @@ function NativePocketSidebar({ mobileOpen, onDismiss }: { mobileOpen: boolean; o
     </>
   )
 }
+
+// ===== 调试日志 HUD（dev 版标配；release 不注入标记 → 空操作）=====
+initDebugHud()
+debugLog('Pocket UI 已启动，调试 HUD 就绪')
 
 // ===== 挂载 =====
 ReactDOM.createRoot(document.getElementById('root')!).render(

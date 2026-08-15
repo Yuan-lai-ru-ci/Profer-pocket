@@ -105,6 +105,25 @@ function applyConfig(c) {
   writeFileSync(stringsXml, s)
 }
 
+/**
+ * dev 变体向前端 web/index.html 注入 __POCKET_BUILD__='dev' 标记，驱动前端调试 HUD 开启。
+ * 前端产物 dev/release 是同一份 bundle（变体差异只在 APK 层），只有注入标记才能区分。
+ * release 变体不调用本函数 → HUD 关闭。注入位置为 <head> 闭合前，尽早生效；幂等（已注入则跳过）。
+ */
+function injectBuildTag() {
+  const indexPath = resolve(appRoot, 'web/index.html')
+  let html = readFileSync(indexPath, 'utf8')
+  const marker = "window.__POCKET_BUILD__='dev'"
+  if (html.includes(marker)) {
+    console.log('[build-apk] dev 标记已存在，跳过注入')
+    return
+  }
+  const script = `<script>${marker}</script>`
+  html = html.replace('</head>', `  ${script}\n</head>`)
+  writeFileSync(indexPath, html)
+  console.log(`[build-apk] ✅ 已注入 dev 标记: ${script}`)
+}
+
 console.log(`\n[build-apk] variant=${variant}  appId=${cfg.appId}  versionName=${cfg.versionName} (versionCode ${cfg.versionCode})`)
 
 try {
@@ -125,6 +144,12 @@ try {
   // 3. 同步前端产物到 web/
   step('sync-web')
   run('node', ['scripts/sync-web.mjs'], appRoot)
+
+  // 3.5 dev 变体注入 __POCKET_BUILD__ 标记（release 不注入 → 前端 HUD 关闭）
+  if (variant === 'dev') {
+    step('注入 dev 构建标记')
+    injectBuildTag()
+  }
 
   // 4. 同步 Capacitor 到 android 工程
   step('cap sync android')
