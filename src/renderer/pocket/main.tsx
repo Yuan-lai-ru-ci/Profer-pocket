@@ -728,10 +728,15 @@ function App(): React.ReactElement {
             className="w-full rounded-lg border border-border bg-background px-3.5 py-3 text-sm outline-none focus:ring-2 focus:ring-primary/30 placeholder:text-muted-foreground/60"
           />
           <input
+            type="password"
             value={tokenInput}
             onChange={(e) => setTokenInput(e.target.value)}
             placeholder="访问令牌"
             autoFocus
+            autoComplete="off"
+            autoCapitalize="none"
+            autoCorrect="off"
+            spellCheck={false}
             className="w-full rounded-lg border border-border bg-background px-3.5 py-3 text-sm outline-none focus:ring-2 focus:ring-primary/30 placeholder:text-muted-foreground/60"
           />
           {errMsg && <div className="text-sm text-destructive">{errMsg}</div>}
