@@ -58,6 +58,15 @@ public final class MessageEventParser {
                             type);
                 case "run_completed":
                     return runCompleted(event, title, type);
+                case "run_idle":
+                    // 电脑端桌面发起的会话 run 结束广播 run_idle（仅含 sessionId，无 stoppedByUser 元数据）。
+                    // 桌面发起的 run 不会触发 remote-service 的 run_completed（那只针对平板 WS 发起的 run），
+                    // 因此这里必须处理 run_idle，否则桌面会话完成平板收不到「会话已完成」通知。
+                    // 无法区分用户主动停止：先统一按完成提醒，误报由 MessageService 的 3s 去重缓解。
+                    return new NotifyInfo(
+                            "会话已完成",
+                            (title != null && !title.isEmpty()) ? title + " 运行完成" : "会话运行完成",
+                            type);
                 default:
                     // 未知事件类型：忽略
                     return null;
