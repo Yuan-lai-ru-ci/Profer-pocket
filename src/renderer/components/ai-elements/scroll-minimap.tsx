@@ -51,13 +51,91 @@ const debugLogs: string[] = []
 const debugOpenEvents: string[] = []
 let debugHudEl: HTMLDivElement | null = null
 let debugHudEnabled = false
+/** HUD 折叠状态：true=小胶囊，false=展开面板 */
+let debugHudCollapsed = false
 
-/** 追加一行调试日志，并同步到右上角屏显 HUD（OPEN 事件常驻置顶 + 最近 10 条） */
+const HUD_BTN_CSS = 'background:#1f2937;color:#4ade80;border:1px solid #4ade80;border-radius:4px;padding:1px 7px;font:11px monospace;cursor:pointer;'
+
+/** 复制全部调试日志（WebView 优先 execCommand 降级，navigator.clipboard 兜底） */
+function copyDebugLogs(): void {
+  const text = ['── Minimap Debug ──', ...debugOpenEvents, ...debugLogs].join('\n')
+  try {
+    if (navigator.clipboard?.writeText) {
+      void navigator.clipboard.writeText(text).then(
+        () => pushDebugLog('✓ 已复制全部日志'),
+        () => fallbackCopy(text),
+      )
+      return
+    }
+    fallbackCopy(text)
+  } catch { fallbackCopy(text) }
+}
+function fallbackCopy(text: string): void {
+  try {
+    const ta = document.createElement('textarea')
+    ta.value = text
+    ta.style.cssText = 'position:fixed;left:-9999px;top:0;opacity:0;height:1px;width:1px;'
+    document.body.appendChild(ta)
+    ta.focus()
+    ta.select()
+    const ok = document.execCommand('copy')
+    document.body.removeChild(ta)
+    pushDebugLog(ok ? '✓ 已复制全部日志' : '⚠ 复制失败，请展开后长按选中')
+  } catch { pushDebugLog('⚠ 复制异常') }
+}
+
+function toggleHudCollapse(): void {
+  debugHudCollapsed = !debugHudCollapsed
+  renderHud()
+}
+
+/** 渲染 HUD：折叠态为小胶囊（可点开），展开态为面板（标题+复制+隐藏+日志） */
+function renderHud(): void {
+  if (!debugHudEl || typeof document === 'undefined') return
+  debugHudEl.innerHTML = ''
+  if (debugHudCollapsed) {
+    debugHudEl.style.cssText =
+      'position:fixed;top:60px;right:8px;z-index:99999;background:#000;color:#4ade80;' +
+      'border:1px solid #22c55e;border-radius:8px;padding:3px 9px;font:11px monospace;' +
+      'cursor:pointer;pointer-events:auto;'
+    debugHudEl.textContent = `MD ▸ (${debugOpenEvents.length})`
+    debugHudEl.onclick = toggleHudCollapse
+    return
+  }
+  debugHudEl.style.cssText =
+    'position:fixed;top:56px;right:8px;z-index:99999;background:#000;color:#4ade80;' +
+    'border:1px solid #22c55e;border-radius:8px;padding:8px 10px;font:12px/1.5 monospace;' +
+    'max-width:84vw;max-height:42vh;overflow:hidden;pointer-events:auto;' +
+    'user-select:text;-webkit-user-select:text;text-align:left;'
+  const header = document.createElement('div')
+  header.style.cssText = 'display:flex;align-items:center;gap:6px;margin-bottom:4px;flex-wrap:wrap;'
+  const title = document.createElement('span')
+  title.style.cssText = 'font-weight:bold;'
+  title.textContent = 'Minimap Debug'
+  const copyBtn = document.createElement('button')
+  copyBtn.textContent = '📋复制'
+  copyBtn.style.cssText = HUD_BTN_CSS
+  copyBtn.onclick = (e) => { e.stopPropagation(); copyDebugLogs() }
+  const hideBtn = document.createElement('button')
+  hideBtn.textContent = '✕隐藏'
+  hideBtn.style.cssText = HUD_BTN_CSS
+  hideBtn.onclick = (e) => { e.stopPropagation(); toggleHudCollapse() }
+  header.append(title, copyBtn, hideBtn)
+  const body = document.createElement('div')
+  body.style.cssText = 'overflow:auto;max-height:34vh;-webkit-overflow-scrolling:touch;white-space:pre-wrap;word-break:break-all;'
+  const openBlock = debugOpenEvents.length > 0
+    ? `◆ OPEN(${debugOpenEvents.length}):\n  ${debugOpenEvents.join('\n  ')}\n──\n`
+    : '◆ OPEN: 无\n──\n'
+  body.textContent = openBlock + debugLogs.slice(-20).join('\n')
+  debugHudEl.append(header, body)
+}
+
+/** 追加一行调试日志，并刷新 HUD */
 function pushDebugLog(line: string): void {
   if (!MINIMAP_DEBUG) return
   const stamped = `${new Date().toTimeString().slice(0, 8)} ${line}`
   debugLogs.push(stamped)
-  if (debugLogs.length > 40) debugLogs.shift()
+  if (debugLogs.length > 60) debugLogs.shift()
   // 面板打开（hovered→OPEN）事件单独常驻，避免被后续日志挤掉
   if (line.includes('→OPEN')) {
     debugOpenEvents.push(stamped)
@@ -67,19 +145,10 @@ function pushDebugLog(line: string): void {
   try {
     if (!debugHudEl) {
       debugHudEl = document.createElement('div')
-      // 不透明黑底（方便截图 OCR）+ 可长按选中复制（pointer-events:auto + user-select:text）
-      debugHudEl.style.cssText =
-        'position:fixed;bottom:8px;left:8px;right:auto;top:auto;z-index:99999;background:#000;' +
-        'color:#4ade80;padding:8px 10px;border-radius:8px;border:1px solid #22c55e;' +
-        'font:12px/1.5 monospace;max-width:80vw;max-height:38vh;overflow:auto;white-space:pre-wrap;' +
-        'pointer-events:auto;user-select:text;-webkit-user-select:text;text-align:left;'
       document.body.appendChild(debugHudEl)
     }
     debugHudEnabled = true
-    const openBlock = debugOpenEvents.length > 0
-      ? `◆ OPEN(${debugOpenEvents.length}):\n  ${debugOpenEvents.join('\n  ')}\n──\n`
-      : '◆ OPEN: 无\n──\n'
-    debugHudEl.textContent = '── Minimap Debug ──\n' + openBlock + debugLogs.slice(-10).join('\n')
+    renderHud()
   } catch { /* 调试失败忽略 */ }
 }
 
@@ -96,33 +165,62 @@ function buildChain(el: HTMLElement): string {
 }
 
 /**
- * DOM 级面板探测器：不依赖 hovered 状态，直接观察「消息导航」面板元素是否真的出现在 DOM。
- * 若面板出现但 hoveredLogs 为 0 → 面板不是本组件 hovered 控制的，存在其他渲染路径。
+ * DOM 级弹层探测器：不依赖 hovered 状态，直接观察
+ * ① [data-minimap-panel]（ScrollMinimap 面板）②「消息导航」文字出现 ③ 任何 .fixed / [role=dialog] 固定弹层。
+ * 若面板出现但 hoveredLogs=0 → 面板非本组件 hovered 控制，存在其他渲染路径。
  */
 let domDetectStarted = false
 function startDomPanelDetector(): void {
   if (domDetectStarted || typeof document === 'undefined' || !document.body) return
   domDetectStarted = true
-  let lastKey = ''
+  let lastPanel = false
+  let lastText = false
+  let lastKeys = new Set<string>()
+  let scanTimer: ReturnType<typeof setTimeout> | undefined
+
+  const fixedOverlayKey = (el: HTMLElement): string => {
+    const cls = String(el.className).split(' ').filter(Boolean).slice(0, 3).join('.')
+    const z = getComputedStyle(el).zIndex
+    return `${el.tagName.toLowerCase()}${cls ? '.' + cls : ''}@z${z}`
+  }
+
   const scan = (): void => {
+    // ① ScrollMinimap 面板出现/消失
     const mm = document.querySelector<HTMLElement>('[data-minimap-panel]')
-    const titled = Array.from(document.querySelectorAll<HTMLElement>('span,div')).find(
-      (el) => el.childElementCount === 0 && el.textContent?.trim() === '消息导航'
-    )
-    const key = mm ? 'minimap-panel' : titled ? 'titled-消息导航' : ''
-    if (key !== lastKey) {
-      lastKey = key
-      const el = mm ?? titled
-      if (key) {
-        pushDebugLog(`PANEL-DOM APPEAR [${key}] | hoveredLogs=${debugOpenEvents.length} | ${el ? buildChain(el) : ''}`)
-      } else {
-        pushDebugLog('PANEL-DOM gone')
+    const mmPresent = !!mm
+    if (mmPresent !== lastPanel) {
+      lastPanel = mmPresent
+      pushDebugLog(mmPresent
+        ? `PANEL-DOM APPEAR [minimap-panel] | hoveredLogs=${debugOpenEvents.length} | ${buildChain(mm as HTMLElement)}`
+        : 'PANEL-DOM gone')
+    }
+    // ② 「消息导航」文字出现/消失（任意位置）
+    const textPresent = document.body.innerText.includes('消息导航')
+    if (textPresent !== lastText) {
+      lastText = textPresent
+      pushDebugLog(textPresent ? 'TEXT-消息导航 APPEAR' : 'TEXT-消息导航 gone')
+    }
+    // ③ 任何 .fixed / [role=dialog] 弹层出现（排除 HUD 自身）
+    const fixed = Array.from(document.querySelectorAll<HTMLElement>('.fixed, [role="dialog"]')).filter((el) => el !== debugHudEl)
+    const keys = new Set(fixed.map(fixedOverlayKey))
+    for (const k of keys) {
+      if (!lastKeys.has(k)) {
+        const el = fixed.find((f) => fixedOverlayKey(f) === k)
+        const txt = el ? (el.textContent?.trim().slice(0, 50) ?? '') : ''
+        pushDebugLog(`FIXED-OVERLAY +${k} | "${txt}"`)
       }
     }
+    lastKeys = keys
   }
+
+  const schedule = (): void => {
+    if (scanTimer) clearTimeout(scanTimer)
+    scanTimer = setTimeout(scan, 250)
+  }
+
   scan()
-  const observer = new MutationObserver(scan)
-  observer.observe(document.body, { childList: true, subtree: true })
+  const obs = new MutationObserver(schedule)
+  obs.observe(document.body, { childList: true, subtree: true, characterData: true })
 }
 if (typeof document !== 'undefined') {
   if (document.body) startDomPanelDetector()
