@@ -1,8 +1,33 @@
 {
-  "extends": "../../tsconfig.json",
   "compilerOptions": {
-    "jsx": "react-jsx",
+    // Environment setup & latest features（对齐主仓库根 tsconfig，独立仓库不再 extends 外部）
     "lib": ["ESNext", "DOM", "DOM.Iterable"],
+    "target": "ESNext",
+    "module": "Preserve",
+    "moduleDetection": "force",
+    "jsx": "react-jsx",
+    "allowJs": true,
+
+    // Bundler mode
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
+    "verbatimModuleSyntax": true,
+    "noEmit": true,
+
+    // Best practices
+    "strict": true,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "noFallthroughCasesInSwitch": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true,
+
+    // Some stricter flags (disabled by default)
+    "noUnusedLocals": false,
+    "noUnusedParameters": false,
+    "noPropertyAccessFromIndexSignature": false,
+
+    // Path alias（对齐 vite.config.ts 的 @ → src）
     "baseUrl": ".",
     "paths": {
       "@/*": ["./src/*"]

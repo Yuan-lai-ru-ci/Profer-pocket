@@ -1,0 +1,18 @@
+{
+  "name": "profer-pocket-tablet",
+  "version": "0.1.0",
+  "description": "Profer-pocket 移动端 Capacitor 壳（装载独立瘦客户端的静态产物）",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "sync:web": "node scripts/sync-web.mjs",
+    "build": "node scripts/sync-web.mjs && npx cap sync android",
+    "apk": "node scripts/build-apk.mjs"
+  },
+  "dependencies": {
+    "@capacitor/android": "^7.0.0",
+    "@capacitor/cli": "^7.0.0",
+    "@capacitor/core": "^7.0.0",
+    "@capacitor/preferences": "^7.0.0"
+  }
+}

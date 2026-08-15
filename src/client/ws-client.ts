@@ -101,12 +101,22 @@ export class WsClient {
       clearTimeout(this.reconnectTimer)
       this.reconnectTimer = null
     }
-    try {
-      this.ws?.close()
-    } catch {
-      /* ignore */
-    }
+    // 主动断开：先摘除 ws 的事件回调再 close。否则 ws.close() 异步触发的 onclose 会
+    // emitStatus('closed')，把上层刚设的 idle 又覆盖回 reconnecting，表现为
+    // 「取消连接要点两次才真正断开」。
+    const ws = this.ws
     this.ws = null
+    if (ws) {
+      ws.onopen = null
+      ws.onmessage = null
+      ws.onclose = null
+      ws.onerror = null
+      try {
+        ws.close()
+      } catch {
+        /* ignore */
+      }
+    }
   }
 
   private openSocket(): void {
@@ -167,7 +177,7 @@ export class WsClient {
         this.emitStatus('unauthorized', event.reason || 'unauthorized')
         return
       }
-      this.emitStatus('closed')
+      this.emitStatus('closed', `${event.code}${event.reason ? ' ' + event.reason : ''}`)
       this.scheduleReconnect()
     }
 

@@ -1,0 +1,308 @@
+/**
+ * AppShell - 应用主布局容器
+ *
+ * 布局结构：[LeftSidebar 可折叠] | [MainArea: TabBar + TabContent] | [RightSidePanel 可折叠]
+ *
+ * MainArea 支持多标签页，Settings 视图为独立覆盖。
+ */
+
+import * as React from 'react'
+import { useAtom, useAtomValue, useSetAtom } from 'jotai'
+import { LeftSidebar } from './LeftSidebar'
+import { RightSidePanel } from './RightSidePanel'
+import { MainArea } from '@/components/tabs/MainArea'
+import { TeamWorkspaceView } from '@/components/agent/TeamWorkspaceView'
+import { WindowControlsTemplateProvider } from '@/components/WindowControlsTemplate'
+import { AppShellProvider, type AppShellContextType } from '@/contexts/AppShellContext'
+import { appModeAtom } from '@/atoms/app-mode'
+import { agentSidePanelOpenAtom, agentSidePanelWidthAtom, currentAgentSessionIdAtom, currentSessionSidePanelOpenAtom, agentWorkspacesAtom, currentAgentWorkspaceIdAtom } from '@/atoms/agent-atoms'
+import { automationFormAtom } from '@/atoms/automation-atoms'
+import { activeViewAtom } from '@/atoms/active-view'
+import { leftSidebarWidthAtom } from '@/atoms/sidebar-atoms'
+import { sidebarCollapsedAtom } from '@/atoms/tab-atoms'
+import { detectIsWindows } from '@/lib/platform'
+import { interfaceVariantAtom } from '@/atoms/theme'
+import { cn } from '@/lib/utils'
+
+const MIN_RIGHT_PANEL_WIDTH = 300
+const MAX_RIGHT_PANEL_WIDTH = 560
+
+const MIN_LEFT_SIDEBAR_WIDTH = 300
+const MAX_LEFT_SIDEBAR_WIDTH = 420
+
+function clampRightPanelWidth(width: number): number {
+  return Math.max(MIN_RIGHT_PANEL_WIDTH, Math.min(MAX_RIGHT_PANEL_WIDTH, width))
+}
+
+function clampLeftSidebarWidth(width: number): number {
+  return Math.max(MIN_LEFT_SIDEBAR_WIDTH, Math.min(MAX_LEFT_SIDEBAR_WIDTH, width))
+}
+
+export interface AppShellProps {
+  /** Context 值，用于传递给子组件 */
+  contextValue: AppShellContextType
+}
+
+export function AppShell({ contextValue }: AppShellProps): React.ReactElement {
+  const appMode = useAtomValue(appModeAtom)
+  const currentSessionId = useAtomValue(currentAgentSessionIdAtom)
+  const interfaceVariant = useAtomValue(interfaceVariantAtom)
+  const isClassic = interfaceVariant === 'classic'
+  const isPanelOpen = useAtomValue(currentSessionSidePanelOpenAtom)
+  const setSidePanelOpen = useSetAtom(agentSidePanelOpenAtom)
+
+  // ===== 小窗口自动折叠右侧面板 =====
+  const AUTO_HIDE_PANEL_WIDTH = 1200
+  const [windowWidth, setWindowWidth] = React.useState(() => window.innerWidth)
+  const userOverrodeAutoHideRef = React.useRef(false)
+  const prevWidthRef = React.useRef<number | null>(null)
+  const prevIsPanelOpenRef = React.useRef(isPanelOpen)
+
+  React.useEffect(() => {
+    const focusRightPanel = (): void => {
+      setSidePanelOpen(true)
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          const panel = document.querySelector<HTMLElement>('[data-profer-navigation-region="right-panel"]')
+          const target = panel && Array.from(panel.querySelectorAll<HTMLElement>(
+            'button:not([disabled]), [href], input:not([disabled]), [tabindex]:not([tabindex="-1"])',
+          )).find((element) => element.offsetParent !== null)
+          target?.focus()
+        })
+      })
+    }
+    window.addEventListener('profer:focus-right-panel', focusRightPanel)
+    return () => window.removeEventListener('profer:focus-right-panel', focusRightPanel)
+  }, [setSidePanelOpen])
+
+  React.useEffect(() => {
+    const handleResize = () => setWindowWidth(window.innerWidth)
+    window.addEventListener('resize', handleResize)
+    return () => window.removeEventListener('resize', handleResize)
+  }, [])
+
+  // 窗口恢复到阈值以上时，重置用户手动覆盖标记
+  React.useEffect(() => {
+    if (windowWidth >= AUTO_HIDE_PANEL_WIDTH) {
+      userOverrodeAutoHideRef.current = false
+    }
+  }, [windowWidth])
+
+  // 小窗口自动折叠 / 用户手动展开后不再自动折叠
+  React.useEffect(() => {
+    const prevWidth = prevWidthRef.current
+    const isFirstRender = prevWidth === null
+    // 仅在窗口从大→小过渡（或首次渲染窗口就小）时自动折叠
+    const shouldAutoClose = isFirstRender || prevWidth >= AUTO_HIDE_PANEL_WIDTH
+
+    if (shouldAutoClose && windowWidth < AUTO_HIDE_PANEL_WIDTH && isPanelOpen && !userOverrodeAutoHideRef.current) {
+      setSidePanelOpen(false)
+    }
+
+    // 检测用户在小窗口下手动展开了面板（从关 → 开），设置覆盖标记
+    if (windowWidth < AUTO_HIDE_PANEL_WIDTH && isPanelOpen && !prevIsPanelOpenRef.current) {
+      userOverrodeAutoHideRef.current = true
+    }
+
+    prevWidthRef.current = windowWidth
+    prevIsPanelOpenRef.current = isPanelOpen
+  }, [windowWidth, isPanelOpen, setSidePanelOpen])
+
+  const automationForm = useAtomValue(automationFormAtom)
+  const workspaces = useAtomValue(agentWorkspacesAtom)
+  const currentWorkspaceId = useAtomValue(currentAgentWorkspaceIdAtom)
+  const currentWorkspace = workspaces.find((w) => w.id === currentWorkspaceId)
+  const isTeamWorkspace = currentWorkspace?.type === 'team'
+  // 定时任务表单打开时隐藏右侧文件面板，让中间区域扩展到全宽（表单内含自己的右栏配置）
+  const activeView = useAtomValue(activeViewAtom)
+  const showRightPanel = appMode === 'agent' && !!currentSessionId && !automationForm.open && activeView !== 'planning' && activeView !== 'agent-skills'
+  const isWindows = React.useMemo(() => detectIsWindows(), [])
+  // 团队工作区的默认 Agent 页仍展示文件主区；规划中心必须进入 MainArea，
+  // 否则 TeamWorkspaceView 会覆盖其中的 PlanningView。
+  const showTeamWorkspaceView = isTeamWorkspace && appMode === 'agent' && activeView !== 'agent-skills' && activeView !== 'planning'
+
+  // 窗口标题设为用户名
+  React.useEffect(() => {
+    try {
+      const raw = localStorage.getItem('profer-user-profile')
+      if (raw) {
+        const profile = JSON.parse(raw)
+        if (profile?.userName) {
+          document.title = profile.userName
+        }
+      }
+    } catch { /* ignore */ }
+  }, [])
+
+  // 右侧面板可拖拽宽度
+  const [rightPanelWidth, setRightPanelWidth] = useAtom(agentSidePanelWidthAtom)
+  const dragging = React.useRef(false)
+  const clampedRightPanelWidth = clampRightPanelWidth(rightPanelWidth)
+
+  React.useEffect(() => {
+    if (clampedRightPanelWidth !== rightPanelWidth) {
+      setRightPanelWidth(clampedRightPanelWidth)
+    }
+  }, [clampedRightPanelWidth, rightPanelWidth, setRightPanelWidth])
+
+  const handleMouseDown = React.useCallback((e: React.MouseEvent) => {
+    e.preventDefault()
+    dragging.current = true
+    const startX = e.clientX
+    const startWidth = clampedRightPanelWidth
+    let rafId = 0
+
+    const onMouseMove = (ev: MouseEvent) => {
+      if (!dragging.current) return
+      if (rafId) return
+      rafId = requestAnimationFrame(() => {
+        rafId = 0
+        const delta = startX - ev.clientX
+        const newWidth = clampRightPanelWidth(startWidth + delta)
+        setRightPanelWidth(newWidth)
+      })
+    }
+
+    const onMouseUp = () => {
+      dragging.current = false
+      if (rafId) cancelAnimationFrame(rafId)
+      document.removeEventListener('mousemove', onMouseMove)
+      document.removeEventListener('mouseup', onMouseUp)
+    }
+
+    document.addEventListener('mousemove', onMouseMove)
+    document.addEventListener('mouseup', onMouseUp)
+  }, [clampedRightPanelWidth, setRightPanelWidth])
+
+  // 左侧边栏可拖拽宽度
+  const [leftSidebarWidth, setLeftSidebarWidth] = useAtom(leftSidebarWidthAtom)
+  const sidebarCollapsed = useAtomValue(sidebarCollapsedAtom)
+  const leftDragging = React.useRef(false)
+  const [isDraggingLeftSidebar, setIsDraggingLeftSidebar] = React.useState(false)
+  const clampedLeftSidebarWidth = clampLeftSidebarWidth(leftSidebarWidth)
+
+  React.useEffect(() => {
+    if (clampedLeftSidebarWidth !== leftSidebarWidth) {
+      setLeftSidebarWidth(clampedLeftSidebarWidth)
+    }
+  }, [clampedLeftSidebarWidth, leftSidebarWidth, setLeftSidebarWidth])
+
+  const handleLeftSidebarMouseDown = React.useCallback((e: React.MouseEvent) => {
+    e.preventDefault()
+    leftDragging.current = true
+    setIsDraggingLeftSidebar(true)
+    const startX = e.clientX
+    const startWidth = clampedLeftSidebarWidth
+    let latestClientX = startX
+    let rafId = 0
+
+    const applyWidth = () => {
+      const delta = latestClientX - startX
+      setLeftSidebarWidth(clampLeftSidebarWidth(startWidth + delta))
+    }
+
+    const onMouseMove = (ev: MouseEvent) => {
+      if (!leftDragging.current) return
+      latestClientX = ev.clientX
+      if (rafId) return
+      rafId = requestAnimationFrame(() => {
+        rafId = 0
+        applyWidth()
+      })
+    }
+
+    const onMouseUp = () => {
+      leftDragging.current = false
+      setIsDraggingLeftSidebar(false)
+      if (rafId) {
+        cancelAnimationFrame(rafId)
+        rafId = 0
+      }
+      applyWidth()
+      document.removeEventListener('mousemove', onMouseMove)
+      document.removeEventListener('mouseup', onMouseUp)
+    }
+
+    document.addEventListener('mousemove', onMouseMove)
+    document.addEventListener('mouseup', onMouseUp)
+  }, [clampedLeftSidebarWidth, setLeftSidebarWidth])
+
+  return (
+    <WindowControlsTemplateProvider>
+    <AppShellProvider value={contextValue}>
+      {/* 可拖动标题栏区域，用于窗口拖动。
+          Windows 上必须避开右上角的 WindowControls 区域（buttons ~118px + 8px buffer = 126px），
+          否则 drag-region 与按钮区的 hitmask 重叠会让 OS 把单击当成标题栏点击，
+          表现为"按钮要双击才响应"。 */}
+      <div
+        className={cn(
+          'titlebar-drag-region fixed top-0 left-0 h-[50px] z-50',
+          isWindows ? 'right-[126px]' : 'right-0'
+        )}
+      />
+
+      <div className="shell-bg h-screen w-screen flex overflow-clip bg-background">
+        {/* 左侧边栏：可折叠，可拖拽调整宽度 */}
+        <div
+          className={cn(
+            isClassic ? 'p-2 pr-0' : '',
+            // 收起 rail 必须压过其右侧的分隔线；冷启动直接恢复收起状态时，
+            // 分隔线处于更高层会裁掉 rail 最右侧，造成整列图标视觉上向左偏移。
+            sidebarCollapsed ? 'relative z-[62] flex-none crt-sidebar' : 'relative z-[60] flex-none crt-sidebar',
+          )}
+        >
+          <LeftSidebar width={clampedLeftSidebarWidth} noTransition={isDraggingLeftSidebar} />
+          {/* 侧边栏展开时显示拖拽手柄，折叠态隐藏 */}
+          {!sidebarCollapsed && (
+            <div
+              className={cn(
+                'absolute right-0 top-0 bottom-0 w-4 translate-x-1/2 cursor-col-resize hover:bg-primary/5 active:bg-primary/50 transition-colors z-20'
+              )}
+              onMouseDown={handleLeftSidebarMouseDown}
+            />
+          )}
+        </div>
+        {!isClassic && (
+          <div aria-hidden="true" className="relative z-[61] w-px flex-shrink-0 bg-border/80 dark:bg-border/70" />
+        )}
+
+        {/* 中间容器 */}
+        <div className="flex-1 min-w-0 p-2 relative z-[60]">
+          {/* 团队工作区：文件主区 + AI 侧栏；Skill 市场等视图切到 MainArea */}
+          {showTeamWorkspaceView ? (
+            <TeamWorkspaceView />
+          ) : (
+            <MainArea />
+          )}
+        </div>
+
+        {/* 右侧边栏：个人模式显示文件面板；团队模式文件已在主区域 */}
+        {!isTeamWorkspace && showRightPanel && (
+          <div
+            data-profer-navigation-region="right-panel"
+            className={cn(
+              'relative z-[60] flex items-stretch crt-sidebar transition-[padding] duration-300 ease-in-out',
+              isPanelOpen ? 'p-2 pl-0' : 'p-0'
+            )}
+          >
+            {!isClassic && (
+              <div aria-hidden="true" className="pointer-events-none absolute left-0 top-0 bottom-0 z-10 w-px bg-border/80 dark:bg-border/70" />
+            )}
+            {/* 拖拽手柄 — 绝对定位，居中于主区域和右侧面板的缝隙 */}
+            {isPanelOpen && (
+              <div
+                className={cn(
+                  'absolute left-0 top-0 bottom-0 w-[8px] -translate-x-1/2 cursor-col-resize active:bg-primary/50 transition-colors',
+                  isClassic ? 'z-10' : 'z-20'
+                )}
+                onMouseDown={handleMouseDown}
+              />
+            )}
+            <RightSidePanel width={clampedRightPanelWidth} />
+          </div>
+        )}
+      </div>
+    </AppShellProvider>
+    </WindowControlsTemplateProvider>
+  )
+}

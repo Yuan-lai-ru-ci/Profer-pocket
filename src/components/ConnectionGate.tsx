@@ -1,14 +1,15 @@
 /**
  * ConnectionGate.tsx — 连接页（移动端瘦客户端）
  *
- * 职责：token + 服务器地址输入 + connect 提交；未绑定/未连接时显示连接页，
- * 已连接时显示主界面（由 useConnection() 的 status 驱动）。
+ * 职责：token + 服务器地址输入 + connect 提交；未连接（含自动连接/重连中）始终显示
+ * 连接页，连接成功（open）才进入主界面。
  *
- * 状态机（对齐 desktop tablet main.tsx 的 connection state）：
- *  - idle / unauthorized：连接页（可输入 token/服务器）
- *  - connecting：连接页 + loading
+ * 状态机（交互逻辑，2026-08-15 对齐用户需求）：
+ *  - idle / error / unauthorized：连接页 + 输入框解锁 + 「连接」按钮（token 为空时锁定）
+ *  - connecting / reconnecting：连接页 + 「正在连接」字样 + 输入框锁定 + 「取消连接」按钮
  *  - open：主界面
- *  - reconnecting / error：已绑定时保持主界面，横幅提示自动重连（这里透传 notice）
+ *
+ * 用户可随时打断自动连接：取消后回到待输入态重新填 token/服务器地址。
  */
 
 import * as React from 'react'
@@ -21,8 +22,14 @@ export interface ConnectionGateProps {
   children: React.ReactNode
 }
 
+/** 把 ws://192.168.1.10:7788/ws 转成可读的 192.168.1.10:7788，连接中展示实际连接地址 */
+function friendlyServerUrl(url: string): string {
+  if (!url) return ''
+  return url.replace(/^wss?:\/\//i, '').replace(/^https?:\/\//i, '').replace(/\/ws$/, '')
+}
+
 export function ConnectionGate({ children }: ConnectionGateProps): React.ReactElement {
-  const { status, notice, connect } = useConnection()
+  const { status, notice, connect, disconnect, connectedUrl, lastCloseInfo } = useConnection()
 
   const storedToken = useAtomValue(tokenAtom)
   const storedServer = useAtomValue(serverUrlAtom)
@@ -40,17 +47,25 @@ export function ConnectionGate({ children }: ConnectionGateProps): React.ReactEl
     connect(tokenInput.trim(), serverInput.trim() || undefined)
   }
 
-  // 连接页：idle / unauthorized / connecting（连接未就绪前始终显示连接页 + loading）
-  // 只有 open 才进入主界面。不要用「connecting && !tokenInput」这种半中间态判定，
-  // 否则用户点连接后 status 变 connecting、tokenInput 有值时，连接页会闪退到主界面空态。
-  const showGate = status === 'idle' || status === 'unauthorized' || status === 'connecting' || status === 'error'
+  // 取消连接：若用户未填过服务器地址，把自动连接期间展示的实际地址固化到输入框，
+  // 避免取消后「正在连接」时自动填的 IP 被清空（用户自己填的 serverInput 本就保留）。
+  const handleCancel = (): void => {
+    if (!serverInput.trim() && connectedUrl) {
+      setServerInput(friendlyServerUrl(connectedUrl))
+    }
+    disconnect()
+  }
+
+  // 未连接（idle/unauthorized/connecting/reconnecting/error）始终显示连接页；
+  // 只有 open 才进入主界面。自动连接/重连中也能在连接页取消，避免被无限重连锁死。
+  const showGate = status !== 'open'
 
   if (!showGate) {
-    // 已绑定 / 已连接：主界面
     return <>{children}</>
   }
 
-  const busy = status === 'connecting'
+  // 连接中：输入框锁定 + 「取消连接」按钮 + 「正在连接」字样
+  const busy = status === 'connecting' || status === 'reconnecting'
 
   return (
     <div className="flex h-full items-center justify-center bg-background p-4">
@@ -75,27 +90,36 @@ export function ConnectionGate({ children }: ConnectionGateProps): React.ReactEl
           <input
             type="text"
             className="rounded-lg border border-border bg-muted px-3.5 py-2.5 text-sm text-foreground outline-none focus:border-ring focus:ring-1 focus:ring-ring/40 disabled:opacity-60"
-            value={serverInput}
+            value={serverInput || (busy ? friendlyServerUrl(connectedUrl) : '')}
             placeholder="如 192.168.1.10:7788，留空自动推导"
             onChange={(e) => setServerInput(e.target.value)}
             disabled={busy}
           />
         </label>
 
-        {notice && status !== 'unauthorized' && (
-          <div className="text-[13px] text-muted-foreground">{notice}</div>
-        )}
         {status === 'unauthorized' && (
           <div className="text-[13px] text-destructive">{notice ?? '访问令牌无效或已失效'}</div>
+        )}
+        {busy && (
+          <div className="text-[13px] text-muted-foreground">正在连接…</div>
+        )}
+        {!busy && status === 'idle' && (
+          <div className="text-[13px] text-muted-foreground">请输入访问令牌和服务器地址后连接</div>
+        )}
+        {!busy && status === 'error' && notice && (
+          <div className="text-[13px] text-muted-foreground">{notice}</div>
+        )}
+        {lastCloseInfo && (
+          <div className="text-[12px] text-muted-foreground/70">上次断开原因：{lastCloseInfo}</div>
         )}
 
         <button
           type="button"
           className="rounded-lg bg-primary px-3 py-3 text-[15px] font-semibold text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-50"
-          onClick={submit}
-          disabled={busy || !tokenInput.trim()}
+          onClick={busy ? handleCancel : submit}
+          disabled={!busy && !tokenInput.trim()}
         >
-          {busy ? '连接中…' : '连接'}
+          {busy ? '取消连接' : '连接'}
         </button>
       </div>
     </div>

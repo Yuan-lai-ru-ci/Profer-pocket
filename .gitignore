@@ -27,3 +27,7 @@ npm-debug.log*
 
 # OS
 Thumbs.db
+
+# tablet-app (Capacitor 壳)
+tablet-app/node_modules
+tablet-app/web

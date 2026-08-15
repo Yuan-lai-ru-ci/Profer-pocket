@@ -13,7 +13,7 @@
  *    在连接就绪后拉取，写回 atoms；属于本轨道的“会话列表 refresh”职责。
  */
 
-import { useCallback, useEffect, useRef } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useAtom, useAtomValue, useSetAtom } from 'jotai'
 // ws-client 落地位于 src/client/ws-client.ts（脚手架子代理统一搬运，协议冻结不改动）
 import { WsClient, defaultWsUrl } from '@/client/ws-client'
@@ -79,6 +79,10 @@ export interface UseConnectionResult {
   reconnectNow: () => void
   /** 底层 WsClient 引用（供上层直接调用便捷方法） */
   client: WsClient | null
+  /** 当前实际连接的 WS 地址（连接中展示给用户，明确「正在连什么」） */
+  connectedUrl: string
+  /** 最近一次断开的原因（close code/reason），连接页展示用于诊断 */
+  lastCloseInfo: string
 }
 
 // 模块级共享 client 单例：无论 useConnection 被调用几次（App 与 ConnectionGate 各调一次），
@@ -99,6 +103,10 @@ export function useConnection(options: UseConnectionOptions = {}): UseConnection
   const [status, setStatus] = useAtom(connectionStatusAtom)
   const [notice, setNotice] = useAtom(connectionNoticeAtom)
   const hasBinding = useAtomValue(hasBindingAtom)
+  /** 当前实际连接的 WS 地址（连接中显示给用户看，明确「正在连什么」） */
+  const [connectedUrl, setConnectedUrl] = useState('')
+  /** 最近一次断开的原因（WebSocket close code/reason），用于诊断莫名断连 */
+  const [lastCloseInfo, setLastCloseInfo] = useState('')
 
   const setSessions = useSetAtom(sessionsAtom)
   const setSessionsLoaded = useSetAtom(sessionsLoadedAtom)
@@ -218,6 +226,7 @@ export function useConnection(options: UseConnectionOptions = {}): UseConnection
       if (client) client.disconnect()
 
       const url = normalizeWsUrl(server ?? getStoredServerUrl()) ?? defaultWsUrl()
+      setConnectedUrl(url)
       const ws = new WsClient({
         url,
         token,
@@ -225,6 +234,7 @@ export function useConnection(options: UseConnectionOptions = {}): UseConnection
           if (s === 'open') {
             setStatus('open')
             setNotice(undefined)
+            setLastCloseInfo('')
             void loadChannels(ws)
             void loadSessions(ws)
           } else if (s === 'unauthorized') {
@@ -232,9 +242,10 @@ export function useConnection(options: UseConnectionOptions = {}): UseConnection
             setStatus('unauthorized')
             setNotice('访问令牌无效或已失效，请查看电脑端启动日志中的 Token 后重新输入')
           } else if (s === 'closed') {
-            // 断线（后台冻结/网络变化）：保持主界面，横幅提示自动重连，不回登录页
+            // 断线（后台冻结/网络变化）：回连接页显示「正在连接」，用户可取消重新配置
             setStatus('reconnecting')
-            setNotice('连接已断开，正在重连…')
+            setNotice('正在连接…')
+            setLastCloseInfo(info ?? '')
           } else if (s === 'error') {
             setStatus('error')
             setNotice('连接失败，正在自动重连…')
@@ -257,7 +268,7 @@ export function useConnection(options: UseConnectionOptions = {}): UseConnection
       sharedClient = ws
       ws.connect()
     },
-    [loadChannels, loadSessions, setStatus, setNotice],
+    [loadChannels, loadSessions, setStatus, setNotice, setConnectedUrl, setLastCloseInfo],
   )
 
   /** 提交 token（持久化 token/server，再发起连接） */
@@ -278,13 +289,16 @@ export function useConnection(options: UseConnectionOptions = {}): UseConnection
     [connect, setNotice, setStatus],
   )
 
-  /** 断开连接（保留绑定信息，不清理持久化） */
+  /** 断开连接（保留绑定信息，不清理持久化），同时清除「正在连接」等提示 */
   const disconnect = useCallback(() => {
     clientRef.current?.disconnect()
     clientRef.current = null
     sharedClient = null
     setStatus('idle')
-  }, [setStatus])
+    setNotice(undefined)
+    setConnectedUrl('')
+    setLastCloseInfo('')
+  }, [setStatus, setNotice, setConnectedUrl, setLastCloseInfo])
 
   /** 解绑：断开 + 清除本地 token/server 持久化 + 清空会话态 */
   const unbind = useCallback(() => {
@@ -297,7 +311,9 @@ export function useConnection(options: UseConnectionOptions = {}): UseConnection
     setWorkspaces([])
     setStatus('idle')
     setNotice(undefined)
-  }, [setStatus, setNotice, setSessions, setWorkspaces])
+    setConnectedUrl('')
+    setLastCloseInfo('')
+  }, [setStatus, setNotice, setSessions, setWorkspaces, setConnectedUrl, setLastCloseInfo])
 
   /** 手动/前台重连：连接仍 OPEN 或 CONNECTING 时内部 no-op */
   const reconnectNow = useCallback(() => {
@@ -364,5 +380,7 @@ export function useConnection(options: UseConnectionOptions = {}): UseConnection
     unbind,
     reconnectNow,
     client: clientRef.current,
+    connectedUrl,
+    lastCloseInfo,
   }
 }
