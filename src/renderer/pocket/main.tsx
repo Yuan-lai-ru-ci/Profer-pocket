@@ -317,7 +317,15 @@ function App(): React.ReactElement {
   const loadChannels = useCallback(async (client: WsClient) => {
     try {
       const data = await client.listChannels() as ChannelInfo[]
-      const ch = (Array.isArray(data) ? data : []).map((c) => ({
+      const raw = Array.isArray(data) ? data : []
+      if (raw.length === 0) {
+        // 桌面端当前无可切换渠道（未配置 / 服务端渠道未同步 / 临时异常）：
+        // 保留已加载的渠道与 Agent 白名单，避免清空后 hasAvailableModel 恒 false，
+        // Agent 模式输入框上方误报“暂无可用模型”黄字且无自动恢复机制，用户无法继续对话。
+        console.warn('[Pocket] 桌面端返回空渠道列表，保留已加载渠道')
+        return
+      }
+      const ch = raw.map((c) => ({
         ...c,
         // WS 返回的都是可切换渠道：补全桌面 Channel 形状的 enabled 语义，
         // 否则 AgentView 的 hasAvailableModel 判定（channel.enabled && models[].enabled）恒为 false，
