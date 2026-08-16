@@ -16,22 +16,43 @@ function nextLayoutRevision(): number {
  */
 const APP_OVERLAY_LIFECYCLE_SELECTOR = [
   '[data-profer-intro-overlay]',
-  '[role="dialog"]',
-  '[role="alertdialog"]',
+  '[data-browser-blocking]',
   '[data-sonner-toast]',
   '[data-radix-popper-content-wrapper]',
 ].join(', ')
 
-function hasBlockingAppOverlay(): boolean {
-  if (document.querySelector('[data-profer-intro-overlay], [role="dialog"][data-state="open"], [role="alertdialog"][data-state="open"]')) return true
-  if (document.querySelector('[data-sonner-toast][data-mounted="true"], [data-sonner-toast][data-visible="true"]')) return true
-
-  return Array.from(document.querySelectorAll<HTMLElement>('[data-radix-popper-content-wrapper]'))
-    .some((wrapper) => {
-      const openContent = wrapper.querySelector<HTMLElement>('[data-state="open"]')
-      // 浏览器自身的 Tooltip 不需要遮住网页；菜单、选择器与 Popover 则必须优先显示。
-      return !!openContent && openContent.getAttribute('role') !== 'tooltip'
-    })
+/**
+ * 找出当前真正需要避让的浮层。
+ * - 全屏/模态浮层（intro 遮罩、Dialog/AlertDialog）：无条件遮挡。
+ * - Toast 与 Popover/Dropdown：只有实际与网页区域相交时才遮挡——
+ *   左侧会话区弹开的工具栏菜单不覆盖右侧浏览器，不再无谓隐藏网页。
+ */
+function findBlockingOverlay(slot: HTMLElement): string | null {
+  // 引导遮罩 + 显式标记的全屏模态浮层 → 无条件遮挡浏览器。
+  // data-browser-blocking 由 Dialog/AlertDialog 组件库统一携带，TabSwitcher 手动补标。
+  // 注意：Radix Popover 的 Content 也带 role="dialog"，但它不是模态（位于 popper wrapper 内），
+  // 不在此列，交给下方几何判断——这正是修复"眼睛按钮悬停白屏"的关键。
+  if (document.querySelector('[data-profer-intro-overlay]')) return 'dialog'
+  const blocking = document.querySelector<HTMLElement>('[data-browser-blocking][data-state="open"]')
+    ?? [...document.querySelectorAll<HTMLElement>('[data-browser-blocking]')].find((el) => !el.getAttribute('data-state'))
+  if (blocking) return 'dialog'
+  const slotRect = slot.getBoundingClientRect()
+  if (slotRect.width <= 4 || slotRect.height <= 4) return null
+  const intersects = (r: DOMRect): boolean => (
+    r.width > 0 && r.height > 0
+    && r.right > slotRect.left + 1 && r.left < slotRect.right - 1
+    && r.bottom > slotRect.top + 1 && r.top < slotRect.bottom - 1
+  )
+  for (const toast of document.querySelectorAll<HTMLElement>('[data-sonner-toast][data-mounted="true"], [data-sonner-toast][data-visible="true"]')) {
+    if (intersects(toast.getBoundingClientRect())) return 'toast'
+  }
+  for (const wrapper of document.querySelectorAll<HTMLElement>('[data-radix-popper-content-wrapper]')) {
+    const openContent = wrapper.querySelector<HTMLElement>('[data-state="open"]')
+    // 浏览器自身的 Tooltip 不需要遮住网页；菜单、选择器与 Popover 按几何判断。
+    if (!openContent || openContent.getAttribute('role') === 'tooltip') continue
+    if (intersects(openContent.getBoundingClientRect())) return 'popover'
+  }
+  return null
 }
 
 /** 只跟踪 portal/toast 生命周期，避免 Agent 流式渲染触发无意义的 layout IPC。 */
@@ -80,8 +101,8 @@ export function BrowserSlot({ sessionId, tabId }: { sessionId: string; tabId: st
         })
       })
     }
-    const publishCurrentVisibility = () => publish(!hasBlockingAppOverlay())
-    const observer = new ResizeObserver(publishCurrentVisibility)
+    const publishCurrentVisibility = () => publish(!findBlockingOverlay(element))
+    const observer = new ResizeObserver(() => publishCurrentVisibility())
     const overlayObserver = new MutationObserver((mutations) => {
       if (mutationsAffectAppOverlay(mutations)) publishCurrentVisibility()
     })
@@ -107,7 +128,7 @@ export function BrowserSlot({ sessionId, tabId }: { sessionId: string; tabId: st
     let prevRect: DOMRect | null = null
     const layoutLoop = (): void => {
       layoutFrame = 0
-      if (hasBlockingAppOverlay()) { prevRect = null; scheduleLayoutLoop(); return }
+      if (findBlockingOverlay(element)) { prevRect = null; scheduleLayoutLoop(); return }
       const rect = element.getBoundingClientRect()
       if (rect.width <= 4 || rect.height <= 4) { prevRect = null; scheduleLayoutLoop(); return }
       const changed = !prevRect
