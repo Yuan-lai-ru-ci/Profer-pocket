@@ -233,6 +233,9 @@ function TabBarInner({
   const hasFileChanges = filesVersion > 0
   const activeTab = React.useMemo(() => tabs.find((t) => t.id === activeTabId), [tabs, activeTabId])
   const activeAgentSessionId = activeTab?.type === 'agent' ? activeTab.sessionId : null
+  // 文件栏开关跨会话保留；草稿/Chat 等非 Agent 标签不会实际渲染右侧栏，
+  // 不能因此让 TabBar 隐藏窗口控制按钮或预留不存在的侧栏空间。
+  const rightSidePanelIsVisible = isPanelOpen && activeTab?.type === 'agent'
   const showOpenPanelButton = !isPanelOpen && activeTab?.type === 'agent'
   // 受管浏览器入口：仅当当前标签是 Agent 会话时展示。主进程按会话隔离浏览器。
   const [browserOpenMap, setBrowserOpenMap] = useAtom(browserPanelOpenMapAtom)
@@ -241,13 +244,14 @@ function TabBarInner({
   const [browserManualOpen, setBrowserManualOpen] = useAtom(browserManualOpenSessionIdsAtom)
   const [browserFilePanelManualRestoreSessionIds, setBrowserFilePanelManualRestoreSessionIds] = useAtom(browserFilePanelManualRestoreSessionIdsAtom)
   const activeBrowserIsOpen = activeAgentSessionId ? browserOpenMap.get(activeAgentSessionId) === true : false
-  const showBrowserButton = Boolean(activeAgentSessionId)
+  // 与文件面板按钮一致：受管浏览器入口只在关闭态显示；打开后由面板内部「关闭浏览器」收起（方案 A）。
+  const showBrowserButton = Boolean(activeAgentSessionId && !activeBrowserIsOpen)
   // MainArea 的右边界会随着右侧文件面板或浏览器分栏提前结束；
   // 这两种情况下窗口控制按钮已经不在当前 TabBar 内，工具组应贴近 MainArea 右缘。
   const browserSidePanelVisible = Boolean(
     activeAgentSessionId && browserOpenMap.get(activeAgentSessionId) === true,
   )
-  const hasRightSideContent = isPanelOpen || browserSidePanelVisible
+  const hasRightSideContent = rightSidePanelIsVisible || browserSidePanelVisible
   // 窗口按钮本身已嵌入当前 TabBar。只有本区域真正延伸到窗口右缘时，
   // 工具组和标签才需为按钮留出 118px；有右侧分栏时无需预留。
   const topBarRightOffset = isWindows && !hasRightSideContent ? 132 : 9
@@ -533,7 +537,7 @@ function TabBarInner({
       {/* 右侧文件栏或受管浏览器占据窗口最右缘时，控制按钮由该面板自身渲染。 */}
       <WindowControlsHost
         id="tab-bar"
-        active={!isPanelOpen && !activeBrowserIsOpen}
+        active={!rightSidePanelIsVisible && !activeBrowserIsOpen}
         priority={10}
         className="absolute right-2 bottom-[3px]"
       />
