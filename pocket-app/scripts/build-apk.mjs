@@ -21,7 +21,7 @@
  * release 版文件名用版本号（Profer-Pocket-<版本>.apk），不用提交 ID。
  */
 import { spawnSync } from 'node:child_process'
-import { existsSync, readFileSync, writeFileSync, copyFileSync, mkdirSync } from 'node:fs'
+import { existsSync, readFileSync, writeFileSync, copyFileSync, mkdirSync, readdirSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -43,8 +43,8 @@ const VARIANTS = {
   release: {
     appId: 'com.profer.pocket',
     appName: 'Profer Pocket',
-    versionCode: '4',
-    versionName: '0.1.3',
+    versionCode: '5',
+    versionName: '0.1.4',
   },
 }
 const DEV_CFG = VARIANTS.dev
@@ -124,6 +124,44 @@ function injectBuildTag() {
   console.log(`[build-apk] ✅ 已注入 dev 标记: ${script}`)
 }
 
+/**
+ * 替换 android 工程内所有 *.gradle 的 google() 为阿里云镜像。
+ *
+ * 背景：本机 maven.google.com https 被阻断（curl 超时），必须走阿里云镜像，
+ * 否则 gradlew 拉依赖会卡死。cap sync 每次会重新生成
+ * capacitor-cordova-android-plugins/build.gradle（又变回 google()），
+ * 所以必须在 sync 之后、gradlew 之前执行本函数。幂等（重复执行无害）。
+ */
+function patchGradleRepos() {
+  const changed = []
+  const walk = (d) => {
+    for (const e of readdirSync(d, { withFileTypes: true })) {
+      const p = resolve(d, e.name)
+      if (e.isDirectory()) {
+        if (e.name === 'build') continue
+        walk(p)
+      } else if (e.name.endsWith('.gradle')) {
+        let c = readFileSync(p, 'utf8')
+        const n = c.replace(
+          /google\(\)/g,
+          "maven { url 'https://maven.aliyun.com/repository/google' }"
+        )
+        if (n !== c) {
+          writeFileSync(p, n)
+          changed.push(p)
+        }
+      }
+    }
+  }
+  walk(androidRoot)
+  if (changed.length) {
+    console.log('[build-apk] 🔧 已替换 google() 为阿里云镜像:')
+    for (const p of changed) console.log(`  ${p}`)
+  } else {
+    console.log('[build-apk] google() 无需替换（已是镜像配置）')
+  }
+}
+
 console.log(`\n[build-apk] variant=${variant}  appId=${cfg.appId}  versionName=${cfg.versionName} (versionCode ${cfg.versionCode})`)
 
 try {
@@ -154,6 +192,10 @@ try {
   // 4. 同步 Capacitor 到 android 工程
   step('cap sync android')
   run('npx', ['cap', 'sync', 'android'], appRoot)
+
+  // 4.5 maven 镜像 patch（cap sync 会重新生成插件 gradle，需在此之后替换 google()）
+  step('maven 镜像 patch')
+  patchGradleRepos()
 
   // 5. gradle 打 debug APK
   step('gradlew assembleDebug')
