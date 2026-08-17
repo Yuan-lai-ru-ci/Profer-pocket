@@ -43,6 +43,8 @@ import { usePocketMode } from './pocket-mode-context'
 import { currentAgentSessionIdAtom } from '@/atoms/agent-atoms'
 import { useOpenPreview } from '@/components/diff/preview-opener'
 import { useStore } from 'jotai'
+import { toast } from 'sonner'
+import { writeClipboardText } from '@/lib/clipboard'
 import type { HTMLAttributes, ComponentProps, ReactNode } from 'react'
 import type { FileAttachment } from '@profer/shared'
 
@@ -535,8 +537,15 @@ const MarkdownLink = React.memo(function MarkdownLink({
       onClick={(e) => {
         e.preventDefault()
         // 平板远程模式：预览面板（MainArea）与系统打开（Electron IPC）均不可用，
-        // 文件/链接点击不做动作，避免“点了没反应”的无效入口
-        if (pocketMode) return
+        // 外部链接复制到剪贴板，提示用户自行到浏览器打开；本地文件路径无对应本地文件，不动作
+        if (pocketMode) {
+          if (href && (href.startsWith('http://') || href.startsWith('https://'))) {
+            void writeClipboardText(href).then((ok) => {
+              if (ok) toast.success('链接已复制到剪贴板，请到浏览器打开', { duration: 2500 })
+            })
+          }
+          return
+        }
         if (!href) return
         if (href.startsWith('http://') || href.startsWith('https://')) {
           window.electronAPI.openExternal(href)
