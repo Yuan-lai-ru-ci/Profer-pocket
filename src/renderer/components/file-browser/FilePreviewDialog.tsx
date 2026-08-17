@@ -10,7 +10,7 @@
  */
 
 import * as React from 'react'
-import { X, Download, ExternalLink, FolderOpen, Loader2 } from 'lucide-react'
+import { X, Loader2 } from 'lucide-react'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
@@ -61,12 +61,10 @@ function langFromExt(e: string): string {
 
 export function FilePreviewDialog({ open, filePath, fileName, onClose, teamDownload }: FilePreviewDialogProps): React.ReactElement {
   const [state, setState] = React.useState<PreviewState>({ status: 'loading' })
-  const [resolvedPath, setResolvedPath] = React.useState<string | null>(null)
 
   React.useEffect(() => {
     if (!open || !filePath) return
     setState({ status: 'loading' })
-    setResolvedPath(null)
     loadPreview()
   }, [open, filePath]) // eslint-disable-line
 
@@ -80,8 +78,6 @@ export function FilePreviewDialog({ open, filePath, fileName, onClose, teamDownl
         if (!downloaded) { setState({ status: 'error', message: '文件下载失败，请重试' }); return }
         localPath = downloaded
       }
-      setResolvedPath(localPath)
-
       // 团队下载后拿到的是临时目录绝对路径，IPC handler 需要授权上下文
       const parentDir = localPath.replace(/[/\\][^/\\]*$/, '') || '/'
       const access = teamDownload ? { candidateBasePaths: [parentDir] } : undefined
@@ -138,43 +134,6 @@ export function FilePreviewDialog({ open, filePath, fileName, onClose, teamDownl
     }
   }
 
-  const handleOpenLocalFile = async (): Promise<void> => {
-    let targetPath = resolvedPath ?? filePath
-    if (!resolvedPath && teamDownload) {
-      const downloaded = await teamDownload()
-      if (!downloaded) {
-        setState({ status: 'error', message: '文件下载失败，请重试' })
-        return
-      }
-      targetPath = downloaded
-      setResolvedPath(downloaded)
-    }
-    const parentDir = targetPath.replace(/[/\\][^/\\]*$/, '') || '/'
-    window.electronAPI.systemOpenFile(
-      targetPath,
-      undefined,
-      teamDownload ? { candidateBasePaths: [parentDir] } : undefined,
-    ).catch(() => {})
-  }
-
-  const handleShowInFolder = async (): Promise<void> => {
-    let targetPath = resolvedPath ?? filePath
-    if (!resolvedPath && teamDownload) {
-      const downloaded = await teamDownload()
-      if (!downloaded) {
-        setState({ status: 'error', message: '文件下载失败，请重试' })
-        return
-      }
-      targetPath = downloaded
-      setResolvedPath(downloaded)
-    }
-    const parentDir = targetPath.replace(/[/\\][^/\\]*$/, '') || '/'
-    window.electronAPI.showItemInFolder(
-      targetPath,
-      teamDownload ? [parentDir] : undefined,
-    ).catch(() => {})
-  }
-
   return (
     <Dialog open={open} onOpenChange={(o) => { if (!o) onClose() }}>
       {/* 标题栏右侧已自带关闭按钮（见 DialogHeader），关闭 DialogContent 默认注入的右上角 X，避免两个关闭按钮 */}
@@ -188,16 +147,6 @@ export function FilePreviewDialog({ open, filePath, fileName, onClose, teamDownl
             预览文件 {fileName}
           </DialogDescription>
           <div className="flex items-center gap-1">
-            <Button variant="ghost" size="icon" className="h-7 w-7"
-              onClick={() => { void handleOpenLocalFile() }}
-              title="用默认应用打开">
-              <ExternalLink className="size-3.5" />
-            </Button>
-            <Button variant="ghost" size="icon" className="h-7 w-7"
-              onClick={() => { void handleShowInFolder() }}
-              title="打开文件所在位置">
-              <FolderOpen className="size-3.5" />
-            </Button>
             <Button variant="ghost" size="icon" className="h-7 w-7" onClick={onClose}>
               <X className="size-3.5" />
             </Button>
@@ -229,9 +178,6 @@ export function FilePreviewDialog({ open, filePath, fileName, onClose, teamDownl
           {state.status === 'unsupported' && (
             <div className="flex flex-col items-center justify-center h-full gap-3 text-muted-foreground">
               <p className="text-sm">暂不支持预览此文件类型（.{ext(fileName)}）</p>
-              <Button variant="outline" size="sm" onClick={() => { void handleOpenLocalFile() }}>
-                <Download className="size-3.5 mr-1" />用默认应用打开
-              </Button>
             </div>
           )}
           {state.status === 'error' && (

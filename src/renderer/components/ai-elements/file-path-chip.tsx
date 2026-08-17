@@ -192,14 +192,23 @@ export function FilePathChip({ filePath, basePath, basePaths, className }: FileP
       .catch(() => toast.error(`未找到文件：${filename}`))
   }, [cleanPath, candidateBases, filename])
 
-  // 平板模式：静态展示（不可点击、无右键菜单），保留文件名与文件类型图标
+  // 平板模式：Pocket 端无 tab 渲染系统（无 MainArea/TabBar），点击改走 FilePreviewDialog
+  // 弹窗（派发 profer:file-preview 事件，由 FilePreviewContainer 全局监听）。
+  // 此前因 WS 无 read_file 刻意静态化不可点击；文件预览打通后放开点击。
   if (pocketMode) {
+    const handlePocketPreview = (): void => {
+      window.dispatchEvent(new CustomEvent('profer:file-preview', {
+        detail: { path: previewFilePath, name: filename },
+      }))
+    }
     return (
-      <span
-        title={displayPath}
+      <button
+        type="button"
+        onClick={handlePocketPreview}
+        title={fileStatus === 'broken' ? `文件不存在: ${displayPath}` : displayPath}
         className={cn(
           'inline-flex items-center gap-1 rounded px-1.5 py-[2px] text-[12px] font-medium leading-[1.6]',
-          'align-baseline not-prose',
+          'align-baseline not-prose cursor-pointer transition-colors duration-150',
           fileStatus === 'broken'
             ? 'opacity-50 border border-dashed border-muted-foreground/30 text-muted-foreground'
             : 'bg-primary/10 text-primary',
@@ -208,7 +217,7 @@ export function FilePathChip({ filePath, basePath, basePaths, className }: FileP
       >
         <FileTypeIcon name={filename} isDirectory={false} size={14} />
         <span className="truncate max-w-[240px]">{filename}{lineColSuffix}</span>
-      </span>
+      </button>
     )
   }
 

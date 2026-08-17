@@ -38,7 +38,10 @@ export default defineConfig({
     // 加 /ws 代理：平板连同源 ws://127.0.0.1:5175/ws，vite 转发到电脑端 remote-service，
     // 绕开混合内容限制。联调时服务器地址留空（自动同源），token 正常填。
     proxy: {
-      '/ws': {
+      // 只代理 WebSocket 端点 /ws（含 /ws/xxx 子路径与 ?query），
+      // 排除 /ws-client.ts 等以 /ws 开头的静态模块路径——否则 main.tsx 的
+      // import './ws-client' 会被代理到 7788 返回 404，整个应用崩溃白屏。
+      '^/ws(?:[/?]|$)': {
         target: 'http://127.0.0.1:7788',
         ws: true,
         changeOrigin: true,

@@ -38,6 +38,7 @@ import { initPocketUiScale } from '@/atoms/ui-scale'
 import { initPocketScreenOrientation } from '@/lib/pocket-screen-orientation'
 import { initDebugHud, debugLog } from '@/lib/debug-hud'
 import { UiScaleContainer } from '@/components/UiScaleContainer'
+import { FilePreviewContainer } from '@/components/file-browser/FilePreviewContainer'
 import { Button } from '@/components/ui/button'
 import { AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogFooter, AlertDialogTitle, AlertDialogDescription, AlertDialogAction, AlertDialogCancel } from '@/components/ui/alert-dialog'
 import { TooltipProvider, Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip'
@@ -203,6 +204,10 @@ function PocketApp(): React.ReactElement {
         {/* 设置入口：LeftSidebar 底部头像/设置按钮置位 settingsOpenAtom，此处渲染原版 Dialog；
             Portal 到 body，不随缩放容器变换 */}
         <SettingsDialog tabsOverride={POCKET_SETTINGS_TABS} />
+        {/* 文件预览弹窗容器：监听 profer:file-preview 事件（Pocket 端 chip 点击派发），
+            弹 FilePreviewDialog 预览电脑端文件（走 WS 读取）。Pocket 无 tab 渲染系统，
+            预览只能以弹窗形式呈现。 */}
+        <FilePreviewContainer />
       </TooltipProvider>
     </Provider>
   )
