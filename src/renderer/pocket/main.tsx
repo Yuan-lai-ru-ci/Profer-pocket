@@ -117,8 +117,10 @@ const pocketStore = createStore()
 // 必须在渲染前写入 pocketStore 的 uiScaleAtom（atom 默认值在模块加载时已固定）
 initPocketUiScale(pocketStore)
 
-// 屏幕方向：启动时读取持久化初始值并应用到原生层（重启保持；浏览器环境安全降级）
-initPocketScreenOrientation(pocketStore)
+// 屏幕方向：启动时做 localStorage ↔ 原生 SharedPreferences 一致性合并并应用到原生层。
+// 权威持久化在原生层（Activity 创建时插件已提前锁定，见 ScreenOrientationPlugin.load），
+// 此处兜底同步 UI；浏览器环境安全降级。
+void initPocketScreenOrientation(pocketStore)
 
 // ===== 平板设置系统：直接搬运桌面 SettingsDialog，tab 白名单只保留平板可用的「连接 / 外观 / 通知」=====
 // （连接/通知为本设备本地能力：localStorage + WS 状态，不依赖 Electron IPC；外观全部本地持久化。
