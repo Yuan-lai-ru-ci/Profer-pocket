@@ -7,7 +7,8 @@
         android:label="@string/app_name"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
-        android:theme="@style/AppTheme">
+        android:theme="@style/AppTheme"
+        android:usesCleartextTraffic="true">
 
         <activity
             android:configChanges="orientation|keyboardHidden|keyboard|screenSize|locale|smallestScreenSize|screenLayout|uiMode|navigation"
@@ -33,11 +34,25 @@
                 android:name="android.support.FILE_PROVIDER_PATHS"
                 android:resource="@xml/file_paths"></meta-data>
         </provider>
+
+        <!-- 后台消息通道：原生前台服务（常驻 WS 消息连接 + 系统通知） -->
+        <service
+            android:name=".MessageService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
     </application>
 
     <!-- Permissions -->
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- 通知权限（Android 13+ 运行时权限；前台服务在无权限时仍可保活，仅通知不可见） -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- 前台服务权限 + dataSync 类型（Android 14+ 强制要求声明） -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <!-- 后台保活锁：PARTIAL_WAKE_LOCK 防熄屏 Doze 挂起 CPU/网络，WifiLock 防 Wi-Fi 休眠断连 -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
     <!-- 长按菜单触觉反馈（navigator.vibrate）需要此权限 -->
     <uses-permission android:name="android.permission.VIBRATE" />
 </manifest>

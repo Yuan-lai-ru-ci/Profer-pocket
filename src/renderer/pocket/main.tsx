@@ -36,6 +36,7 @@ import { agentSessionsAtom, agentWorkspacesAtom, currentAgentSessionIdAtom, curr
 import { appModeAtom } from '@/atoms/app-mode'
 import { initPocketUiScale } from '@/atoms/ui-scale'
 import { initPocketScreenOrientation } from '@/lib/pocket-screen-orientation'
+import { getPocketPendingNotification, normalizeWsUrl, setPocketKeepaliveForeground, startPocketKeepalive, stopPocketKeepalive, getPocketKeepaliveLogs } from '@/lib/pocket-keepalive'
 import { initDebugHud, debugLog } from '@/lib/debug-hud'
 import { UiScaleContainer } from '@/components/UiScaleContainer'
 import { Button } from '@/components/ui/button'
@@ -43,7 +44,7 @@ import { AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogFooter, 
 import { TooltipProvider, Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip'
 import { Menu, Plus, Palette, Link, Loader2, Bell, RefreshCw } from 'lucide-react'
 import { type AgentStreamPayload } from '@profer/shared'
-import { pocketConnectionStatusAtom, pocketNotifyCompleteAtom, pocketUnbindRequestAtom } from '@/atoms/pocket-settings'
+import { pocketBackgroundMessagingAtom, pocketConnectionStatusAtom, pocketNotifyCompleteAtom, pocketUnbindRequestAtom } from '@/atoms/pocket-settings'
 
 // ===== 先安装 electronAPI stub（必须在任何复用组件求值前）=====
 installElectronApiStub()
@@ -85,26 +86,6 @@ function saveLastView(v: { mode: 'agent' | 'chat'; sessionId?: string; conversat
 }
 function clearLastView(): void {
   try { localStorage.removeItem('profer-remote-last-view') } catch { /* ignore */ }
-}
-
-/**
- * 规范化服务器地址为 WS URL。支持输入形式：
- *  - http://192.168.1.10:7788 / https://host:port  → ws(s)://host:port/ws
- *  - ws://192.168.1.10:7788 / ws://192.168.1.10:7788/ws → 补 /ws 或原样
- *  - 192.168.1.10:7788（无协议）→ ws://192.168.1.10:7788/ws
- *  - 空字符串 → null（调用方回退 defaultWsUrl 自动推导）
- */
-function normalizeWsUrl(raw: string): string | null {
-  const s = raw.trim().replace(/\/+$/, '')
-  if (!s) return null
-  if (/^https?:\/\//i.test(s)) {
-    const proto = /^https:/i.test(s) ? 'wss:' : 'ws:'
-    return `${proto}${s.replace(/^https?:/i, '')}/ws`
-  }
-  if (/^wss?:\/\//i.test(s)) {
-    return s.endsWith('/ws') ? s : `${s}/ws`
-  }
-  return `ws://${s}/ws`
 }
 
 // ===== 类型 =====
@@ -237,6 +218,7 @@ function App(): React.ReactElement {
   const nativeConversationId = useAtomValue(currentConversationIdAtom)
   const conversations = useAtomValue(conversationsAtom)
   const userProfile = useAtomValue(userProfileAtom)
+  const backgroundMessagingOn = useAtomValue(pocketBackgroundMessagingAtom)
   const clientRef = useRef<WsClient | null>(null)
 
   // 界面状态：reconnecting = 已绑定但断线，保持主界面 + 横幅自动重连（不再回登录页“重新校验”）
@@ -297,7 +279,9 @@ function App(): React.ReactElement {
           void loadConversations(client)
           void loadUserProfile(client)
         } else if (status === 'unauthorized') {
-          // token 无效：服务端已拒绝对话且客户端已停止自动重连，停留登录页提示用户重新输入
+          // token 无效：服务端已拒绝对话且客户端已停止自动重连，停留登录页提示用户重新输入；
+          // 原生后台服务同样收到 4001 会自停，这里再显式 stop 一次保证两端一致
+          void stopPocketKeepalive()
           setConnection('unauthorized')
           setErrMsg('访问令牌无效或已失效，请查看电脑端启动日志中的 Token 后重新输入')
         } else if (status === 'closed') {
@@ -552,9 +536,11 @@ function App(): React.ReactElement {
           resultErrors: p.event.resultErrors,
           backgroundTasksPending: p.event.backgroundTasksPending,
         })
-        // Agent 完成提醒音：开关开启、非用户主动停止、且完成会话不是当前正在查看的会话
-        // （自己盯着屏幕看时不需要提醒；正在看其他会话 / Chat 模式时值得提示）
-        if (!stoppedByUser && pocketStore.get(pocketNotifyCompleteAtom)) {
+        // Agent 完成提醒音：仅平板前台时播放——后台由「后台消息通知」系统通知通道负责提醒。
+        // WebView 在后台不冻结 JS（Capacitor keepRunning=true），必须显式判断 document.hidden，
+        // 否则后台收到 run_completed 也会误响提示音。开关开启、非用户主动停止、
+        // 且完成会话不是当前正在查看的会话（自己盯着屏幕看时不需要提醒）才响。
+        if (!stoppedByUser && !document.hidden && pocketStore.get(pocketNotifyCompleteAtom)) {
           const viewingId = pocketStore.get(currentAgentSessionIdAtom)
           if (viewingId !== evt.sessionId) playPocketCompleteChime()
         }
@@ -607,6 +593,8 @@ function App(): React.ReactElement {
   /** 解绑：断开连接并清除本机保存的服务器地址与访问令牌，回到连接页重新绑定 */
   const unbind = useCallback(() => {
     clientRef.current?.disconnect()
+    // 解绑即解除绑定关系：后台消息通道一并停止（原生前台服务 + 常驻通知）
+    void stopPocketKeepalive()
     localStorage.removeItem('profer-remote-token')
     localStorage.removeItem('profer-remote-server')
     clearLastView()
@@ -690,6 +678,8 @@ function App(): React.ReactElement {
   // 已断则立即重连（不等 2s 定时器），仍连则 reconnectNow 内部 no-op，完全无感。
   useEffect(() => {
     const onVisibility = (): void => {
+      // 后台消息通道：同步前后台状态（前台抑制原生通知，去重关键；服务未启动时为无副作用调用）
+      void setPocketKeepaliveForeground(!document.hidden)
       if (document.hidden) return
       clientRef.current?.reconnectNow()
     }
@@ -700,13 +690,36 @@ function App(): React.ReactElement {
     })?.Capacitor?.Plugins?.App
     let resumeHandle: { remove: () => void } | null = null
     if (appPlugin?.addListener) {
-      void appPlugin.addListener('resume', () => clientRef.current?.reconnectNow()).then((h) => { resumeHandle = h })
+      void appPlugin.addListener('resume', () => {
+        // 恢复前台：同步原生层为前台（抑制通知）并立即检测/重连 WS
+        void setPocketKeepaliveForeground(true)
+        clientRef.current?.reconnectNow()
+      }).then((h) => { resumeHandle = h })
     }
     return () => {
       document.removeEventListener('visibilitychange', onVisibility)
       resumeHandle?.remove()
     }
   }, [])
+
+  // ===== 后台消息保活联动：连接就绪且开关开启时启动原生前台服务 + 处理通知点击导航 =====
+  // 连接断开（closed）不停服务（原生 WS 独立重连）；解绑/token 失效由 unbind 与 unauthorized 分支显式 stop
+  useEffect(() => {
+    if (connection !== 'open') return
+    if (!backgroundMessagingOn) return
+    const token = getStoredToken()
+    if (!token) return
+    const url = normalizeWsUrl(getStoredServerUrl()) ?? defaultWsUrl()
+    void startPocketKeepalive(url, token)
+    // 通知点击导航：读取后即清空（一次消费）；交互弹窗（审批/问答/计划）由打开会话后的现有机制自行恢复
+    void (async () => {
+      const pending = await getPocketPendingNotification()
+      if (!pending?.sessionId || pending.sessionId === currentSessionId) return
+      console.log('[Pocket Keepalive] 点击系统通知，导航到会话', pending.sessionId, '事件类型:', pending.type ?? '未知')
+      const session = sessions.find((s) => s.id === pending.sessionId)
+      void openSession(pending.sessionId, session?.title)
+    })()
+  }, [connection, backgroundMessagingOn, currentSessionId, sessions, openSession])
 
   // 抽屉遵循原生弹层习惯：Escape 可立即返回工作区。
   useEffect(() => {
@@ -923,6 +936,16 @@ function NativePocketSidebar({ mobileOpen, onDismiss }: { mobileOpen: boolean; o
 // ===== 调试日志 HUD（dev 版标配；release 不注入标记 → 空操作）=====
 initDebugHud()
 debugLog('Pocket UI 已启动，调试 HUD 就绪')
+
+// 原生后台消息通道日志 → 调试 HUD：轮询拉取原生 WS 日志喂给 debugLog（仅 dev 变体/联调生效）
+if (import.meta.env.DEV || (window as unknown as { __POCKET_BUILD__?: string }).__POCKET_BUILD__ === 'dev') {
+  setInterval(async () => {
+    try {
+      const logs = await getPocketKeepaliveLogs()
+      if (logs && logs.length > 0) logs.forEach((l) => debugLog('[原生]', l))
+    } catch { /* ignore */ }
+  }, 2000)
+}
 
 // ===== 挂载 =====
 ReactDOM.createRoot(document.getElementById('root')!).render(
