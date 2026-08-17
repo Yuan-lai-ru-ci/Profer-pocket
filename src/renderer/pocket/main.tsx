@@ -463,7 +463,7 @@ function App(): React.ReactElement {
 
   // ===== 打开会话：AgentView 自行加载持久化消息与流式状态，平板只切换 sessionId =====
   const openSession = useCallback(async (sessionId: string, title?: string) => {
-    setSidebarOpen(false)
+    // 不收起侧栏抽屉：切换会话后保持侧栏打开，由用户自行收起（点遮罩 / Escape）
     setCurrentSessionId(sessionId)
     setNativeSessionId(sessionId)
     setNativeAppMode('agent')
@@ -473,7 +473,7 @@ function App(): React.ReactElement {
 
   /** 打开 Chat 对话：ChatView 自行加载消息与流式状态，平板只切换 conversationId 与模式 */
   const openChatConversation = useCallback((conversationId: string, title?: string) => {
-    setSidebarOpen(false)
+    // 不收起侧栏抽屉：切换对话后保持侧栏打开，由用户自行收起（点遮罩 / Escape）
     setCurrentChatId(conversationId)
     setNativeConversationId(conversationId)
     setNativeAppMode('chat')
