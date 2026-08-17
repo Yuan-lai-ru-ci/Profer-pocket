@@ -25,6 +25,8 @@ export interface UseLongPressOptions {
   onLongPress: () => void
   /** 禁用长按（如非触屏设备） */
   disabled?: boolean
+  /** 长按确认时的震动时长（ms），0 或省略不震动（Android 触觉反馈） */
+  vibrate?: number
 }
 
 export interface LongPressHandlers {
@@ -41,6 +43,7 @@ export function useLongPress({
   moveTolerance = LONG_PRESS_MOVE_TOLERANCE,
   onLongPress,
   disabled = false,
+  vibrate = 0,
 }: UseLongPressOptions): LongPressHandlers {
   const timerRef = React.useRef<ReturnType<typeof setTimeout>>()
   const triggeredRef = React.useRef(false)
@@ -79,8 +82,12 @@ export function useLongPress({
       triggeredRef.current = true
       startPointRef.current = null
       onLongPressRef.current()
+      // 长按确认：Android 触觉反馈（短促震动让用户感知菜单即将弹出）
+      if (vibrate > 0 && typeof navigator !== 'undefined' && typeof navigator.vibrate === 'function') {
+        navigator.vibrate(vibrate)
+      }
     }, delay)
-  }, [disabled, delay, reset])
+  }, [disabled, delay, reset, vibrate])
 
   const handleTouchMove = React.useCallback((e: React.TouchEvent): void => {
     const start = startPointRef.current

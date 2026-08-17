@@ -81,6 +81,8 @@ function useLongPressContextMenu(touchMode: boolean): {
   const itemRef = React.useRef<HTMLDivElement>(null)
   const longPressMenu = useLongPress({
     disabled: !touchMode,
+    // 长按确认震动 30ms：Android 触觉反馈，让用户感知菜单即将弹出
+    vibrate: 30,
     onLongPress: () => {
       const el = itemRef.current
       if (!el) return
@@ -343,33 +345,19 @@ export function SessionItemActions({
 
   const forceVisible = archiveConfirming || menuOpen
 
-  // 触屏模式：无 hover，置顶/归档已并入三点菜单，只常显一个 ⋯ 按钮；相对时间保留（文字让出按钮宽度）
+  // 触屏模式：无 hover，操作全部并入长按菜单，不再显示 ⋯ 按钮（腾出显示区域）；相对时间保留
   if (touchMode) {
     return (
       <div
-        className="relative flex-shrink-0 h-[24px] w-[62px]"
+        className="relative flex-shrink-0 h-[18px] w-[58px]"
         onClick={(e) => e.stopPropagation()}
       >
         <span
           title={`最后更新：${new Date(updatedAt).toLocaleString('zh-CN')}`}
-          className="absolute inset-y-0 right-[28px] block text-right text-[11px] leading-[24px] tabular-nums text-foreground/35"
+          className="absolute inset-y-0 right-0 block w-full text-right text-[11px] leading-[18px] tabular-nums text-foreground/35"
         >
           {formatRelativeUpdatedAt(updatedAt, relativeTimeNow)}
         </span>
-        <DropdownMenu onOpenChange={handleMenuOpenChange}>
-          <DropdownMenuTrigger asChild>
-            <button
-              type="button"
-              aria-label="会话操作菜单"
-              className="absolute right-0 top-1/2 flex size-6 -translate-y-1/2 items-center justify-center rounded-md text-foreground/50 transition-colors hover:bg-foreground/[0.08] hover:text-foreground/70 data-[state=open]:bg-foreground/[0.08] data-[state=open]:text-foreground/70"
-            >
-              <MoreHorizontal size={15} />
-            </button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="start" className="w-40 z-[9999] min-w-0 p-0.5">
-            {menuItems(DropdownMenuItem, DropdownMenuSeparator)}
-          </DropdownMenuContent>
-        </DropdownMenu>
       </div>
     )
   }
@@ -962,7 +950,7 @@ export const AgentSessionItem = React.memo(function AgentSessionItem({
                         delegationSummary.expanded && 'rotate-90',
                       )}
                     />
-                    {delegationSummary.completed}/{delegationSummary.total} 子会话
+                    {delegationSummary.completed}/{delegationSummary.total}
                   </button>
                 )}
               </div>
@@ -1155,6 +1143,8 @@ export const AgentProjectGroupItem = React.memo(function AgentProjectGroupItem({
   const [projectMenuOpen, setProjectMenuOpen] = React.useState(false)
   const longPressProjectMenu = useLongPress({
     disabled: !touchMode,
+    // 长按确认震动 30ms：Android 触觉反馈
+    vibrate: 30,
     onLongPress: () => {
       // 长按项目标题：打开项目菜单；松手后的合成 click 由 onClick 里的 shouldSuppressClick 拦截，避免误选中项目
       setProjectMenuOpen(true)
