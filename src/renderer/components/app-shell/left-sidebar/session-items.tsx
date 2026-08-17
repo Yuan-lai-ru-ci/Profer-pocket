@@ -36,6 +36,7 @@ import {
   useSessionMiniMapHover,
   type SessionMiniMapType,
 } from '@/components/session-preview/SessionMiniMapPopover'
+import { useLongPress, type LongPressHandlers } from '@/hooks/useLongPress'
 import { browserStateMapAtom } from '@/atoms/browser-atoms'
 import type { SessionIndicatorStatus } from '@/atoms/agent-atoms'
 import type { ConversationMeta, AgentSessionMeta, AgentWorkspace } from '@profer/shared'
@@ -62,6 +63,39 @@ const PROJECT_SESSION_EXPAND_STEP = 10
 const PINNED_SESSION_VISIBLE_LIMIT = 6
 const PINNED_SESSION_ROW_HEIGHT_PX = 32
 export const PINNED_SESSION_MAX_HEIGHT = PINNED_SESSION_VISIBLE_LIMIT * PINNED_SESSION_ROW_HEIGHT_PX
+
+/** 触屏检测（双保险）：hover:none 匹配手机/平板纯触屏 WebView；ontouchstart 兜底部分 Android WebView。
+ *  Pocket 客户端（body 有 pocket-mode）一定匹配 hover:none，触屏下左侧栏走长按菜单交互。 */
+const isTouchOnly = (): boolean =>
+  typeof window !== 'undefined' &&
+  (window.matchMedia?.('(hover: none)')?.matches === true || 'ontouchstart' in window)
+
+/**
+ * 触屏长按弹右键菜单：长按列表项 → 在项中心 dispatch 原生 contextmenu 事件。
+ * Radix ContextMenu 通过原生 onContextMenu 打开，这样可完全复用现有右键菜单内容（置顶/重命名/归档/删除）。
+ * 桌面路径不启用（disabled=!touchMode）。
+ */
+function useLongPressContextMenu(touchMode: boolean): {
+  itemRef: React.MutableRefObject<HTMLDivElement | null>
+} & LongPressHandlers {
+  const itemRef = React.useRef<HTMLDivElement>(null)
+  const longPressMenu = useLongPress({
+    disabled: !touchMode,
+    onLongPress: () => {
+      const el = itemRef.current
+      if (!el) return
+      const r = el.getBoundingClientRect()
+      el.dispatchEvent(new MouseEvent('contextmenu', {
+        bubbles: true,
+        cancelable: true,
+        clientX: r.left + r.width / 2,
+        clientY: r.top + r.height / 2,
+        button: 2,
+      }))
+    },
+  })
+  return { itemRef, ...longPressMenu }
+}
 
 const RAIL_STATUS_CLASS: Record<SessionIndicatorStatus, string> = {
   idle: 'hidden',
@@ -165,6 +199,8 @@ export interface SessionItemActionsProps {
     MenuSeparator: typeof DropdownMenuSeparator,
   ) => React.ReactNode
   onMenuOpenChange?: (open: boolean) => void
+  /** 触屏模式：无 hover 语义，置顶/归档并入三点菜单，只常显一个 ⋯ 按钮（时间保留） */
+  touchMode?: boolean
 }
 
 /**
@@ -254,6 +290,7 @@ export function SessionItemActions({
   onToggleArchive,
   menuItems,
   onMenuOpenChange,
+  touchMode = false,
 }: SessionItemActionsProps): React.ReactElement {
   const [archiveConfirming, setArchiveConfirming] = React.useState(false)
   // 菜单打开时强制保持按钮组可见：按钮始终保留布局，只切换透明度和 pointer-events。
@@ -305,6 +342,37 @@ export function SessionItemActions({
   }, [])
 
   const forceVisible = archiveConfirming || menuOpen
+
+  // 触屏模式：无 hover，置顶/归档已并入三点菜单，只常显一个 ⋯ 按钮；相对时间保留（文字让出按钮宽度）
+  if (touchMode) {
+    return (
+      <div
+        className="relative flex-shrink-0 h-[24px] w-[62px]"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <span
+          title={`最后更新：${new Date(updatedAt).toLocaleString('zh-CN')}`}
+          className="absolute inset-y-0 right-[28px] block text-right text-[11px] leading-[24px] tabular-nums text-foreground/35"
+        >
+          {formatRelativeUpdatedAt(updatedAt, relativeTimeNow)}
+        </span>
+        <DropdownMenu onOpenChange={handleMenuOpenChange}>
+          <DropdownMenuTrigger asChild>
+            <button
+              type="button"
+              aria-label="会话操作菜单"
+              className="absolute right-0 top-1/2 flex size-6 -translate-y-1/2 items-center justify-center rounded-md text-foreground/50 transition-colors hover:bg-foreground/[0.08] hover:text-foreground/70 data-[state=open]:bg-foreground/[0.08] data-[state=open]:text-foreground/70"
+            >
+              <MoreHorizontal size={15} />
+            </button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="start" className="w-40 z-[9999] min-w-0 p-0.5">
+            {menuItems(DropdownMenuItem, DropdownMenuSeparator)}
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
+    )
+  }
 
   return (
     <div
@@ -420,6 +488,28 @@ export const ConversationItem = React.memo(function ConversationItem({
   // 菜单打开时关闭迷你地图预览，避免预览面板盖住菜单项导致点不动
   const preview = useSessionMiniMapHover(600, menuOpen)
 
+  // ---- 触屏长按弹右键菜单 ----
+  const touchMode = React.useMemo(() => isTouchOnly(), [])
+  const { itemRef, ...longPressMenu } = useLongPressContextMenu(touchMode)
+
+  // 触屏下用长按菜单的 touch handler，桌面下保留悬浮预览的 handler；组合成稳定引用（列表项是 React.memo）
+  const handleTouchStart = React.useCallback((e: React.TouchEvent) => {
+    if (touchMode) longPressMenu.handleTouchStart(e)
+    else preview.handleTouchStart(e)
+  }, [touchMode, longPressMenu.handleTouchStart, preview.handleTouchStart])
+  const handleTouchMove = React.useCallback((e: React.TouchEvent) => {
+    if (touchMode) longPressMenu.handleTouchMove(e)
+    else preview.handleTouchMove(e)
+  }, [touchMode, longPressMenu.handleTouchMove, preview.handleTouchMove])
+  const handleTouchEnd = React.useCallback(() => {
+    if (touchMode) longPressMenu.handleTouchEnd()
+    else preview.handleTouchEnd()
+  }, [touchMode, longPressMenu.handleTouchEnd, preview.handleTouchEnd])
+  const handleTouchCancel = React.useCallback(() => {
+    if (touchMode) longPressMenu.handleTouchCancel()
+    else preview.handleTouchCancel()
+  }, [touchMode, longPressMenu.handleTouchCancel, preview.handleTouchCancel])
+
   /** 进入编辑模式 */
   const startEdit = (): void => {
     setEditTitle(conversation.title)
@@ -487,12 +577,12 @@ export const ConversationItem = React.memo(function ConversationItem({
     <ContextMenu>
       <ContextMenuTrigger asChild>
         <div
-          ref={preview.setAnchorRef}
+          ref={(node) => { preview.setAnchorRef(node); itemRef.current = node }}
           role="button"
           data-profer-navigation-item="session"
           data-profer-navigation-active={active ? 'true' : undefined}
           tabIndex={0}
-          onClick={() => { if (preview.shouldSuppressClick()) return; onSelect(conversation.id, conversation.title) }}
+          onClick={() => { if (preview.shouldSuppressClick() || (touchMode && longPressMenu.shouldSuppressClick())) return; onSelect(conversation.id, conversation.title) }}
           onKeyDown={(e) => {
             if (e.key === 'Enter' || e.key === ' ') {
               e.preventDefault()
@@ -501,11 +591,12 @@ export const ConversationItem = React.memo(function ConversationItem({
           }}
           onMouseEnter={preview.handleMouseEnter}
           onMouseLeave={preview.handleMouseLeave}
-          onTouchStart={preview.handleTouchStart}
-          onTouchMove={preview.handleTouchMove}
-          onTouchEnd={preview.handleTouchEnd}
-          onTouchCancel={preview.handleTouchCancel}
+          onTouchStart={handleTouchStart}
+          onTouchMove={handleTouchMove}
+          onTouchEnd={handleTouchEnd}
+          onTouchCancel={handleTouchCancel}
           onDoubleClick={(e) => {
+            if (touchMode) return
             e.stopPropagation()
             startEdit()
           }}
@@ -568,6 +659,7 @@ export const ConversationItem = React.memo(function ConversationItem({
               onToggleArchive={() => onToggleArchive(conversation.id)}
               onMenuOpenChange={setMenuOpen}
               menuItems={menuItems}
+              touchMode={touchMode}
             />
           )}
         </div>
@@ -681,6 +773,28 @@ export const AgentSessionItem = React.memo(function AgentSessionItem({
   // 菜单打开时关闭迷你地图预览，避免预览面板盖住菜单项导致点不动
   const preview = useSessionMiniMapHover(600, disableMiniMap || menuOpen)
 
+  // ---- 触屏长按弹右键菜单 ----
+  const touchMode = React.useMemo(() => isTouchOnly(), [])
+  const { itemRef, ...longPressMenu } = useLongPressContextMenu(touchMode)
+
+  // 触屏下用长按菜单的 touch handler，桌面下保留悬浮预览的 handler；组合成稳定引用（列表项是 React.memo）
+  const handleTouchStart = React.useCallback((e: React.TouchEvent) => {
+    if (touchMode) longPressMenu.handleTouchStart(e)
+    else preview.handleTouchStart(e)
+  }, [touchMode, longPressMenu.handleTouchStart, preview.handleTouchStart])
+  const handleTouchMove = React.useCallback((e: React.TouchEvent) => {
+    if (touchMode) longPressMenu.handleTouchMove(e)
+    else preview.handleTouchMove(e)
+  }, [touchMode, longPressMenu.handleTouchMove, preview.handleTouchMove])
+  const handleTouchEnd = React.useCallback(() => {
+    if (touchMode) longPressMenu.handleTouchEnd()
+    else preview.handleTouchEnd()
+  }, [touchMode, longPressMenu.handleTouchEnd, preview.handleTouchEnd])
+  const handleTouchCancel = React.useCallback(() => {
+    if (touchMode) longPressMenu.handleTouchCancel()
+    else preview.handleTouchCancel()
+  }, [touchMode, longPressMenu.handleTouchCancel, preview.handleTouchCancel])
+
   const startEdit = (): void => {
     setEditTitle(session.title)
     setEditing(true)
@@ -749,12 +863,12 @@ export const AgentSessionItem = React.memo(function AgentSessionItem({
     <ContextMenu>
       <ContextMenuTrigger asChild>
         <div
-          ref={preview.setAnchorRef}
+          ref={(node) => { preview.setAnchorRef(node); itemRef.current = node }}
           role="button"
           data-profer-navigation-item="session"
           data-profer-navigation-active={active ? 'true' : undefined}
           tabIndex={0}
-          onClick={() => { if (preview.shouldSuppressClick()) return; onSelect(session.id, session.title) }}
+          onClick={() => { if (preview.shouldSuppressClick() || (touchMode && longPressMenu.shouldSuppressClick())) return; onSelect(session.id, session.title) }}
           onKeyDown={(e) => {
             if (e.key === 'Enter' || e.key === ' ') {
               e.preventDefault()
@@ -763,11 +877,12 @@ export const AgentSessionItem = React.memo(function AgentSessionItem({
           }}
           onMouseEnter={preview.handleMouseEnter}
           onMouseLeave={preview.handleMouseLeave}
-          onTouchStart={preview.handleTouchStart}
-          onTouchMove={preview.handleTouchMove}
-          onTouchEnd={preview.handleTouchEnd}
-          onTouchCancel={preview.handleTouchCancel}
+          onTouchStart={handleTouchStart}
+          onTouchMove={handleTouchMove}
+          onTouchEnd={handleTouchEnd}
+          onTouchCancel={handleTouchCancel}
           onDoubleClick={(e) => {
+            if (touchMode) return
             e.stopPropagation()
             startEdit()
           }}
@@ -864,6 +979,7 @@ export const AgentSessionItem = React.memo(function AgentSessionItem({
               onToggleArchive={() => onToggleArchive(session.id)}
               onMenuOpenChange={setMenuOpen}
               menuItems={menuItems}
+              touchMode={touchMode}
             />
           )}
         </div>
@@ -1033,6 +1149,18 @@ export const AgentProjectGroupItem = React.memo(function AgentProjectGroupItem({
   const justStartedRenamingRef = React.useRef(false)
   const projectClickTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null)
 
+  // ---- 触屏长按项目标题弹菜单 ----
+  const touchMode = React.useMemo(() => isTouchOnly(), [])
+  // 项目标题 DropdownMenu 改为受控：触屏长按 / 点击 ⋯ 按钮都能打开
+  const [projectMenuOpen, setProjectMenuOpen] = React.useState(false)
+  const longPressProjectMenu = useLongPress({
+    disabled: !touchMode,
+    onLongPress: () => {
+      // 长按项目标题：打开项目菜单；松手后的合成 click 由 onClick 里的 shouldSuppressClick 拦截，避免误选中项目
+      setProjectMenuOpen(true)
+    },
+  })
+
   React.useEffect(() => () => {
     if (projectClickTimerRef.current) clearTimeout(projectClickTimerRef.current)
   }, [])
@@ -1123,15 +1251,18 @@ export const AgentProjectGroupItem = React.memo(function AgentProjectGroupItem({
       )}
 
       <div className="group/project relative flex translate-x-[2px] items-center">
-        <span
-          draggable
-          onDragStart={(e) => onDragStart(e, group.workspace.id)}
-          title="拖拽排序"
-          className="absolute -left-0.5 top-1/2 z-10 flex size-[18px] -translate-y-1/2 cursor-grab items-center justify-center text-foreground/20 opacity-0 transition-opacity group-hover/project:opacity-100 active:cursor-grabbing"
-          aria-hidden="true"
-        >
-          <GripVertical size={12} />
-        </span>
+        {/* 拖拽手柄：触屏下隐藏（项目排序拖拽触屏不做，功能并入长按菜单） */}
+        {!touchMode && (
+          <span
+            draggable
+            onDragStart={(e) => onDragStart(e, group.workspace.id)}
+            title="拖拽排序"
+            className="absolute -left-0.5 top-1/2 z-10 flex size-[18px] -translate-y-1/2 cursor-grab items-center justify-center text-foreground/20 opacity-0 transition-opacity group-hover/project:opacity-100 active:cursor-grabbing"
+            aria-hidden="true"
+          >
+            <GripVertical size={12} />
+          </span>
+        )}
 
         {renamingWorkspace ? (
           <div
@@ -1162,8 +1293,15 @@ export const AgentProjectGroupItem = React.memo(function AgentProjectGroupItem({
             aria-controls={`project-sessions-${group.workspace.id}`}
             onClick={(e) => {
               e.stopPropagation()
+              // 长按已触发项目菜单：拦截松手后的合成 click，避免误选中项目
+              if (longPressProjectMenu.shouldSuppressClick()) return
               if (e.target instanceof Element && e.target.closest('[data-project-collapse]')) {
                 onToggleProjectCollapse(group.workspace.id)
+                return
+              }
+              if (touchMode) {
+                // 触屏下单击直接选中项目，去掉 500ms 双击延迟；折叠走右侧 chevron
+                void onSelectProject(group.workspace.id)
                 return
               }
               if (projectClickTimerRef.current) clearTimeout(projectClickTimerRef.current)
@@ -1173,6 +1311,7 @@ export const AgentProjectGroupItem = React.memo(function AgentProjectGroupItem({
               }, PROJECT_TITLE_DOUBLE_CLICK_DELAY_MS)
             }}
             onDoubleClick={(e) => {
+              if (touchMode) return
               e.stopPropagation()
               if (projectClickTimerRef.current) {
                 clearTimeout(projectClickTimerRef.current)
@@ -1180,8 +1319,13 @@ export const AgentProjectGroupItem = React.memo(function AgentProjectGroupItem({
               }
               onToggleProjectCollapse(group.workspace.id)
             }}
+            onTouchStart={longPressProjectMenu.handleTouchStart}
+            onTouchMove={longPressProjectMenu.handleTouchMove}
+            onTouchEnd={longPressProjectMenu.handleTouchEnd}
+            onTouchCancel={longPressProjectMenu.handleTouchCancel}
             className={cn(
               'relative flex-1 min-w-0 flex items-center gap-1 pl-[9px] pr-1 py-1 rounded-md text-left transition-[padding,color,background-color] titlebar-no-drag group-hover/project:pl-4 group-hover/project:pr-11 hover:bg-foreground/[0.025]',
+              touchMode && 'pr-8',
               isCurrent
                 ? 'agent-project-item-current text-foreground'
                 : 'text-foreground/65 hover:text-foreground/88',
@@ -1208,34 +1352,53 @@ export const AgentProjectGroupItem = React.memo(function AgentProjectGroupItem({
           </button>
         )}
 
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <button
-              type="button"
-              aria-label={`在「${group.workspace.name}」中新建会话`}
-              onClick={(e) => {
-                e.stopPropagation()
-                void onNewSession(group.workspace.id)
-              }}
-              className="absolute right-5 top-1/2 flex size-5 -translate-y-1/2 items-center justify-center rounded-md text-foreground/30 opacity-0 transition-colors hover:bg-foreground/[0.055] hover:text-foreground/65 group-hover/project:opacity-100 titlebar-no-drag"
-            >
-              <Plus size={13} />
-            </button>
-          </TooltipTrigger>
-          <TooltipContent side="top">在此项目中新建会话</TooltipContent>
-        </Tooltip>
+        {/* 「+ 新建会话」按钮：触屏下隐藏（新建会话并入长按菜单） */}
+        {!touchMode && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                type="button"
+                aria-label={`在「${group.workspace.name}」中新建会话`}
+                onClick={(e) => {
+                  e.stopPropagation()
+                  void onNewSession(group.workspace.id)
+                }}
+                className="absolute right-5 top-1/2 flex size-5 -translate-y-1/2 items-center justify-center rounded-md text-foreground/30 opacity-0 transition-colors hover:bg-foreground/[0.055] hover:text-foreground/65 group-hover/project:opacity-100 titlebar-no-drag"
+              >
+                <Plus size={13} />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent side="top">在此项目中新建会话</TooltipContent>
+          </Tooltip>
+        )}
 
-        <DropdownMenu>
+        {/* 项目菜单：触屏下受控打开（长按标题 / 常显 ⋯ 按钮）；⋯ 按钮触屏常显并放大点击区域 */}
+        <DropdownMenu open={projectMenuOpen} onOpenChange={setProjectMenuOpen}>
           <DropdownMenuTrigger asChild>
             <button
               type="button"
               aria-label="项目菜单"
-              className="absolute right-0 top-1/2 flex size-5 -translate-y-1/2 items-center justify-center rounded-md text-foreground/30 opacity-0 transition-colors hover:bg-foreground/[0.055] hover:text-foreground/60 group-hover/project:opacity-100 data-[state=open]:opacity-100 titlebar-no-drag"
+              className={cn(
+                'absolute right-0 top-1/2 flex -translate-y-1/2 items-center justify-center rounded-md transition-colors titlebar-no-drag',
+                touchMode
+                  ? 'size-7 text-foreground/45 hover:bg-foreground/[0.08] hover:text-foreground/65 data-[state=open]:bg-foreground/[0.08] data-[state=open]:text-foreground/65'
+                  : 'size-5 text-foreground/30 opacity-0 hover:bg-foreground/[0.055] hover:text-foreground/60 group-hover/project:opacity-100 data-[state=open]:opacity-100',
+              )}
             >
               <MoreHorizontal size={13} />
             </button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="start" className="w-44 z-[9999] min-w-0 p-0.5">
+            {touchMode && (
+              <DropdownMenuItem
+                className="text-xs py-1 [&>svg]:size-3.5"
+                onSelect={() => void onNewSession(group.workspace.id)}
+              >
+                <Plus size={14} />
+                在此项目新建会话
+              </DropdownMenuItem>
+            )}
+            {touchMode && <DropdownMenuSeparator className="my-0.5" />}
             <DropdownMenuItem
               className="text-xs py-1 [&>svg]:size-3.5"
               onSelect={() => onSelectProject(group.workspace.id)}
