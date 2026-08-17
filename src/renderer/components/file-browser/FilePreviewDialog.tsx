@@ -10,10 +10,11 @@
  */
 
 import * as React from 'react'
-import { X, Download, ExternalLink, FolderOpen, Loader2 } from 'lucide-react'
+import { X, Loader2 } from 'lucide-react'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
+import { getPreviewCache, setPreviewCache } from '@/lib/preview-cache'
 
 interface FilePreviewDialogProps {
   open: boolean
@@ -60,12 +61,10 @@ function langFromExt(e: string): string {
 
 export function FilePreviewDialog({ open, filePath, fileName, onClose, teamDownload }: FilePreviewDialogProps): React.ReactElement {
   const [state, setState] = React.useState<PreviewState>({ status: 'loading' })
-  const [resolvedPath, setResolvedPath] = React.useState<string | null>(null)
 
   React.useEffect(() => {
     if (!open || !filePath) return
     setState({ status: 'loading' })
-    setResolvedPath(null)
     loadPreview()
   }, [open, filePath]) // eslint-disable-line
 
@@ -79,16 +78,27 @@ export function FilePreviewDialog({ open, filePath, fileName, onClose, teamDownl
         if (!downloaded) { setState({ status: 'error', message: '文件下载失败，请重试' }); return }
         localPath = downloaded
       }
-      setResolvedPath(localPath)
-
       // 团队下载后拿到的是临时目录绝对路径，IPC handler 需要授权上下文
       const parentDir = localPath.replace(/[/\\][^/\\]*$/, '') || '/'
       const access = teamDownload ? { candidateBasePaths: [parentDir] } : undefined
 
       if (IMAGE_EXTS.has(e)) {
-        const url = await window.electronAPI.registerPreviewPath(localPath)
-        if (url) setState({ status: 'image', src: url })
-        else setState({ status: 'error', message: '无法读取图片' })
+        // 图片预览：桌面走 registerPreviewPath（profer-file:// 自定义协议），
+        // Pocket 端无法加载该协议，改为 readFileAsDataUrl（WS 返回 base64 data URL）。
+        // 命中内存缓存时直接渲染，不重复请求电脑端。
+        const cacheKey = `img:${localPath}`
+        const cached = getPreviewCache<{ resolvedPath: string; dataUrl: string }>(cacheKey)
+        if (cached?.dataUrl) {
+          setState({ status: 'image', src: cached.dataUrl })
+        } else {
+          const result = await window.electronAPI.readFileAsDataUrl(localPath, access)
+          if (result?.dataUrl) {
+            setPreviewCache(cacheKey, result)
+            setState({ status: 'image', src: result.dataUrl })
+          } else {
+            setState({ status: 'error', message: '无法读取图片' })
+          }
+        }
       } else if (e === 'pdf') {
         const result = await window.electronAPI.preparePdfPreview(localPath, access)
         if (result?.tmpHtmlUrl) setState({ status: 'iframe', src: result.tmpHtmlUrl })
@@ -102,52 +112,26 @@ export function FilePreviewDialog({ open, filePath, fileName, onClose, teamDownl
         if (result?.html) setState({ status: 'html', html: result.html })
         else setState({ status: 'error', message: '无法预览文档' })
       } else if (TEXT_EXTS.has(e) || !e) {
-        const result = await window.electronAPI.resolveAndReadFile(localPath, access)
-        if (result?.content) setState({ status: 'text', content: result.content, language: langFromExt(e) })
-        else setState({ status: 'error', message: '无法读取文件' })
+        // 文本/代码预览：内存缓存命中直接渲染（MVP：反复查看同一文件秒开）
+        const cacheKey = `text:${localPath}`
+        const cached = getPreviewCache<{ resolvedPath: string; content: string }>(cacheKey)
+        if (cached?.content !== undefined) {
+          setState({ status: 'text', content: cached.content, language: langFromExt(e) })
+        } else {
+          const result = await window.electronAPI.resolveAndReadFile(localPath, access)
+          if (result?.content !== undefined && result.content !== null) {
+            setPreviewCache(cacheKey, result)
+            setState({ status: 'text', content: result.content, language: langFromExt(e) })
+          } else {
+            setState({ status: 'error', message: '无法读取文件' })
+          }
+        }
       } else {
         setState({ status: 'unsupported' })
       }
     } catch (err) {
       setState({ status: 'error', message: err instanceof Error ? err.message : '加载失败' })
     }
-  }
-
-  const handleOpenLocalFile = async (): Promise<void> => {
-    let targetPath = resolvedPath ?? filePath
-    if (!resolvedPath && teamDownload) {
-      const downloaded = await teamDownload()
-      if (!downloaded) {
-        setState({ status: 'error', message: '文件下载失败，请重试' })
-        return
-      }
-      targetPath = downloaded
-      setResolvedPath(downloaded)
-    }
-    const parentDir = targetPath.replace(/[/\\][^/\\]*$/, '') || '/'
-    window.electronAPI.systemOpenFile(
-      targetPath,
-      undefined,
-      teamDownload ? { candidateBasePaths: [parentDir] } : undefined,
-    ).catch(() => {})
-  }
-
-  const handleShowInFolder = async (): Promise<void> => {
-    let targetPath = resolvedPath ?? filePath
-    if (!resolvedPath && teamDownload) {
-      const downloaded = await teamDownload()
-      if (!downloaded) {
-        setState({ status: 'error', message: '文件下载失败，请重试' })
-        return
-      }
-      targetPath = downloaded
-      setResolvedPath(downloaded)
-    }
-    const parentDir = targetPath.replace(/[/\\][^/\\]*$/, '') || '/'
-    window.electronAPI.showItemInFolder(
-      targetPath,
-      teamDownload ? [parentDir] : undefined,
-    ).catch(() => {})
   }
 
   return (
@@ -163,16 +147,6 @@ export function FilePreviewDialog({ open, filePath, fileName, onClose, teamDownl
             预览文件 {fileName}
           </DialogDescription>
           <div className="flex items-center gap-1">
-            <Button variant="ghost" size="icon" className="h-7 w-7"
-              onClick={() => { void handleOpenLocalFile() }}
-              title="用默认应用打开">
-              <ExternalLink className="size-3.5" />
-            </Button>
-            <Button variant="ghost" size="icon" className="h-7 w-7"
-              onClick={() => { void handleShowInFolder() }}
-              title="打开文件所在位置">
-              <FolderOpen className="size-3.5" />
-            </Button>
             <Button variant="ghost" size="icon" className="h-7 w-7" onClick={onClose}>
               <X className="size-3.5" />
             </Button>
@@ -204,9 +178,6 @@ export function FilePreviewDialog({ open, filePath, fileName, onClose, teamDownl
           {state.status === 'unsupported' && (
             <div className="flex flex-col items-center justify-center h-full gap-3 text-muted-foreground">
               <p className="text-sm">暂不支持预览此文件类型（.{ext(fileName)}）</p>
-              <Button variant="outline" size="sm" onClick={() => { void handleOpenLocalFile() }}>
-                <Download className="size-3.5 mr-1" />用默认应用打开
-              </Button>
             </div>
           )}
           {state.status === 'error' && (

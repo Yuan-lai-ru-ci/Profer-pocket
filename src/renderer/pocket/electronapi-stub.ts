@@ -103,6 +103,9 @@ interface PocketRemoteClient {
   copyPreset(workspaceSlug: string, fromId: string, name?: string): Promise<unknown>
   updatePreset(workspaceSlug: string, presetId: string, updates: Record<string, unknown>): Promise<unknown>
   deletePreset(workspaceSlug: string, presetId: string): Promise<unknown>
+  // ---- 文件预览：经 WS 读取电脑端文件（Pocket 文件预览 MVP） ----
+  resolveAndReadFile(filePath: string, access?: { candidateBasePaths?: string[] }): Promise<unknown>
+  readFileAsDataUrl(filePath: string, access?: { candidateBasePaths?: string[] }): Promise<unknown>
 }
 
 let remoteClient: PocketRemoteClient | null = null
@@ -904,7 +907,17 @@ export function installElectronApiStub(): void {
     refreshSkins: () => unsupported('皮肤管理'),
     onSkinsChanged: () => () => undefined,
     writeClipboardPreview: () => unsupported('剪贴板预览'),
-    resolveAndReadFile: () => unsupported('读取本地文件'),
+    // 文件预览：经 WS 读取电脑端文件内容（Pocket 文件预览 MVP）。
+    // 桌面端 FilePreviewDialog 走 electronAPI.resolveAndReadFile / registerPreviewPath，
+    // 平板改为 WS 远程指令；access 透传 candidateBasePaths 让电脑端解析相对路径。
+    resolveAndReadFile: async (filePath: string, access?: { candidateBasePaths?: string[] }) => {
+      if (!remoteClient) throw new Error('移动端连接未就绪')
+      return remoteClient.resolveAndReadFile(filePath, access)
+    },
+    readFileAsDataUrl: async (filePath: string, access?: { candidateBasePaths?: string[] }) => {
+      if (!remoteClient) throw new Error('移动端连接未就绪')
+      return remoteClient.readFileAsDataUrl(filePath, access)
+    },
     saveFilesToAgentSession: () => unsupported('保存文件到会话'),
     addAgentKnowledgeReferences: () => unsupported('知识库引用'),
     removeAgentKnowledgeReference: () => unsupported('知识库引用'),
