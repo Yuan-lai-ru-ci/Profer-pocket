@@ -14,6 +14,7 @@ import { X, Download, ExternalLink, FolderOpen, Loader2 } from 'lucide-react'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
+import { getPreviewCache, setPreviewCache } from '@/lib/preview-cache'
 
 interface FilePreviewDialogProps {
   open: boolean
@@ -86,9 +87,22 @@ export function FilePreviewDialog({ open, filePath, fileName, onClose, teamDownl
       const access = teamDownload ? { candidateBasePaths: [parentDir] } : undefined
 
       if (IMAGE_EXTS.has(e)) {
-        const url = await window.electronAPI.registerPreviewPath(localPath)
-        if (url) setState({ status: 'image', src: url })
-        else setState({ status: 'error', message: '无法读取图片' })
+        // 图片预览：桌面走 registerPreviewPath（profer-file:// 自定义协议），
+        // Pocket 端无法加载该协议，改为 readFileAsDataUrl（WS 返回 base64 data URL）。
+        // 命中内存缓存时直接渲染，不重复请求电脑端。
+        const cacheKey = `img:${localPath}`
+        const cached = getPreviewCache<{ resolvedPath: string; dataUrl: string }>(cacheKey)
+        if (cached?.dataUrl) {
+          setState({ status: 'image', src: cached.dataUrl })
+        } else {
+          const result = await window.electronAPI.readFileAsDataUrl(localPath, access)
+          if (result?.dataUrl) {
+            setPreviewCache(cacheKey, result)
+            setState({ status: 'image', src: result.dataUrl })
+          } else {
+            setState({ status: 'error', message: '无法读取图片' })
+          }
+        }
       } else if (e === 'pdf') {
         const result = await window.electronAPI.preparePdfPreview(localPath, access)
         if (result?.tmpHtmlUrl) setState({ status: 'iframe', src: result.tmpHtmlUrl })
@@ -102,9 +116,20 @@ export function FilePreviewDialog({ open, filePath, fileName, onClose, teamDownl
         if (result?.html) setState({ status: 'html', html: result.html })
         else setState({ status: 'error', message: '无法预览文档' })
       } else if (TEXT_EXTS.has(e) || !e) {
-        const result = await window.electronAPI.resolveAndReadFile(localPath, access)
-        if (result?.content) setState({ status: 'text', content: result.content, language: langFromExt(e) })
-        else setState({ status: 'error', message: '无法读取文件' })
+        // 文本/代码预览：内存缓存命中直接渲染（MVP：反复查看同一文件秒开）
+        const cacheKey = `text:${localPath}`
+        const cached = getPreviewCache<{ resolvedPath: string; content: string }>(cacheKey)
+        if (cached?.content !== undefined) {
+          setState({ status: 'text', content: cached.content, language: langFromExt(e) })
+        } else {
+          const result = await window.electronAPI.resolveAndReadFile(localPath, access)
+          if (result?.content !== undefined && result.content !== null) {
+            setPreviewCache(cacheKey, result)
+            setState({ status: 'text', content: result.content, language: langFromExt(e) })
+          } else {
+            setState({ status: 'error', message: '无法读取文件' })
+          }
+        }
       } else {
         setState({ status: 'unsupported' })
       }

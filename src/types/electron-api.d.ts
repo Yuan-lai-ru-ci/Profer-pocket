@@ -936,6 +936,9 @@ export interface ElectronAPI {
   /** 解析文件路径并读取内容（供内联预览使用） */
   resolveAndReadFile: (filePath: string, access?: import('@profer/shared').FileAccessOptions) => Promise<{ resolvedPath: string; content: string } | null>
 
+  /** 读取文件为 base64 data URL（Pocket 特有扩展：移动端无法加载 profer-file://，图片预览经 WS 拿 data URL） */
+  readFileAsDataUrl: (filePath: string, access?: import('@profer/shared').FileAccessOptions) => Promise<{ resolvedPath: string; dataUrl: string } | null>
+
   /** 写入文本文件（供 Markdown 内联编辑使用） */
   writeTextFile: (filePath: string, content: string, access?: import('@profer/shared').FileAccessOptions) => Promise<boolean>
 
