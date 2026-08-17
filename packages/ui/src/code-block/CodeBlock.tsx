@@ -193,12 +193,37 @@ export function CodeBlock({ children }: CodeBlockProps): React.ReactElement {
     }
   }, [])
 
-  // 复制到剪贴板
+  // 复制到剪贴板（带降级：Capacitor WebView 里 navigator.clipboard 可能不可用，
+  // 降级为 document.execCommand('copy') 临时 textarea 方案，WebView 兼容性最好）
   const handleCopy = React.useCallback(async () => {
+    const copyText = trimmedCode
     try {
-      await navigator.clipboard.writeText(trimmedCode)
-      setCopied(true)
-      setTimeout(() => setCopied(false), 2000)
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(copyText)
+        setCopied(true)
+        setTimeout(() => setCopied(false), 2000)
+        return
+      }
+    } catch {
+      // Clipboard API 存在但写入被拒（权限 / WebView 限制），走 execCommand 降级
+    }
+    try {
+      const textarea = document.createElement('textarea')
+      textarea.value = copyText
+      textarea.setAttribute('readonly', '')
+      textarea.style.position = 'fixed'
+      textarea.style.top = '0'
+      textarea.style.left = '0'
+      textarea.style.opacity = '0'
+      document.body.appendChild(textarea)
+      textarea.focus()
+      textarea.select()
+      const ok = document.execCommand('copy')
+      document.body.removeChild(textarea)
+      if (ok) {
+        setCopied(true)
+        setTimeout(() => setCopied(false), 2000)
+      }
     } catch (error) {
       console.error('[CodeBlock] 复制失败:', error)
     }
