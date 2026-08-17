@@ -12,6 +12,10 @@ import type {
   AgentAttachFileInput,
   AgentGenerateTitleInput,
   AgentMessageSearchResult,
+  AgentPreset,
+  AgentPresetCreateInput,
+  AgentPresetImportResult,
+  AgentPresetUpdateInput,
   AgentQueueMessageInput,
   AgentRuntime,
   AgentSaveFilesInput,
@@ -90,6 +94,7 @@ import type {
   MemoryWikilinkTarget,
   MessageSearchResult,
   MoveSessionToWorkspaceInput,
+  OtherWorkspacePresetsGroup,
   OtherWorkspaceSkillsGroup,
   PendingRequestsSnapshot,
   PermissionRequest,
@@ -752,6 +757,44 @@ export interface ElectronAPI {
 
   /** 热切换指定会话的权限模式（运行中生效，仅影响该 session） */
   updateSessionPermissionMode: (sessionId: string, mode: ProferPermissionMode) => Promise<void>
+
+  // ===== Agent 预设（工作区级，数据与电脑端共享） =====
+
+  /** 获取指定工作区的全部可用 Agent 预设（内置 + 自定义）；无工作区仅内置 */
+  listAgentPresets: (workspaceSlug?: string) => Promise<AgentPreset[]>
+
+  /** 获取指定工作区的默认预设 ID（新建会话使用） */
+  getDefaultAgentPreset: (workspaceSlug?: string) => Promise<string>
+
+  /** 更新会话绑定的预设 */
+  updateAgentSessionPreset: (sessionId: string, presetId: string) => Promise<AgentSessionMeta>
+
+  /** 设置指定工作区默认预设 */
+  setDefaultAgentPreset: (workspaceSlug: string, presetId: string) => Promise<string>
+
+  /** 在指定工作区新建自定义预设 */
+  createAgentPreset: (workspaceSlug: string, input: AgentPresetCreateInput) => Promise<AgentPreset>
+
+  /** 在指定工作区复制预设为新的自定义预设 */
+  copyAgentPreset: (workspaceSlug: string, fromId: string, name?: string) => Promise<AgentPreset>
+
+  /** 更新指定工作区的自定义预设 */
+  updateAgentPreset: (workspaceSlug: string, presetId: string, updates: AgentPresetUpdateInput) => Promise<AgentPreset>
+
+  /** 删除指定工作区的自定义预设 */
+  deleteAgentPreset: (workspaceSlug: string, presetId: string) => Promise<void>
+
+  /** 获取其他工作区的自定义预设列表（按工作区分组，导入用）—— 平板 stub 不支持 */
+  getOtherWorkspacePresets: (currentSlug: string) => Promise<OtherWorkspacePresetsGroup[]>
+
+  /** 从其他工作区导入预设到当前工作区 —— 平板 stub 不支持 */
+  importPresetFromWorkspace: (targetSlug: string, sourceSlug: string, presetId: string) => Promise<AgentPreset>
+
+  /** 导出预设为 JSON 文件（弹出保存对话框）；presetIds 省略导出全部；用户取消返回 null —— 平板 stub 不支持 */
+  exportAgentPresets: (workspaceSlug: string, presetIds?: string[]) => Promise<{ filePath: string; count: number } | null>
+
+  /** 从 JSON 文件导入预设（弹出打开对话框）；用户取消返回 null，格式非法抛错 —— 平板 stub 不支持 */
+  importAgentPresets: (workspaceSlug: string) => Promise<AgentPresetImportResult | null>
   /** 切换当前会话的 ChatGPT Codex Fast Mode。 */
   updateSessionCodexFastMode: (sessionId: string, enabled: boolean) => Promise<AgentSessionMeta>
   /** 切换当前会话的 ChatGPT Codex 推理档位（跨会话持久化）。 */

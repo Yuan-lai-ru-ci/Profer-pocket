@@ -12,7 +12,7 @@
 import * as React from 'react'
 import { useSetAtom, useAtomValue } from 'jotai'
 import { toast } from 'sonner'
-import { Blocks, ChevronDown, Search, Plus, FolderOpen, Check, Store, Download, RefreshCw } from 'lucide-react'
+import { Blocks, ChevronDown, Search, Plus, FolderOpen, Check, Store, Download, RefreshCw, BriefcaseBusiness } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import {
@@ -22,6 +22,7 @@ import {
 } from '@/components/ui/popover'
 import { ConfirmDialog } from '@/components/ui/confirm-dialog'
 import { workspaceCapabilitiesVersionAtom } from '@/atoms/agent-atoms'
+import { workspacePresetsAtom } from '@/atoms/agent-preset-atoms'
 import { useProjectActions } from '@/hooks/useProjectActions'
 import type { McpServerEntry, SkillMeta } from '@profer/shared'
 import { useAgentSkillsData } from './useAgentSkillsData'
@@ -31,12 +32,14 @@ import { SkillDetailSheet } from './SkillDetailSheet'
 import { McpDetailSheet } from './McpDetailSheet'
 import { ImportSkillDialog } from './ImportSkillDialog'
 import { WorkspaceMemoryTab } from './WorkspaceMemoryTab'
+import { AgentPresetSettings } from './AgentPresetSettings'
 
-type CapabilityTab = 'skills' | 'marketplace' | 'mcp' | 'memory'
+type CapabilityTab = 'skills' | 'marketplace' | 'mcp' | 'memory' | 'presets'
 
 export function AgentSkillsView(): React.ReactElement {
   const data = useAgentSkillsData()
   const bumpCapabilities = useSetAtom(workspaceCapabilitiesVersionAtom)
+  const presetList = useAtomValue(workspacePresetsAtom(data.workspaceSlug))
   const { workspaces, currentWorkspaceId, selectProject } = useProjectActions()
 
   const [tab, setTab] = React.useState<CapabilityTab>('skills')
@@ -105,6 +108,7 @@ export function AgentSkillsView(): React.ReactElement {
     ...(isTeamWorkspace ? [{ value: 'marketplace' as const, label: '团队市场', count: marketSkills.length }] : []),
     { value: 'mcp', label: 'MCP', count: mcpCount },
     { value: 'memory', label: '记忆', count: memoryCount },
+    { value: 'presets', label: '预设', count: presetList.length },
   ]
   const handleTabKeyDown = React.useCallback((event: React.KeyboardEvent<HTMLButtonElement>, currentIndex: number): void => {
     let nextIndex: number | undefined
@@ -241,11 +245,12 @@ export function AgentSkillsView(): React.ReactElement {
           <div
             className={cn(
               'absolute bottom-0.5 top-0.5 rounded-lg bg-background shadow-sm transition-transform duration-300 ease-in-out',
-              isTeamWorkspace ? 'w-[calc(25%-2px)]' : 'w-[calc(33.33%-3px)]',
+              isTeamWorkspace ? 'w-[calc(20%-4px)]' : 'w-[calc(25%-2px)]',
               tab === 'skills' ? 'translate-x-0'
               : tab === 'marketplace' ? 'translate-x-[100%]'
               : tab === 'mcp' ? (isTeamWorkspace ? 'translate-x-[200%]' : 'translate-x-[100%]')
               : tab === 'memory' ? (isTeamWorkspace ? 'translate-x-[300%]' : 'translate-x-[200%]')
+              : tab === 'presets' ? (isTeamWorkspace ? 'translate-x-[400%]' : 'translate-x-[300%]')
               : 'translate-x-0',
             )}
           />
@@ -276,7 +281,7 @@ export function AgentSkillsView(): React.ReactElement {
           <input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder={tab === 'skills' ? '搜索 Skills...' : tab === 'mcp' ? '搜索 MCP 服务器...' : '搜索记忆正文...'}
+            placeholder={tab === 'skills' ? '搜索 Skills...' : tab === 'mcp' ? '搜索 MCP 服务器...' : tab === 'memory' ? '搜索记忆正文...' : '搜索预设...'}
             className="w-full bg-transparent text-[13px] text-foreground placeholder:text-foreground/35 focus:outline-none"
           />
         </div>
@@ -363,6 +368,8 @@ export function AgentSkillsView(): React.ReactElement {
                 ))}
               </div>
             )
+          ) : tab === 'presets' ? (
+            <AgentPresetSettings workspaceSlug={data.workspaceSlug} search={search} />
           ) : data.loading ? (
             <div className="py-20 text-center text-sm text-muted-foreground">加载中...</div>
           ) : tab === 'skills' ? (

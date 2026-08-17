@@ -94,6 +94,15 @@ interface PocketRemoteClient {
   chatSaveAttachment(input: { conversationId: string; filename: string; mediaType: string; data: string }): Promise<unknown>
   chatDeleteAttachment(localPath: string): Promise<unknown>
   chatReadAttachment(localPath: string): Promise<unknown>
+  // ---- Agent 预设（预设为工作区级配置，数据与电脑端共享） ----
+  listPresets(workspaceSlug?: string): Promise<unknown>
+  getDefaultPreset(workspaceSlug?: string): Promise<unknown>
+  setDefaultPreset(workspaceSlug: string, presetId: string): Promise<unknown>
+  updateSessionPreset(sessionId: string, presetId: string): Promise<unknown>
+  createPreset(workspaceSlug: string, input: Record<string, unknown>): Promise<unknown>
+  copyPreset(workspaceSlug: string, fromId: string, name?: string): Promise<unknown>
+  updatePreset(workspaceSlug: string, presetId: string, updates: Record<string, unknown>): Promise<unknown>
+  deletePreset(workspaceSlug: string, presetId: string): Promise<unknown>
 }
 
 let remoteClient: PocketRemoteClient | null = null
@@ -504,6 +513,53 @@ export function installElectronApiStub(): void {
       if (!remoteClient) return Promise.reject(new Error('移动端连接未就绪'))
       return remoteClient.updatePermissionMode(sessionId, mode)
     },
+    // ---- Agent 预设：全部走 WS 远程命令（预设数据在电脑端主进程持久化，两端共享） ----
+    listAgentPresets: (workspaceSlug?: string) => {
+      if (!remoteClient) return Promise.reject(new Error('移动端连接未就绪'))
+      return remoteClient.listPresets(workspaceSlug)
+    },
+    getDefaultAgentPreset: (workspaceSlug?: string) => {
+      if (!remoteClient) return Promise.reject(new Error('移动端连接未就绪'))
+      return remoteClient.getDefaultPreset(workspaceSlug)
+    },
+    updateAgentSessionPreset: (sessionId: string, presetId: string) => {
+      if (!remoteClient) return Promise.reject(new Error('移动端连接未就绪'))
+      return remoteClient.updateSessionPreset(sessionId, presetId).then((r) => {
+        // 契约兜底：旧版服务端可能未返回完整 meta，补全 id / presetId 字段，
+        // 保证桌面组件 .then((updated) => updated.presetId) 拿到持久化真源。
+        const updated = (r ?? {}) as Record<string, unknown>
+        return { ...updated, id: updated.id ?? sessionId, presetId: updated.presetId ?? presetId }
+      })
+    },
+    setDefaultAgentPreset: (workspaceSlug: string, presetId: string) => {
+      if (!remoteClient) return Promise.reject(new Error('移动端连接未就绪'))
+      return remoteClient.setDefaultPreset(workspaceSlug, presetId)
+    },
+    createAgentPreset: (workspaceSlug: string, input: unknown) => {
+      if (!remoteClient) return Promise.reject(new Error('移动端连接未就绪'))
+      return remoteClient.createPreset(workspaceSlug, input as Record<string, unknown>)
+    },
+    copyAgentPreset: (workspaceSlug: string, fromId: string, name?: string) => {
+      if (!remoteClient) return Promise.reject(new Error('移动端连接未就绪'))
+      return remoteClient.copyPreset(workspaceSlug, fromId, name)
+    },
+    updateAgentPreset: (workspaceSlug: string, presetId: string, updates: unknown) => {
+      if (!remoteClient) return Promise.reject(new Error('移动端连接未就绪'))
+      return remoteClient.updatePreset(workspaceSlug, presetId, updates as Record<string, unknown>)
+    },
+    deleteAgentPreset: (workspaceSlug: string, presetId: string) => {
+      if (!remoteClient) return Promise.reject(new Error('移动端连接未就绪'))
+      return remoteClient.deletePreset(workspaceSlug, presetId)
+    },
+    // 预设导出/导入（JSON 文件）与跨工作区导入：平板暂不支持，显式拒绝避免 Proxy 兜底 undefined 静默失效
+    exportAgentPresets: () => unsupported('预设导出/导入'),
+    importAgentPresets: () => unsupported('预设导出/导入'),
+    getOtherWorkspacePresets: () => unsupported('跨工作区导入'),
+    importPresetFromWorkspace: () => unsupported('跨工作区导入'),
+    // 预设编辑对话框的 Skill/MCP 白名单数据源：平板无对应 WS 命令，返回合法空结构
+    // （Proxy 兜底的 safeNoop 返回 undefined 会让 availableSkills.map 崩溃），白名单留空 = 不限制。
+    getWorkspaceSkills: (): Promise<unknown[]> => Promise.resolve([]),
+    getWorkspaceMcpConfig: (): Promise<{ servers: Record<string, unknown> }> => Promise.resolve({ servers: {} }),
     // ---- 交互式问答/审批响应：AskUserQuestion、权限审批、ExitPlanMode 的选项必须真正回传给主进程 ----
     respondAskUser: ({ requestId, answers }: { requestId: string; answers: Record<string, string> }) => {
       if (!remoteClient) return Promise.reject(new Error('移动端连接未就绪'))

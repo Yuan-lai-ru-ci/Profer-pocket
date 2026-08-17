@@ -31,6 +31,7 @@ import { nextAgentChannelIdsAfterModelSelect } from '@/lib/agent-channel-selecti
 import { PermissionBanner } from './PermissionBanner'
 import { RuntimeProcessPanel } from './RuntimeProcessPanel'
 import { PermissionModeSelector } from './PermissionModeSelector'
+import { PresetSelector } from './PresetSelector'
 import { AskUserBanner } from './AskUserBanner'
 import { ExitPlanModeBanner } from './ExitPlanModeBanner'
 import { PlanModeDashedBorder } from './PlanModeDashedBorder'
@@ -2660,6 +2661,7 @@ export function AgentView({ sessionId, pocketMode = false, hideAgentHeader = fal
     },
     */
     { key: 'permission-mode', node: <PermissionModeSelector sessionId={sessionId} /> },
+    { key: 'preset', node: <PresetSelector sessionId={sessionId} persistedPresetId={sessionMeta?.presetId} workspaceSlug={sessionMeta?.workspaceId ? workspaces.find((w) => w.id === sessionMeta.workspaceId)?.slug : undefined} /> },
     {
       key: 'thinking',
       node: (

@@ -693,6 +693,8 @@ export interface AgentSessionMeta {
   openAIThinkingLevel?: AgentThinkingLevel | null
   /** 所属工作区 ID */
   workspaceId?: string
+  /** 本会话绑定的 Agent 预设 ID（缺省时按工作区默认解析；预设系统两端共享） */
+  presetId?: string
   /** 是否置顶 */
   pinned?: boolean
   /** 是否已归档 */
