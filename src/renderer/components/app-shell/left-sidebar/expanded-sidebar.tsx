@@ -284,7 +284,7 @@ export function ExpandedSidebar({ s }: { s: SidebarModel }): React.ReactElement 
                               }
                               : undefined}
                             leftAccent={getSessionLeftAccent(rowStatus)}
-                            workspaceName={item.session.workspaceId ? workspaceNameMap.get(item.session.workspaceId) : undefined}
+                            // 置顶会话暂不显示工作区名称标签（腾出空间给会话名；后续可能加回）
                             relativeTimeNow={relativeTimeNow}
                             onSelect={handleSelectAgentSession}
                             onRequestDelete={handleRequestDelete}
@@ -304,7 +304,7 @@ export function ExpandedSidebar({ s }: { s: SidebarModel }): React.ReactElement 
                                   agentIndicatorMap={agentIndicatorMap}
                                   hasDraft={agentDraftIds.has(childSession.id)}
                                   relativeTimeNow={relativeTimeNow}
-                                  workspaceName={childSession.workspaceId ? workspaceNameMap.get(childSession.workspaceId) : undefined}
+                                  // 置顶子会话同样不显示工作区名称标签
                                   onSelect={handleSelectAgentSession}
                                   onRequestDelete={handleRequestDelete}
                                   onRequestMove={handleRequestMove}

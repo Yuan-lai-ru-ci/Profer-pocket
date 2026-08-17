@@ -38,4 +38,6 @@
     <!-- Permissions -->
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- 长按菜单触觉反馈（navigator.vibrate）需要此权限 -->
+    <uses-permission android:name="android.permission.VIBRATE" />
 </manifest>

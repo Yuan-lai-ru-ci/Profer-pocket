@@ -463,7 +463,7 @@ function App(): React.ReactElement {
 
   // ===== 打开会话：AgentView 自行加载持久化消息与流式状态，平板只切换 sessionId =====
   const openSession = useCallback(async (sessionId: string, title?: string) => {
-    setSidebarOpen(false)
+    // 不收起侧栏抽屉：切换会话后保持侧栏打开，由用户自行收起（点遮罩 / Escape）
     setCurrentSessionId(sessionId)
     setNativeSessionId(sessionId)
     setNativeAppMode('agent')
@@ -473,7 +473,7 @@ function App(): React.ReactElement {
 
   /** 打开 Chat 对话：ChatView 自行加载消息与流式状态，平板只切换 conversationId 与模式 */
   const openChatConversation = useCallback((conversationId: string, title?: string) => {
-    setSidebarOpen(false)
+    // 不收起侧栏抽屉：切换对话后保持侧栏打开，由用户自行收起（点遮罩 / Escape）
     setCurrentChatId(conversationId)
     setNativeConversationId(conversationId)
     setNativeAppMode('chat')
@@ -902,7 +902,15 @@ function NativePocketSidebar({ mobileOpen, onDismiss }: { mobileOpen: boolean; o
       <div className="hidden h-full shrink-0 landscape:min-[1024px]:block"><LeftSidebar width={288} pocketMode /></div>
       <div className={`fixed inset-0 z-50 landscape:min-[1024px]:hidden ${mobileOpen ? 'pointer-events-auto' : 'pointer-events-none'}`} aria-hidden={!mobileOpen}>
         <button type="button" className={`absolute inset-0 z-0 bg-black/40 transition-opacity duration-200 ${mobileOpen ? 'opacity-100' : 'opacity-0'}`} onClick={onDismiss} aria-label="关闭会话导航" tabIndex={mobileOpen ? 0 : -1} />
-        <div className={`absolute inset-y-0 left-0 z-10 touch-pan-y transition-transform duration-200 ease-out ${SAFE_AREA_CLS} ${mobileOpen ? 'translate-x-0' : '-translate-x-full'}`}>
+        <div
+          className={`absolute inset-y-0 left-0 z-10 touch-pan-y transition-transform duration-200 ease-out ${SAFE_AREA_CLS} ${mobileOpen ? 'translate-x-0' : '-translate-x-full'}`}
+          // 再次点击当前已选中会话：收起抽屉（冒泡阶段判断；子会话箭头/操作按钮已 stopPropagation 不会冒泡到此处）
+          onClick={(e) => {
+            if ((e.target as Element | null)?.closest?.('[data-profer-navigation-item="session"][data-profer-navigation-active="true"]')) {
+              onDismiss()
+            }
+          }}
+        >
           {/* 搜索面板（SearchDialog）是全局 atom + Portal，只需渲染一份；由横屏固定侧栏实例承担。
               抽屉实例设为 false，避免双 SearchDialog 叠加导致打开即被 interactOutside 关闭（“一闪即逝”）。 */}
           <LeftSidebar width={288} pocketMode renderSearchDialog={false} />
