@@ -401,6 +401,40 @@ export class WsClient {
     return this.sendCommand({ type: 'update_permission_mode', sessionId, mode })
   }
 
+  // ===== Agent 预设（对齐主仓库 remote-service 预设 WS 命令，数据与电脑端共享） =====
+
+  listPresets(workspaceSlug?: string): Promise<unknown> {
+    return this.sendCommand({ type: 'list_presets', workspaceSlug })
+  }
+
+  getDefaultPreset(workspaceSlug?: string): Promise<unknown> {
+    return this.sendCommand({ type: 'get_default_preset', workspaceSlug })
+  }
+
+  setDefaultPreset(workspaceSlug: string, presetId: string): Promise<unknown> {
+    return this.sendCommand({ type: 'set_default_preset', workspaceSlug, presetId })
+  }
+
+  updateSessionPreset(sessionId: string, presetId: string): Promise<unknown> {
+    return this.sendCommand({ type: 'update_session_preset', sessionId, presetId })
+  }
+
+  createPreset(workspaceSlug: string, input: Record<string, unknown>): Promise<unknown> {
+    return this.sendCommand({ type: 'create_preset', workspaceSlug, input })
+  }
+
+  copyPreset(workspaceSlug: string, fromId: string, name?: string): Promise<unknown> {
+    return this.sendCommand({ type: 'copy_preset', workspaceSlug, fromId, name })
+  }
+
+  updatePreset(workspaceSlug: string, presetId: string, updates: Record<string, unknown>): Promise<unknown> {
+    return this.sendCommand({ type: 'update_preset', workspaceSlug, presetId, updates })
+  }
+
+  deletePreset(workspaceSlug: string, presetId: string): Promise<unknown> {
+    return this.sendCommand({ type: 'delete_preset', workspaceSlug, presetId })
+  }
+
   uploadAttachment(sessionId: string, filename: string, base64: string): Promise<{ filename: string; path: string; size: number }> {
     return this.sendCommand({ type: 'upload_attachment', sessionId, filename, base64 })
   }
