@@ -53,4 +53,6 @@
     <!-- 后台保活锁：PARTIAL_WAKE_LOCK 防熄屏 Doze 挂起 CPU/网络，WifiLock 防 Wi-Fi 休眠断连 -->
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <!-- 长按菜单触觉反馈（navigator.vibrate）需要此权限 -->
+    <uses-permission android:name="android.permission.VIBRATE" />
 </manifest>

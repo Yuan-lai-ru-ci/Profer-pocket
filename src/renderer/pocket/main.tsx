@@ -98,8 +98,10 @@ const pocketStore = createStore()
 // 必须在渲染前写入 pocketStore 的 uiScaleAtom（atom 默认值在模块加载时已固定）
 initPocketUiScale(pocketStore)
 
-// 屏幕方向：启动时读取持久化初始值并应用到原生层（重启保持；浏览器环境安全降级）
-initPocketScreenOrientation(pocketStore)
+// 屏幕方向：启动时做 localStorage ↔ 原生 SharedPreferences 一致性合并并应用到原生层。
+// 权威持久化在原生层（Activity 创建时插件已提前锁定，见 ScreenOrientationPlugin.load），
+// 此处兜底同步 UI；浏览器环境安全降级。
+void initPocketScreenOrientation(pocketStore)
 
 // ===== 平板设置系统：直接搬运桌面 SettingsDialog，tab 白名单只保留平板可用的「连接 / 外观 / 通知」=====
 // （连接/通知为本设备本地能力：localStorage + WS 状态，不依赖 Electron IPC；外观全部本地持久化。
@@ -301,7 +303,15 @@ function App(): React.ReactElement {
   const loadChannels = useCallback(async (client: WsClient) => {
     try {
       const data = await client.listChannels() as ChannelInfo[]
-      const ch = (Array.isArray(data) ? data : []).map((c) => ({
+      const raw = Array.isArray(data) ? data : []
+      if (raw.length === 0) {
+        // 桌面端当前无可切换渠道（未配置 / 服务端渠道未同步 / 临时异常）：
+        // 保留已加载的渠道与 Agent 白名单，避免清空后 hasAvailableModel 恒 false，
+        // Agent 模式输入框上方误报“暂无可用模型”黄字且无自动恢复机制，用户无法继续对话。
+        console.warn('[Pocket] 桌面端返回空渠道列表，保留已加载渠道')
+        return
+      }
+      const ch = raw.map((c) => ({
         ...c,
         // WS 返回的都是可切换渠道：补全桌面 Channel 形状的 enabled 语义，
         // 否则 AgentView 的 hasAvailableModel 判定（channel.enabled && models[].enabled）恒为 false，
@@ -437,7 +447,7 @@ function App(): React.ReactElement {
 
   // ===== 打开会话：AgentView 自行加载持久化消息与流式状态，平板只切换 sessionId =====
   const openSession = useCallback(async (sessionId: string, title?: string) => {
-    setSidebarOpen(false)
+    // 不收起侧栏抽屉：切换会话后保持侧栏打开，由用户自行收起（点遮罩 / Escape）
     setCurrentSessionId(sessionId)
     setNativeSessionId(sessionId)
     setNativeAppMode('agent')
@@ -447,7 +457,7 @@ function App(): React.ReactElement {
 
   /** 打开 Chat 对话：ChatView 自行加载消息与流式状态，平板只切换 conversationId 与模式 */
   const openChatConversation = useCallback((conversationId: string, title?: string) => {
-    setSidebarOpen(false)
+    // 不收起侧栏抽屉：切换对话后保持侧栏打开，由用户自行收起（点遮罩 / Escape）
     setCurrentChatId(conversationId)
     setNativeConversationId(conversationId)
     setNativeAppMode('chat')
@@ -905,7 +915,15 @@ function NativePocketSidebar({ mobileOpen, onDismiss }: { mobileOpen: boolean; o
       <div className="hidden h-full shrink-0 landscape:min-[1024px]:block"><LeftSidebar width={288} pocketMode /></div>
       <div className={`fixed inset-0 z-50 landscape:min-[1024px]:hidden ${mobileOpen ? 'pointer-events-auto' : 'pointer-events-none'}`} aria-hidden={!mobileOpen}>
         <button type="button" className={`absolute inset-0 z-0 bg-black/40 transition-opacity duration-200 ${mobileOpen ? 'opacity-100' : 'opacity-0'}`} onClick={onDismiss} aria-label="关闭会话导航" tabIndex={mobileOpen ? 0 : -1} />
-        <div className={`absolute inset-y-0 left-0 z-10 touch-pan-y transition-transform duration-200 ease-out ${SAFE_AREA_CLS} ${mobileOpen ? 'translate-x-0' : '-translate-x-full'}`}>
+        <div
+          className={`absolute inset-y-0 left-0 z-10 touch-pan-y transition-transform duration-200 ease-out ${SAFE_AREA_CLS} ${mobileOpen ? 'translate-x-0' : '-translate-x-full'}`}
+          // 再次点击当前已选中会话：收起抽屉（冒泡阶段判断；子会话箭头/操作按钮已 stopPropagation 不会冒泡到此处）
+          onClick={(e) => {
+            if ((e.target as Element | null)?.closest?.('[data-profer-navigation-item="session"][data-profer-navigation-active="true"]')) {
+              onDismiss()
+            }
+          }}
+        >
           {/* 搜索面板（SearchDialog）是全局 atom + Portal，只需渲染一份；由横屏固定侧栏实例承担。
               抽屉实例设为 false，避免双 SearchDialog 叠加导致打开即被 interactOutside 关闭（“一闪即逝”）。 */}
           <LeftSidebar width={288} pocketMode renderSearchDialog={false} />

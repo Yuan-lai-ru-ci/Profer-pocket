@@ -278,7 +278,7 @@ export function ChatInput({ conversationId, streaming, pendingAttachments, onSet
 
   const toolbarItems = React.useMemo<ToolbarItem[]>(() => [
     // 模型选择是 Chat 的一级动作，固定放在最左侧；窄窗口时也优先保留。
-    { key: 'model', node: <ModelSelector /> },
+    { key: 'model', node: <ModelSelector autoFocusSearch={!pocketMode} /> },
     // 资料库入口已暂时关闭，恢复时取消下面注释即可
     /*
     {
@@ -335,7 +335,7 @@ export function ChatInput({ conversationId, streaming, pendingAttachments, onSet
     { key: 'tools', node: <ToolSelectorPopover /> },
     { key: 'context', node: <ContextSettingsPopover /> },
     { key: 'clear', node: <ClearContextButton onClick={onClearContext} /> },
-  ], [handleOpenFileDialog, thinkingEnabled, setThinkingEnabled, onClearContext])
+  ], [handleOpenFileDialog, thinkingEnabled, setThinkingEnabled, onClearContext, pocketMode])
 
   const trailingNode = streaming ? (
     <Tooltip>
