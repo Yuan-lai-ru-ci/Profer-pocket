@@ -454,7 +454,11 @@ export function installElectronApiStub(): void {
       // 移动端侧栏悬浮预览（SessionMiniMapPopover）等走全量，计数/预览恢复真实内容。
       if (!opts || opts.paginateFirst !== true) {
         const raw = await remoteClient.getSdkMessages(sessionId)
-        return Array.isArray(raw) ? (raw as unknown[]) : []
+        const messages = Array.isArray(raw) ? (raw as unknown[]) : []
+        // 全量读取也必须覆盖分页缓存：否则冷启动先取过尾页，再因待交互快照升级为
+        // 全量时，后续 refresh 仍会从旧的 4 条分页窗口合并，重新造成历史缺口。
+        setCachedPage(sessionId, { messages, startIndex: 0, hasMore: false })
+        return messages
       }
       // 显式 paginateFirst：打开会话首帧取最新 targetMessages 条；已有缓存则刷新尾部并保留更早。
       const prev = sdkMessagesPageCache.get(sessionId)
