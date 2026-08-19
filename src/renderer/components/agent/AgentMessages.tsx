@@ -91,6 +91,47 @@ function getSDKMessageStableKey(message: SDKMessage): string {
   return key
 }
 
+/**
+ * 用于 persisted/live 跨来源对账的内容指纹。
+ *
+ * `getSDKMessageStableKey` 的无 uuid 回退刻意含对象级 counter，以保证 React 同屏 key 唯一；
+ * 但 JSONL checkpoint 会反序列化成新对象，不能拿那个 counter 做跨来源去重。这里仅基于
+ * SDK 的稳定字段构造指纹，让刚落盘的工具调用/结果能和仍在内存中的 live 消息精确重叠。
+ */
+function getSDKMessageSyncKey(message: SDKMessage): string {
+  const record = message as Record<string, unknown>
+  if (typeof record.uuid === 'string' && record.uuid.length > 0) {
+    return `${message.type}:uuid:${record.uuid}`
+  }
+  const parentToolUseId = typeof record.parent_tool_use_id === 'string' ? record.parent_tool_use_id : ''
+  const sessionId = typeof record.session_id === 'string' ? record.session_id : ''
+  if ('message' in record) {
+    const inner = record.message as { content?: unknown } | undefined
+    return `${message.type}:${sessionId}:${parentToolUseId}:${stableStringify(inner?.content)}`
+  }
+  if (message.type === 'result') {
+    return `result:${sessionId}:${String(record.subtype ?? '')}:${String(record.terminal_reason ?? '')}:${stableStringify(record.result)}`
+  }
+  return `${message.type}:${sessionId}:${parentToolUseId}:${stableStringify(record)}`
+}
+
+/** 返回 persisted 尾部与 live 头部的最长有序重叠长度。 */
+function findPersistedLiveOverlap(persisted: SDKMessage[], live: SDKMessage[]): number {
+  const maxOverlap = Math.min(persisted.length, live.length)
+  for (let overlap = maxOverlap; overlap > 0; overlap--) {
+    const persistedStart = persisted.length - overlap
+    let matches = true
+    for (let index = 0; index < overlap; index++) {
+      if (getSDKMessageSyncKey(persisted[persistedStart + index]!) !== getSDKMessageSyncKey(live[index]!)) {
+        matches = false
+        break
+      }
+    }
+    if (matches) return overlap
+  }
+  return 0
+}
+
 /** AgentMessages 属性接口 */
 interface AgentMessagesProps {
   sessionId: string
@@ -608,36 +649,20 @@ export function AgentMessages({ sessionId, sessionModelId, messagesLoaded, persi
       ;(message as Record<string, unknown>)._promaStableKey = key
       return message
     }
-    const keyOf = (message: SDKMessage): string =>
-      (message as Record<string, unknown>)._promaStableKey as string
-
     const persistedWithKeys = persisted.map(stampStableKey)
     const liveWithKeys = live.map(stampStableKey)
-    if (streaming || liveWithKeys.length === 0 || persistedWithKeys.length === 0) {
+    if (liveWithKeys.length === 0 || persistedWithKeys.length === 0) {
       return [...persistedWithKeys, ...liveWithKeys]
     }
 
-    // 流式结束后的刷新中，持久化消息尾部可能已经包含 live 序列。
-    // 只替换有序尾部重叠，避免按内容全局去重误删历史中的相同问答。
-    let overlap = Math.min(persistedWithKeys.length, liveWithKeys.length)
-    for (; overlap > 0; overlap--) {
-      const persistedStart = persistedWithKeys.length - overlap
-      const liveStart = liveWithKeys.length - overlap
-      let matches = true
-      for (let i = 0; i < overlap; i++) {
-        if (keyOf(persistedWithKeys[persistedStart + i]!) !== keyOf(liveWithKeys[liveStart + i]!)) {
-          matches = false
-          break
-        }
-      }
-      if (matches) break
-    }
-
+    // 主端会在每条完整 SDK 消息抵达时 checkpoint 到 JSONL；因此即使仍处于 streaming，
+    // persisted 尾部也可能已经包含 live 开头的一段。必须始终做有序重叠消除，不能只在
+    // streaming 结束后处理，否则 AskUser/权限等待时会把同一批工具步骤显示两遍。
+    // 仅匹配“persisted 尾部 → live 头部”的连续重叠，保留尚未 checkpoint 的 live 后缀，
+    // 不做全局内容去重，避免误删真实重复的用户/Agent 输出。
+    const overlap = findPersistedLiveOverlap(persistedWithKeys, liveWithKeys)
     if (overlap === 0) return [...persistedWithKeys, ...liveWithKeys]
-    return [
-      ...persistedWithKeys.slice(0, persistedWithKeys.length - overlap),
-      ...liveWithKeys,
-    ]
+    return [...persistedWithKeys, ...liveWithKeys.slice(overlap)]
   }, [persistedSDKMessages, liveMessages, streaming])
   const hasContent = allSDKMessages.length > 0
 
