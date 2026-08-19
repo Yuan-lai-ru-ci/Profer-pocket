@@ -24,7 +24,7 @@ type PocketCapacitorGlobal = {
     Plugins?: {
       ScreenOrientation?: {
         setOrientation?: (opts: { orientation: string }) => Promise<unknown>
-        getOrientation?: () => Promise<{ value: { orientation: string } }>
+        getOrientation?: () => Promise<{ value: { orientation: string; configured?: boolean } }>
       }
     }
   }
@@ -46,14 +46,32 @@ export async function applyPocketScreenOrientation(orientation: PocketScreenOrie
   }
 }
 
-/** 回读原生 SharedPreferences 持久化的方向（插件不可用时返回 'auto'） */
-async function readNativeOrientation(): Promise<PocketScreenOrientation> {
+/** 回读原生 SharedPreferences 持久化的方向（插件不可用时返回未配置） */
+async function readNativeOrientation(): Promise<{ orientation: PocketScreenOrientation; configured: boolean }> {
   const cap = (window as unknown as PocketCapacitorGlobal).Capacitor
-  const value = cap?.Plugins?.ScreenOrientation?.getOrientation?.().then((r) => r?.value?.orientation)
-  if (!value) return 'auto'
+  const value = cap?.Plugins?.ScreenOrientation?.getOrientation?.()
+  if (!value) return { orientation: 'auto', configured: false }
   try {
-    const v = await value
-    return v === 'landscape' || v === 'portrait' ? v : 'auto'
+    const result = await value
+    const raw = result?.value?.orientation
+    return {
+      orientation: raw === 'landscape' || raw === 'portrait' ? raw : 'auto',
+      configured: result?.value?.configured === true,
+    }
+  } catch {
+    return { orientation: 'auto', configured: false }
+  }
+}
+
+/** 读取旧版本仅写入 WebView localStorage 的方向，供首次升级时迁移到原生层 */
+function readLegacyLocalOrientation(): PocketScreenOrientation {
+  try {
+    const raw = localStorage.getItem('profer-pocket-screen-orientation')
+    return raw === '"landscape"' || raw === 'landscape'
+      ? 'landscape'
+      : raw === '"portrait"' || raw === 'portrait'
+        ? 'portrait'
+        : 'auto'
   } catch {
     return 'auto'
   }
@@ -63,18 +81,16 @@ async function readNativeOrientation(): Promise<PocketScreenOrientation> {
  * 初始化屏幕方向（App 启动时调用）
  *
  * 做「本地 localStorage ↔ 原生 SharedPreferences」的一致性合并：
- *  - 本地有显式选择（非 auto）→ 以本地为准推送原生（原生持久化，兼更新原生里的旧值）
- *  - 本地丢失（localStorage 被清 / 首次升级到持久化版本）→ 以原生持久化值为准回填本地
+ *  - 原生已有明确记录 → 以原生为准，避免 atomWithStorage 的默认 auto 覆盖旧值
+ *  - 原生从未记录 → 迁移旧版本 localStorage 的横/竖屏选择
  * 最终两端一致，并已应用方向（原生层在 Activity 创建时已提前应用过一轮）。
  */
 export async function initPocketScreenOrientation(store: Store): Promise<void> {
-  const local = store.get(pocketScreenOrientationAtom)
   const native = await readNativeOrientation()
+  const local = native.configured ? 'auto' : readLegacyLocalOrientation()
+  const effective = native.configured ? native.orientation : local
 
-  // 本地有显式选择则优先；否则以原生为准（localStorage 丢失/首次升级场景）
-  const effective: PocketScreenOrientation = local !== 'auto' ? local : native
-  if (effective !== local) {
-    store.set(pocketScreenOrientationAtom, effective)
-  }
+  // 显式写回一次，避免 atomWithStorage 的异步 hydration 随后把 UI 状态改回默认 auto。
+  store.set(pocketScreenOrientationAtom, effective)
   await applyPocketScreenOrientation(effective)
 }

@@ -10,8 +10,8 @@
  *   | 项             | release          | dev                        |
  *   | appId          | com.profer.pocket | com.profer.pocket.dev      |
  *   | appName        | Profer Pocket     | Profer Pocket（开发版）    |
- *   | versionCode    | 1                | 10                         |
- *   | versionName    | 0.1.0            | 0.1.1-dev                  |
+ *   | versionCode    | 6                | 17                         |
+ *   | versionName    | 0.1.5            | 0.1.8-dev                  |
  *
  * 步骤：校验环境 → 写入 variant 配置 → 同步 web → cap sync android → gradlew assembleDebug。
  * 环境要求：ANDROID_HOME=C:\Android\Sdk、JAVA_HOME=C:\Android\jdk-21（必须 JDK 21）。
@@ -43,8 +43,8 @@ const VARIANTS = {
   release: {
     appId: 'com.profer.pocket',
     appName: 'Profer Pocket',
-    versionCode: '5',
-    versionName: '0.1.4',
+    versionCode: '6',
+    versionName: '0.1.5',
   },
 }
 const DEV_CFG = VARIANTS.dev
@@ -200,9 +200,17 @@ try {
   // 5. gradle 打 debug APK
   step('gradlew assembleDebug')
   if (process.platform === 'win32') {
-    // 注意：spawnSync 直接以 cmd /c 执行 gradlew.bat 时，cwd 偶发不生效导致找不到命令；
-    // 改为经 Git Bash 执行 POSIX 版 gradlew 脚本（本机环境必有 Git Bash）。
-    const gr = spawnSync('bash', ['-lc', `cd '${androidRoot}' && ./gradlew assembleDebug`], { stdio: 'inherit' })
+    // 本机 cmd 对带空格/中文用户路径的 .bat 参数解析不稳定，使用 PowerShell 直接调用 wrapper。
+    const wrapper = resolve(androidRoot, 'gradlew.bat').replace(/'/g, "''")
+    const gr = spawnSync('powershell.exe', [
+      '-NoProfile',
+      '-ExecutionPolicy', 'Bypass',
+      '-Command', `& '${wrapper}' assembleDebug`,
+    ], {
+      cwd: androidRoot,
+      stdio: 'inherit',
+      shell: false,
+    })
     if (gr.status !== 0) {
       throw new Error('[build-apk] 失败: gradlew assembleDebug')
     }

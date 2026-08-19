@@ -8,6 +8,8 @@ import com.getcapacitor.BridgeActivity;
 public class MainActivity extends BridgeActivity {
     @Override
     public void onCreate(Bundle savedInstanceState) {
+        // 先于 Capacitor/WebView 初始化应用 SharedPreferences 中的方向，消除启动时序窗口。
+        ScreenOrientationPlugin.applyPersistedOrientation(this);
         // 注册屏幕方向控制插件；必须在 super.onCreate 之前生效（BridgeActivity 的
         // registerPlugin 是 bridgeBuilder.addPlugin，load() 时才应用）
         this.registerPlugin(ScreenOrientationPlugin.class);

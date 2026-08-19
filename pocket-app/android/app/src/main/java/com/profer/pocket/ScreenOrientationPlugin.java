@@ -1,5 +1,6 @@
 package com.profer.pocket;
 
+import android.app.Activity;
 import android.content.Context;
 import android.content.SharedPreferences;
 import android.content.pm.ActivityInfo;
@@ -28,8 +29,22 @@ public class ScreenOrientationPlugin extends Plugin {
 
     /** 读取持久化的方向（从未设置过时返回 auto） */
     private String getPersistedOrientation() {
-        SharedPreferences prefs = getContext().getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+        return getPersistedOrientation(getContext());
+    }
+
+    private static String getPersistedOrientation(Context context) {
+        SharedPreferences prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
         return prefs.getString(KEY_ORIENTATION, "auto");
+    }
+
+    /**
+     * 在 BridgeActivity 创建前应用方向，避免 WebView/Capacitor 初始化期间出现旋转窗口。
+     * 仅读取原生持久化值，不会创建新的配置记录。
+     */
+    public static void applyPersistedOrientation(Activity activity) {
+        if (activity != null) {
+            activity.setRequestedOrientation(toRequestedOrientation(getPersistedOrientation(activity)));
+        }
     }
 
     /** 持久化当前方向选择（apply 异步落盘即可，无需等待） */
@@ -40,22 +55,22 @@ public class ScreenOrientationPlugin extends Plugin {
                 .apply();
     }
 
-    /** 把方向映射到 ActivityInfo 常量并应用到当前 Activity */
-    private void applyOrientation(String orientation) {
-        final int value;
+    /** 把方向映射到 ActivityInfo 常量 */
+    private static int toRequestedOrientation(String orientation) {
         switch (orientation) {
             case "landscape":
-                value = ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE;
-                break;
+                return ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE;
             case "portrait":
-                value = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT;
-                break;
+                return ActivityInfo.SCREEN_ORIENTATION_PORTRAIT;
             default:
-                value = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED;
-                break;
+                return ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED;
         }
+    }
+
+    /** 把方向映射到 ActivityInfo 常量并应用到当前 Activity */
+    private void applyOrientation(String orientation) {
         if (getActivity() != null) {
-            getActivity().setRequestedOrientation(value);
+            getActivity().setRequestedOrientation(toRequestedOrientation(orientation));
         }
     }
 
@@ -78,8 +93,10 @@ public class ScreenOrientationPlugin extends Plugin {
     /** 返回当前持久化的方向（auto / landscape / portrait），供 JS 启动时回读同步 UI */
     @PluginMethod
     public void getOrientation(PluginCall call) {
+        SharedPreferences prefs = getContext().getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
         JSObject ret = new JSObject();
-        ret.put("orientation", getPersistedOrientation());
+        ret.put("orientation", prefs.getString(KEY_ORIENTATION, "auto"));
+        ret.put("configured", prefs.contains(KEY_ORIENTATION));
         call.resolve(ret);
     }
 }
