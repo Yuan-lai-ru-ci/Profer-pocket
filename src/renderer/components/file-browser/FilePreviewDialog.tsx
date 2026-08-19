@@ -20,6 +20,8 @@ interface FilePreviewDialogProps {
   open: boolean
   filePath: string
   fileName: string
+  /** 当前 Agent 会话 ID，电脑端据此校验可预览路径 */
+  sessionId?: string
   onClose: () => void
   /** 团队模式：预览前先下载到本地 */
   teamDownload?: () => Promise<string | null>
@@ -59,14 +61,14 @@ function langFromExt(e: string): string {
   return map[e] ?? e
 }
 
-export function FilePreviewDialog({ open, filePath, fileName, onClose, teamDownload }: FilePreviewDialogProps): React.ReactElement {
+export function FilePreviewDialog({ open, filePath, fileName, sessionId, onClose, teamDownload }: FilePreviewDialogProps): React.ReactElement {
   const [state, setState] = React.useState<PreviewState>({ status: 'loading' })
 
   React.useEffect(() => {
     if (!open || !filePath) return
     setState({ status: 'loading' })
     loadPreview()
-  }, [open, filePath]) // eslint-disable-line
+  }, [open, filePath, sessionId]) // eslint-disable-line
 
   const loadPreview = async (): Promise<void> => {
     const e = ext(fileName)
@@ -80,13 +82,16 @@ export function FilePreviewDialog({ open, filePath, fileName, onClose, teamDownl
       }
       // 团队下载后拿到的是临时目录绝对路径，IPC handler 需要授权上下文
       const parentDir = localPath.replace(/[/\\][^/\\]*$/, '') || '/'
-      const access = teamDownload ? { candidateBasePaths: [parentDir] } : undefined
+      const access = {
+        ...(sessionId ? { sessionId } : {}),
+        ...(teamDownload ? { candidateBasePaths: [parentDir] } : {}),
+      }
 
       if (IMAGE_EXTS.has(e)) {
         // 图片预览：桌面走 registerPreviewPath（profer-file:// 自定义协议），
         // Pocket 端无法加载该协议，改为 readFileAsDataUrl（WS 返回 base64 data URL）。
         // 命中内存缓存时直接渲染，不重复请求电脑端。
-        const cacheKey = `img:${localPath}`
+        const cacheKey = `img:${sessionId ?? ''}:${localPath}`
         const cached = getPreviewCache<{ resolvedPath: string; dataUrl: string }>(cacheKey)
         if (cached?.dataUrl) {
           setState({ status: 'image', src: cached.dataUrl })
@@ -113,7 +118,7 @@ export function FilePreviewDialog({ open, filePath, fileName, onClose, teamDownl
         else setState({ status: 'error', message: '无法预览文档' })
       } else if (TEXT_EXTS.has(e) || !e) {
         // 文本/代码预览：内存缓存命中直接渲染（MVP：反复查看同一文件秒开）
-        const cacheKey = `text:${localPath}`
+        const cacheKey = `text:${sessionId ?? ''}:${localPath}`
         const cached = getPreviewCache<{ resolvedPath: string; content: string }>(cacheKey)
         if (cached?.content !== undefined) {
           setState({ status: 'text', content: cached.content, language: langFromExt(e) })

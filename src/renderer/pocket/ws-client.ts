@@ -647,11 +647,11 @@ export class WsClient {
   }
 
   // ---- 文件预览：经 WS 读取电脑端文件内容（Pocket 文件预览 MVP） ----
-  resolveAndReadFile(filePath: string, access?: { candidateBasePaths?: string[] }): Promise<unknown> {
+  resolveAndReadFile(filePath: string, access?: { sessionId?: string; candidateBasePaths?: string[] }): Promise<unknown> {
     return this.sendCommand({ type: 'resolve_and_read_file', filePath, access })
   }
 
-  readFileAsDataUrl(filePath: string, access?: { candidateBasePaths?: string[] }): Promise<unknown> {
+  readFileAsDataUrl(filePath: string, access?: { sessionId?: string; candidateBasePaths?: string[] }): Promise<unknown> {
     return this.sendCommand({ type: 'read_file_as_data_url', filePath, access })
   }
 }
