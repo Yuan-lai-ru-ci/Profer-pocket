@@ -6,6 +6,8 @@
  */
 
 import * as React from 'react'
+import { useAtomValue } from 'jotai'
+import { currentAgentSessionIdAtom } from '@/atoms/agent-atoms'
 import { FilePreviewDialog } from './FilePreviewDialog'
 
 interface PreviewEvent {
@@ -15,6 +17,7 @@ interface PreviewEvent {
 }
 
 export function FilePreviewContainer(): React.ReactElement {
+  const currentSessionId = useAtomValue(currentAgentSessionIdAtom)
   const [preview, setPreview] = React.useState<PreviewEvent | null>(null)
 
   React.useEffect(() => {
@@ -31,6 +34,7 @@ export function FilePreviewContainer(): React.ReactElement {
       open={!!preview}
       filePath={preview?.path ?? ''}
       fileName={preview?.name ?? ''}
+      sessionId={currentSessionId ?? undefined}
       onClose={() => setPreview(null)}
       teamDownload={preview?.download}
     />
