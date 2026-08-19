@@ -33,6 +33,7 @@ interface PocketRemoteClient {
   /** 设置推理档位（null=恢复全局默认） */
   updateSessionThinkingLevel(sessionId: string, level: string | null): Promise<unknown>
   getUserProfile(): Promise<unknown>
+  getPendingInteractions(sessionId?: string): Promise<unknown>
   listChannels(): Promise<unknown>
   createSession(payload: { title?: string; channelId?: string; workspaceId?: string; modelId?: string }): Promise<unknown>
   ensureProjectDraftSession(payload: { workspaceId: string; channelId?: string; modelId?: string }): Promise<unknown>
@@ -681,6 +682,10 @@ export function installElectronApiStub(): void {
         }
       }
       return { userName: 'Profer 用户', avatar: '' }
+    },
+    getPendingInteractions: (sessionId?: string) => {
+      if (!remoteClient) return Promise.reject(new Error('移动端连接未就绪'))
+      return remoteClient.getPendingInteractions(sessionId)
     },
     getSystemTheme: () => Promise.resolve(true),
     // SystemPromptSelector（ChatHeader）挂载时拉取提示词配置并 setConfig 覆写 promptConfigAtom：
