@@ -22,6 +22,7 @@ import '@fontsource-variable/inter/index.css'
 import '@/styles/globals.css'
 import { installElectronApiStub, setPocketRemoteClient, emitPocketAgentStreamEvent, emitPocketAgentStreamComplete, emitPocketChatStreamEvent, consumePocketStoppedByUser } from './electronapi-stub'
 import { defaultWsUrl, WsClient, type AgentWorkflowEvent, type ChatWorkflowEvent } from './ws-client'
+import { hydrateAgentRuntimeContexts, type AgentRuntimeContextSnapshot } from './agent-runtime-context'
 // ===== 复用桌面组件 / atom（必须位于模块顶部，确保 ESM 正常收集）=====
 import { AgentView } from '@/components/agent'
 import { ChatView } from '@/components/chat'
@@ -397,6 +398,25 @@ function App(): React.ReactElement {
       // 说明完成事件在断线/事件丢失时没送达（平板没有桌面 STREAM_COMPLETE IPC 保底）。
       // 以主进程权威状态为准强制清理，否则停止按钮会永远亮着、点击也无效（stop 守卫直接 return）。
       const remoteActiveIds = new Set(personalSessions.filter((s) => s.active).map((s) => s.id))
+
+      // `context_window` 是 run 启动时的瞬时流事件。首次连入运行中的会话或重连时，
+      // 通过主端权威快照补齐它，避免低可信模型名 fallback 把 GPT-5.6 Terra 显示成 200K。
+      // 老版本主端不支持此只读命令时，只保留现有流事件/模型名 fallback，不中断会话列表加载。
+      if (remoteActiveIds.size > 0) {
+        try {
+          const runtimeContexts = await client.getAgentRuntimeContexts([...remoteActiveIds])
+          if (Array.isArray(runtimeContexts)) {
+            pocketStore.set(agentStreamingStatesAtom, (prev) => hydrateAgentRuntimeContexts(
+              prev,
+              runtimeContexts as AgentRuntimeContextSnapshot[],
+              remoteActiveIds,
+            ))
+          }
+        } catch (error) {
+          console.warn('[Pocket] 获取 Agent 运行时上下文快照失败，已降级为实时事件/模型推断', error)
+        }
+      }
+
       const staleIds = new Set<string>()
       const missingActiveIds = new Set<string>()
       for (const [sid, st] of pocketStore.get(agentStreamingStatesAtom)) {

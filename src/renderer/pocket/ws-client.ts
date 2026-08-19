@@ -512,6 +512,19 @@ export class WsClient {
     return this.sendCommand({ type: 'list_sessions' })
   }
 
+  /**
+   * 获取活跃 Agent 会话的瞬时运行状态。
+   *
+   * `context_window` 流事件只在 run 初始化时发送；Pocket 晚连接或重连后须主动拉取快照。
+   * 旧服务端不识别命令时由调用方安全降级。
+   */
+  getAgentRuntimeContexts(sessionIds?: string[]): Promise<unknown> {
+    return this.sendCommand({
+      type: 'get_agent_runtime_contexts',
+      ...(sessionIds && sessionIds.length > 0 ? { sessionIds } : {}),
+    })
+  }
+
   listWorkspaces(): Promise<unknown> {
     return this.sendCommand({ type: 'list_workspaces' })
   }
