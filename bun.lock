@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "@profer/tablet-client",
+      "name": "@profer/pocket-client",
       "dependencies": {
         "@dagrejs/dagre": "^3.0.0",
         "@emoji-mart/data": "^1.2.1",
