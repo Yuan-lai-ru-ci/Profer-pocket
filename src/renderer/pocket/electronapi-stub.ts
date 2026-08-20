@@ -13,6 +13,7 @@
 
 import type { AgentStreamEvent, AgentStreamCompletePayload, StreamChunkEvent, StreamReasoningEvent, StreamCompleteEvent, StreamErrorEvent, StreamToolActivityEvent, GenerateTitleInput } from '@profer/shared'
 import { CHAT_IPC_CHANNELS, BUILTIN_DEFAULT_ID, BUILTIN_DEFAULT_PROMPT } from '@profer/shared'
+import { debugLog } from '@/lib/debug-hud'
 
 /** WsClient 满足的最小远程命令面（与 ws-client.ts 方法一一对应） */
 interface PocketRemoteClient {
@@ -33,6 +34,7 @@ interface PocketRemoteClient {
   /** 设置推理档位（null=恢复全局默认） */
   updateSessionThinkingLevel(sessionId: string, level: string | null): Promise<unknown>
   getUserProfile(): Promise<unknown>
+  getPendingInteractions(sessionId?: string): Promise<unknown>
   listChannels(): Promise<unknown>
   createSession(payload: { title?: string; channelId?: string; workspaceId?: string; modelId?: string }): Promise<unknown>
   ensureProjectDraftSession(payload: { workspaceId: string; channelId?: string; modelId?: string }): Promise<unknown>
@@ -352,13 +354,15 @@ export function installElectronApiStub(): void {
     // ---- 命令映射：Agent 核心动作 → WS 远程命令 ----
     sendAgentMessage: (input: Record<string, unknown>) => {
       if (!remoteClient) return Promise.reject(new Error('移动端连接未就绪'))
-      return remoteClient.sendMessage({
+      const payload = {
         sessionId: String(input.sessionId || ''),
         userMessage: String(input.userMessage || ''),
         channelId: String(input.channelId || ''),
         modelId: input.modelId as string | undefined,
         workspaceId: input.workspaceId as string | undefined,
-      })
+      }
+      debugLog(`[WS send] session=${payload.sessionId} chars=${payload.userMessage.length}`)
+      return remoteClient.sendMessage(payload)
     },
     queueAgentMessage: async (input: Record<string, unknown>) => {
       // 平板队列消息必须走主进程 queue_message 指令（注入正在运行的 Agent）：
@@ -453,7 +457,11 @@ export function installElectronApiStub(): void {
       // 移动端侧栏悬浮预览（SessionMiniMapPopover）等走全量，计数/预览恢复真实内容。
       if (!opts || opts.paginateFirst !== true) {
         const raw = await remoteClient.getSdkMessages(sessionId)
-        return Array.isArray(raw) ? (raw as unknown[]) : []
+        const messages = Array.isArray(raw) ? (raw as unknown[]) : []
+        // 全量读取也必须覆盖分页缓存：否则冷启动先取过尾页，再因待交互快照升级为
+        // 全量时，后续 refresh 仍会从旧的 4 条分页窗口合并，重新造成历史缺口。
+        setCachedPage(sessionId, { messages, startIndex: 0, hasMore: false })
+        return messages
       }
       // 显式 paginateFirst：打开会话首帧取最新 targetMessages 条；已有缓存则刷新尾部并保留更早。
       const prev = sdkMessagesPageCache.get(sessionId)
@@ -579,6 +587,8 @@ export function installElectronApiStub(): void {
     stopAgent: (sessionId: string) => {
       // 记录用户主动停止标记：run_idle 桥接 STREAM_COMPLETE 时用（stoppedByUser 展示“已停止”）
       if (sessionId) pocketStoppedByUser.add(String(sessionId))
+      const stack = new Error().stack?.split('\n').slice(1, 4).map((line) => line.trim()).join(' ← ')
+      debugLog(`[WS stop] session=${String(sessionId)} source=${stack || 'unknown'}`)
       if (!remoteClient) return Promise.reject(new Error('移动端连接未就绪'))
       return remoteClient.stopAgent(sessionId)
     },
@@ -681,6 +691,10 @@ export function installElectronApiStub(): void {
         }
       }
       return { userName: 'Profer 用户', avatar: '' }
+    },
+    getPendingInteractions: (sessionId?: string) => {
+      if (!remoteClient) return Promise.reject(new Error('移动端连接未就绪'))
+      return remoteClient.getPendingInteractions(sessionId)
     },
     getSystemTheme: () => Promise.resolve(true),
     // SystemPromptSelector（ChatHeader）挂载时拉取提示词配置并 setConfig 覆写 promptConfigAtom：

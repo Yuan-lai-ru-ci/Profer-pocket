@@ -14,6 +14,21 @@
 export type AgentWorkflowEvent = {
   sessionId: string
   payload: unknown
+  /** 新版 remote-service 的全局事件游标；旧服务端没有此字段。 */
+  eventId?: number
+}
+
+export type AgentResumeStatus = {
+  replayed: number
+  complete: boolean
+  requiresSnapshot: boolean
+  fromEventId: number | null
+  toEventId: number | null
+  oldestEventId: number | null
+  latestEventId: number | null
+  serverInstanceId?: string
+  duplicateEvents: number
+  outOfOrderEvents: number
 }
 
 export type ChatWorkflowEvent = {
@@ -21,6 +36,64 @@ export type ChatWorkflowEvent = {
   /** 桌面 CHAT_IPC_CHANNELS 同名通道（chat:stream:chunk 等） */
   channel: string
   payload: unknown
+}
+
+function stableHash(value: string): string {
+  let hash = 2166136261
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index)
+    hash = Math.imul(hash, 16777619)
+  }
+  return (hash >>> 0).toString(16)
+}
+
+/**
+ * 发送请求确认前的持久化幂等账本。
+ *
+ * WebView 被系统杀掉的极小窗口里，服务端可能已经接收 send_message，但客户端还没收到
+ * command_result。重启后若 UI/运行时重试同一请求，新的 clientMessageId 会绕过服务端
+ * 去重并重新启动 Agent。只持久化不可逆摘要键和随机请求 ID（不保存正文），收到 accepted
+ * 后立即删除；超时条目自动过期，用户稍后主动重发相同文本仍是新请求。
+ */
+const PENDING_SEND_LEDGER_PREFIX = 'profer-remote-pending-send:'
+const PENDING_SEND_LEDGER_TTL_MS = 2 * 60 * 1000
+
+type PendingSendLedger = { clientMessageId: string; expiresAt: number }
+
+function pendingSendLedgerKey(payload: { sessionId: string; userMessage: string; channelId: string; modelId?: string; workspaceId?: string }): string {
+  return `${PENDING_SEND_LEDGER_PREFIX}${stableHash([
+    payload.sessionId,
+    payload.userMessage,
+    payload.channelId,
+    payload.modelId ?? '',
+    payload.workspaceId ?? '',
+  ].join('\u0000'))}`
+}
+
+function claimPendingSendId(payload: { sessionId: string; userMessage: string; channelId: string; modelId?: string; workspaceId?: string }, createId: () => string): string {
+  const key = pendingSendLedgerKey(payload)
+  const now = Date.now()
+  try {
+    const previous = JSON.parse(localStorage.getItem(key) ?? 'null') as PendingSendLedger | null
+    if (previous && typeof previous.clientMessageId === 'string' && previous.clientMessageId && previous.expiresAt > now) {
+      return previous.clientMessageId
+    }
+    const clientMessageId = createId()
+    localStorage.setItem(key, JSON.stringify({ clientMessageId, expiresAt: now + PENDING_SEND_LEDGER_TTL_MS }))
+    return clientMessageId
+  } catch {
+    return createId()
+  }
+}
+
+function settlePendingSendId(payload: { sessionId: string; userMessage: string; channelId: string; modelId?: string; workspaceId?: string }, clientMessageId: string): void {
+  const key = pendingSendLedgerKey(payload)
+  try {
+    const current = JSON.parse(localStorage.getItem(key) ?? 'null') as PendingSendLedger | null
+    if (current?.clientMessageId === clientMessageId) localStorage.removeItem(key)
+  } catch {
+    /* localStorage 不可用时仅失去跨进程重试去重，不影响本次发送。 */
+  }
 }
 
 type CommandResultMessage = {
@@ -32,9 +105,20 @@ type CommandResultMessage = {
 }
 
 type InboundMessage =
-  | { kind: 'hello'; serverTime: number }
+  | { kind: 'hello'; serverTime: number; serverInstanceId?: string; latestAgentEventId?: number | null; oldestAgentEventId?: number | null }
   | { kind: 'pong'; serverTime: number }
-  | { kind: 'agent_event'; sessionId: string; payload: unknown }
+  | { kind: 'agent_event'; eventId?: number; sessionId: string; payload: unknown }
+  | {
+    kind: 'agent_events_resumed'
+    requestId: string | null
+    fromEventId: number | null
+    toEventId: number | null
+    replayed: number
+    complete: boolean
+    requiresSnapshot: boolean
+    oldestEventId: number | null
+    latestEventId: number | null
+  }
   | { kind: 'chat_event'; conversationId: string; channel: string; payload: unknown }
   | CommandResultMessage
 
@@ -51,6 +135,8 @@ export interface WsClientOptions {
   onChatEvent?: (evt: ChatWorkflowEvent) => void
   /** 指令结果回调（按 requestId 分发） */
   onCommandResult?: (result: CommandResultMessage) => void
+  /** Agent 事件恢复结果，用于触发缓存过期后的快照兜底和调试指标记录。 */
+  onAgentResumeStatus?: (status: AgentResumeStatus) => void
 }
 
 export class WsClient {
@@ -74,11 +160,20 @@ export class WsClient {
   private flushingQueue = false
   /** 最近一次收到服务端 pong（或任何入站帧）的时间戳，用于假死检测。 */
   private lastPongAt = 0
+  private resumeSent = false
+  private resumeCommandId: string | null = null
+  private lastEventId = 0
+  private duplicateEvents = 0
+  private outOfOrderEvents = 0
+  private serverInstanceId: string | undefined
+  private readonly resumeStorageKey: string
+  private resumePersistTimer: ReturnType<typeof setTimeout> | null = null
 
   onStatusChange?: WsClientOptions['onStatusChange']
   onAgentEvent?: WsClientOptions['onAgentEvent']
   onChatEvent?: WsClientOptions['onChatEvent']
   onCommandResult?: WsClientOptions['onCommandResult']
+  onAgentResumeStatus?: WsClientOptions['onAgentResumeStatus']
 
   constructor(options: WsClientOptions) {
     this.url = options.url
@@ -87,6 +182,10 @@ export class WsClient {
     this.onAgentEvent = options.onAgentEvent
     this.onChatEvent = options.onChatEvent
     this.onCommandResult = options.onCommandResult
+    this.onAgentResumeStatus = options.onAgentResumeStatus
+    this.resumeStorageKey = `profer-remote-agent-events:${stableHash(`${this.url}|${this.token}`)}`
+    this.lastEventId = this.readResumeState()?.lastEventId ?? 0
+    this.serverInstanceId = this.readResumeState()?.serverInstanceId
   }
 
   connect(): void {
@@ -97,6 +196,11 @@ export class WsClient {
   disconnect(): void {
     this.shouldReconnect = false
     this.clearHeartbeat()
+    if (this.resumePersistTimer) {
+      clearTimeout(this.resumePersistTimer)
+      this.resumePersistTimer = null
+      this.persistResumeState()
+    }
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer)
       this.reconnectTimer = null
@@ -140,6 +244,10 @@ export class WsClient {
         }
       }, 25000)
       this.emitStatus('open')
+      // 新版服务端会先在 hello 中报告 serverInstanceId，再由 handleMessage 发起 resume。
+      // 旧版服务端没有恢复协议，收到未知命令后仍按原有广播/快照逻辑工作。
+      this.resumeSent = false
+      this.resumeCommandId = null
       // 重连成功后重放断线期间积压的待发消息（send_message），保证弱网下用户输入不丢。
       this.flushOutgoingQueue()
     }
@@ -179,15 +287,55 @@ export class WsClient {
   private handleMessage(msg: InboundMessage): void {
     switch (msg.kind) {
       case 'hello':
-        // 连接就绪
+        // 服务进程重启后 eventId 不再连续，清除旧 cursor，改走快照恢复。
+        if (msg.serverInstanceId && (!this.serverInstanceId || msg.serverInstanceId !== this.serverInstanceId) && this.lastEventId > 0) {
+          this.lastEventId = 0
+          this.schedulePersistResumeState()
+        }
+        if (msg.serverInstanceId) {
+          this.serverInstanceId = msg.serverInstanceId
+          this.persistResumeState()
+        }
+        this.sendResume()
         break
       case 'pong':
         // 存活信号已在 onmessage 统一刷新 lastPongAt，这里无需额外处理。
         break
       case 'agent_event':
+        if (typeof msg.eventId === 'number') {
+          if (msg.eventId <= this.lastEventId) {
+            this.duplicateEvents++
+            return
+          }
+          if (this.lastEventId > 0 && msg.eventId > this.lastEventId + 1) {
+            this.outOfOrderEvents++
+          }
+          this.lastEventId = msg.eventId
+          this.schedulePersistResumeState()
+        }
         this.onAgentEvent?.({
           sessionId: msg.sessionId,
           payload: msg.payload,
+          eventId: msg.eventId,
+        })
+        break
+      case 'agent_events_resumed':
+        if (msg.requiresSnapshot) {
+          // 日志窗口已过期时，快照负责重建状态；游标前移到结果快照点，避免每次重连重复触发兜底。
+          this.lastEventId = msg.latestEventId ?? 0
+          this.schedulePersistResumeState()
+        }
+        this.onAgentResumeStatus?.({
+          replayed: msg.replayed,
+          complete: msg.complete,
+          requiresSnapshot: msg.requiresSnapshot,
+          fromEventId: msg.fromEventId,
+          toEventId: msg.toEventId,
+          oldestEventId: msg.oldestEventId,
+          latestEventId: msg.latestEventId,
+          serverInstanceId: this.serverInstanceId,
+          duplicateEvents: this.duplicateEvents,
+          outOfOrderEvents: this.outOfOrderEvents,
         })
         break
       case 'chat_event':
@@ -206,6 +354,12 @@ export class WsClient {
 
   private resolveCommandResult(msg: CommandResultMessage): void {
     const id = msg.requestId as string | undefined
+    // 旧版服务端会把 resume_agent_events 当未知指令返回 command_result；
+    // 它没有对应 pending command，不能落入 FIFO 兜底误消费其他业务请求。
+    if (id && id === this.resumeCommandId) {
+      this.resumeCommandId = null
+      return
+    }
     if (id && this.pendingCommands.has(id)) {
       const pending = this.pendingCommands.get(id)!
       this.pendingCommands.delete(id)
@@ -262,6 +416,56 @@ export class WsClient {
     if (this.heartbeatTimer) {
       clearInterval(this.heartbeatTimer)
       this.heartbeatTimer = null
+    }
+  }
+
+  private sendResume(): void {
+    if (this.resumeSent || !this.isOpen()) return
+    this.resumeSent = true
+    const cmdId = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+    this.resumeCommandId = cmdId
+    try {
+      this.ws!.send(JSON.stringify({
+        type: 'resume_agent_events',
+        _cmdId: cmdId,
+        cursor: this.lastEventId > 0 ? this.lastEventId : null,
+      }))
+    } catch {
+      this.resumeSent = false
+      this.resumeCommandId = null
+    }
+  }
+
+  private readResumeState(): { lastEventId: number; serverInstanceId?: string } | null {
+    try {
+      const raw = localStorage.getItem(this.resumeStorageKey)
+      if (!raw) return null
+      const state = JSON.parse(raw) as { lastEventId?: unknown; serverInstanceId?: unknown }
+      return {
+        lastEventId: typeof state.lastEventId === 'number' && Number.isSafeInteger(state.lastEventId) ? state.lastEventId : 0,
+        serverInstanceId: typeof state.serverInstanceId === 'string' ? state.serverInstanceId : undefined,
+      }
+    } catch {
+      return null
+    }
+  }
+
+  private schedulePersistResumeState(): void {
+    if (this.resumePersistTimer) return
+    this.resumePersistTimer = setTimeout(() => {
+      this.resumePersistTimer = null
+      this.persistResumeState()
+    }, 250)
+  }
+
+  private persistResumeState(): void {
+    try {
+      localStorage.setItem(this.resumeStorageKey, JSON.stringify({
+        lastEventId: this.lastEventId,
+        serverInstanceId: this.serverInstanceId,
+      }))
+    } catch {
+      /* 浏览器隐私模式或存储空间不足时不影响实时连接。 */
     }
   }
 
@@ -374,7 +578,7 @@ export class WsClient {
   }
 
   getPendingInteractions(sessionId?: string): Promise<unknown> {
-    return this.sendCommand({ type: 'get_pending_interactions', sessionId })
+    return this.sendCommand({ type: 'get_pending_interactions', ...(sessionId ? { sessionId } : {}) })
   }
 
   respondPermission(requestId: string, behavior: 'allow' | 'deny', alwaysAllow = false): Promise<unknown> {
@@ -453,8 +657,9 @@ export class WsClient {
   }
 
   sendMessage(payload: { sessionId: string; userMessage: string; channelId: string; modelId?: string; workspaceId?: string }): Promise<unknown> {
-    // 幂等去重键：每次发送同一逻辑消息共享同一 clientMessageId，重连重放时服务端据此去重。
-    const clientMessageId = WsClient.newClientMessageId()
+    // 幂等去重键既要覆盖同一 WebView 的 WS 重连，也要覆盖“服务端已接收但 WebView
+    // 被系统杀掉、未收到 accepted”的跨进程恢复窗口。
+    const clientMessageId = claimPendingSendId(payload, WsClient.newClientMessageId)
     const frame = { type: 'send_message', ...payload, clientMessageId }
     return this.queueMessageOrSend(frame)
   }
@@ -496,6 +701,13 @@ export class WsClient {
     // 立即返回 accepted，不等待 run 结束）。成功即从「待确认」中移除。
     this.sendCommand(frame).then(
       (r) => {
+        settlePendingSendId({
+          sessionId: String(frame.sessionId ?? ''),
+          userMessage: String(frame.userMessage ?? ''),
+          channelId: String(frame.channelId ?? ''),
+          modelId: typeof frame.modelId === 'string' ? frame.modelId : undefined,
+          workspaceId: typeof frame.workspaceId === 'string' ? frame.workspaceId : undefined,
+        }, clientMessageId)
         resolve(r)
       },
       (err: Error) => {
@@ -504,6 +716,13 @@ export class WsClient {
         if (isTransientConnectionError(err)) {
           this.outgoingQueue.push({ payload: frame, clientMessageId, resolve, reject })
         } else {
+          settlePendingSendId({
+            sessionId: String(frame.sessionId ?? ''),
+            userMessage: String(frame.userMessage ?? ''),
+            channelId: String(frame.channelId ?? ''),
+            modelId: typeof frame.modelId === 'string' ? frame.modelId : undefined,
+            workspaceId: typeof frame.workspaceId === 'string' ? frame.workspaceId : undefined,
+          }, clientMessageId)
           reject(err)
         }
       },

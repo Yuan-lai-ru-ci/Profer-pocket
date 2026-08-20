@@ -654,6 +654,11 @@ export function AgentView({ sessionId, pocketMode = false, hideAgentHeader = fal
   const setSettingsOpen = useSetAtom(settingsOpenAtom)
   const globalWorkspaceId = useAtomValue(currentAgentWorkspaceIdAtom)
   const sessions = useAtomValue(agentSessionsAtom)
+  // 冷启动时 get_pending_interactions 晚于 list_sessions 返回；必须订阅这三类快照，
+  // 让已挂载的 AgentView 在待交互到达后升级为完整历史，而不是只保留尾页。
+  const allPermissionRequestsForQueue = useAtomValue(allPendingPermissionRequestsAtom)
+  const allExitPlanRequestsForQueue = useAtomValue(allPendingExitPlanRequestsAtom)
+  const allAskUserRequestsForQueue = useAtomValue(allPendingAskUserRequestsAtom)
   const setAgentSessions = useSetAtom(agentSessionsAtom)
   const setDraftSessionIds = useSetAtom(draftSessionIdsAtom)
   const revealRendererDraft = React.useCallback(() => {
@@ -669,6 +674,16 @@ export function AgentView({ sessionId, pocketMode = false, hideAgentHeader = fal
     [sessions, sessionId],
   )
   const hasSessionMeta = Boolean(sessionMeta)
+  // 正在运行或被 AskUser / 权限 / Plan 审批阻塞的会话，其当前 turn 是恢复现场的一部分。
+  // 不能沿用普通历史会话的轻量尾页，否则冷启动先渲染消息尾部、稍后才单独出现横幅，
+  // 导致用户看不到问题和 AskUser 前的执行过程。仅对当前打开的这类会话全量水合；
+  // 已完成的普通历史仍保持分页，避免放大移动端首屏传输与渲染成本。
+  const shouldHydrateCompleteHistory = pocketMode && (
+    streaming || backgroundWaiting ||
+    (allAskUserRequestsForQueue.get(sessionId)?.length ?? 0) > 0 ||
+    (allExitPlanRequestsForQueue.get(sessionId)?.length ?? 0) > 0 ||
+    (allPermissionRequestsForQueue.get(sessionId)?.length ?? 0) > 0
+  )
   const sessionMetaChannelId = sessionMeta?.channelId
   const sessionMetaModelId = sessionMeta?.modelId
   const agentChannelId = sessionMetaChannelId ?? sessionChannelMap.get(sessionId) ?? defaultChannelId
@@ -1055,9 +1070,15 @@ export function AgentView({ sessionId, pocketMode = false, hideAgentHeader = fal
       }
     }
     let cancelled = false
-    // 移动端打开会话：显式 paginateFirst 走首帧分页（无参=全量，留给侧栏预览）。桌面无参全量。
+    // 普通历史会话仍走首帧分页；运行中或存在待交互快照的当前会话必须全量水合。
+    // 这使 pending 横幅与其所属 user turn / Agent 执行记录在同一次状态收敛后共同出现。
+    const pocketApi = window.electronAPI as unknown as {
+      getAgentSessionSDKMessages?: (id: string, opts?: unknown) => Promise<unknown>
+    }
     const loadPromise = pocketMode
-      ? (window.electronAPI as unknown as { getAgentSessionSDKMessages?: (id: string, opts?: unknown) => Promise<unknown> }).getAgentSessionSDKMessages?.(sessionId, { paginateFirst: 4 }) ?? Promise.resolve([])
+      ? (shouldHydrateCompleteHistory
+          ? pocketApi.getAgentSessionSDKMessages?.(sessionId)
+          : pocketApi.getAgentSessionSDKMessages?.(sessionId, { paginateFirst: 4 })) ?? Promise.resolve([])
       : window.electronAPI.getAgentSessionSDKMessages(sessionId)
     loadPromise
       .then((sdkMsgs) => {
@@ -1144,7 +1165,7 @@ export function AgentView({ sessionId, pocketMode = false, hideAgentHeader = fal
         setMessagesLoaded(true)
       })
     return () => { cancelled = true }
-  }, [sessionId, refreshVersion, pocketMode, setStreamingStates, setLiveMessagesMap, setMessagesCache, store])
+  }, [sessionId, refreshVersion, pocketMode, shouldHydrateCompleteHistory, setStreamingStates, setLiveMessagesMap, setMessagesCache, store])
 
   // 从会话元数据初始化附加目录（仅冷启动水合，后续由 handleAttachFolder/handleDetachDirectory 实时写入）
   React.useEffect(() => {
@@ -2166,9 +2187,6 @@ export function AgentView({ sessionId, pocketMode = false, hideAgentHeader = fal
   }, [inputContent, attachedDirs, attachedFileDirectories, sessionId, agentChannelId, agentModelId, currentWorkspaceId, sessionAgentRuntime, workspaces, streaming, backgroundWaiting, suggestion, hasAvailableModel, streamState?.stopping, store, setStreamingStates, setPendingFiles, setAgentStreamErrors, setPromptSuggestions, setInputContent, setLiveMessagesMap, revealRendererDraft, permissionMode, messagesLoaded])
 
   // ===== 运行中追加消息队列：控制与自动发送 =====
-  const allPermissionRequestsForQueue = useAtomValue(allPendingPermissionRequestsAtom)
-  const allExitPlanRequestsForQueue = useAtomValue(allPendingExitPlanRequestsAtom)
-  const allAskUserRequestsForQueue = useAtomValue(allPendingAskUserRequestsAtom)
   const hasBlockingRequests =
     (allAskUserRequestsForQueue.get(sessionId)?.length ?? 0) > 0 ||
     (allExitPlanRequestsForQueue.get(sessionId)?.length ?? 0) > 0 ||

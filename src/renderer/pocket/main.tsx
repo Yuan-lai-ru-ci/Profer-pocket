@@ -32,7 +32,7 @@ import { useGlobalChatListeners } from '@/hooks/useGlobalChatListeners'
 import { userProfileAtom } from '@/atoms/user-profile'
 import { authStatusAtom } from '@/atoms/identity-atoms'
 import { channelsAtom, channelsLoadedAtom, conversationsAtom, currentConversationIdAtom } from '@/atoms/chat-atoms'
-import { agentSessionsAtom, agentWorkspacesAtom, currentAgentSessionIdAtom, currentAgentWorkspaceIdAtom, agentChannelIdAtom, agentModelIdAtom, agentChannelIdsAtom, agentStreamingStatesAtom, agentMessageRefreshAtom } from '@/atoms/agent-atoms'
+import { agentSessionsAtom, agentWorkspacesAtom, currentAgentSessionIdAtom, currentAgentWorkspaceIdAtom, agentChannelIdAtom, agentModelIdAtom, agentChannelIdsAtom, agentStreamingStatesAtom, agentMessageRefreshAtom, allPendingPermissionRequestsAtom, allPendingAskUserRequestsAtom, allPendingExitPlanRequestsAtom } from '@/atoms/agent-atoms'
 import { appModeAtom } from '@/atoms/app-mode'
 import { initPocketUiScale } from '@/atoms/ui-scale'
 import { initPocketScreenOrientation } from '@/lib/pocket-screen-orientation'
@@ -44,7 +44,7 @@ import { Button } from '@/components/ui/button'
 import { AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogFooter, AlertDialogTitle, AlertDialogDescription, AlertDialogAction, AlertDialogCancel } from '@/components/ui/alert-dialog'
 import { TooltipProvider, Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip'
 import { Menu, Plus, Palette, Link, Loader2, Bell, RefreshCw } from 'lucide-react'
-import { type AgentStreamPayload } from '@profer/shared'
+import { type AgentStreamPayload, type AskUserRequest, type ExitPlanModeRequest, type PermissionRequest } from '@profer/shared'
 import { pocketBackgroundMessagingAtom, pocketConnectionStatusAtom, pocketNotifyCompleteAtom, pocketUnbindRequestAtom } from '@/atoms/pocket-settings'
 
 // ===== 先安装 electronAPI stub（必须在任何复用组件求值前）=====
@@ -280,7 +280,7 @@ function App(): React.ReactElement {
           // 导致远程端看不到 GPT/Claude 官方模型。这里在连接成功后置为已登录态以放行官方渠道。
           setAuthStatus((prev) => ({ ...prev, isLoggedIn: true }))
           void loadChannels(client)
-          void loadSessions(client)
+          void loadSessions(client, { reconcileActive: true })
           void loadConversations(client)
           void loadUserProfile(client)
         } else if (status === 'unauthorized') {
@@ -297,6 +297,13 @@ function App(): React.ReactElement {
         else setConnection('connecting')
       },
       onAgentEvent: (evt) => handleAgentEvent(client, evt),
+      onAgentResumeStatus: (status) => {
+        debugLog(`[WS resume] replayed=${status.replayed} complete=${status.complete} snapshot=${status.requiresSnapshot} duplicate=${status.duplicateEvents} reorder=${status.outOfOrderEvents}`)
+        if (status.requiresSnapshot) {
+          // 事件窗口过期或主端重启后，按现有权威快照恢复，不继续拼接不完整的事件流。
+          void loadSessions(client, { reconcileActive: true })
+        }
+      },
       onChatEvent: (evt) => handleChatEvent(evt),
     })
     clientRef.current = client
@@ -340,7 +347,7 @@ function App(): React.ReactElement {
     } catch (e) { console.error('拉取渠道失败', e) }
   }, [setChannels, setChannelsLoaded, setAgentChannelIds, setAgentChannelId, setAgentModelId])
 
-  const loadSessions = useCallback(async (client: WsClient) => {
+  const loadSessions = useCallback(async (client: WsClient, options?: { reconcileActive?: boolean }) => {
     try {
       const data = await client.listSessions() as SessionInfo[]
       if (!Array.isArray(data)) return
@@ -391,18 +398,76 @@ function App(): React.ReactElement {
       // 以主进程权威状态为准强制清理，否则停止按钮会永远亮着、点击也无效（stop 守卫直接 return）。
       const remoteActiveIds = new Set(personalSessions.filter((s) => s.active).map((s) => s.id))
       const staleIds = new Set<string>()
+      const missingActiveIds = new Set<string>()
       for (const [sid, st] of pocketStore.get(agentStreamingStatesAtom)) {
         if (st?.running && !remoteActiveIds.has(sid)) staleIds.add(sid)
       }
-      if (staleIds.size > 0) {
+      // 断线期间 Pocket 会丢掉 agent_event；重连后的会话列表是主端的权威 active 快照。
+      // 若远端仍 active 而本地没有 running，占位恢复 Agent Running，避免完成事件/流式首帧丢失后永久变成空闲。
+      if (options?.reconcileActive) {
+        for (const sid of remoteActiveIds) {
+          const state = pocketStore.get(agentStreamingStatesAtom).get(sid)
+          if (!state?.running && !state?.backgroundWaiting) missingActiveIds.add(sid)
+        }
+      }
+      if (staleIds.size > 0 || missingActiveIds.size > 0) {
         pocketStore.set(agentStreamingStatesAtom, (prev) => {
           const map = new Map(prev)
           for (const sid of staleIds) {
             const cur = map.get(sid)
             if (cur?.running) map.set(sid, { ...cur, running: false, stopping: false })
           }
+          for (const sid of missingActiveIds) {
+            const cur = map.get(sid)
+            map.set(sid, {
+              ...(cur ?? { content: '', toolActivities: [] }),
+              running: true,
+              stopping: false,
+              startedAt: cur?.startedAt ?? personalSessions.find((s) => s.id === sid)?.updatedAt ?? Date.now(),
+            })
+          }
           return map
         })
+      }
+      if (staleIds.size > 0) {
+        // 完成事件也可能在断线窗口丢失；状态清理后主动重拉持久化消息，
+        // 确保最后一条 assistant 结果不会只存在电脑端 JSONL 而不出现在 Pocket。
+        pocketStore.set(agentMessageRefreshAtom, (prev) => {
+          const next = new Map(prev)
+          for (const sid of staleIds) next.set(sid, (prev.get(sid) ?? 0) + 1)
+          return next
+        })
+      }
+
+      // 交互请求不是持久化消息，断线期间的 ask_user/permission 事件会丢失；
+      // 每次列表刷新都用主端服务的 pending 快照重建，解决“Agent 卡住但没有追问框”。
+      // 旧服务端不支持该命令时保留当前 atom，避免降级连接把已有请求清掉。
+      try {
+        const snapshot = await client.getPendingInteractions() as {
+          permissions?: unknown[]
+          askUsers?: unknown[]
+          exitPlans?: unknown[]
+        }
+        const allowedSessionIds = new Set(personalSessions.map((s) => s.id))
+        const groupBySession = <T extends { sessionId?: unknown; requestId?: unknown }>(items: unknown[] | undefined): Map<string, T[]> => {
+          const grouped = new Map<string, T[]>()
+          for (const rawItem of items ?? []) {
+            if (!rawItem || typeof rawItem !== 'object') continue
+            const item = rawItem as T
+            const sessionId = item.sessionId
+            if (typeof sessionId !== 'string' || !allowedSessionIds.has(sessionId)) continue
+            if (typeof item.requestId !== 'string' || item.requestId.length === 0) continue
+            const current = grouped.get(sessionId) ?? []
+            if (current.some((entry) => entry.requestId === item.requestId)) continue
+            grouped.set(sessionId, [...current, item])
+          }
+          return grouped
+        }
+        pocketStore.set(allPendingPermissionRequestsAtom, groupBySession<PermissionRequest>(snapshot?.permissions))
+        pocketStore.set(allPendingAskUserRequestsAtom, groupBySession<AskUserRequest>(snapshot?.askUsers))
+        pocketStore.set(allPendingExitPlanRequestsAtom, groupBySession<ExitPlanModeRequest>(snapshot?.exitPlans))
+      } catch (error) {
+        console.warn('[Pocket] 同步待处理交互失败，保留现有状态:', error)
       }
 
       // 优先从服务端获取真实项目（工作区）列表，带真实项目名称；

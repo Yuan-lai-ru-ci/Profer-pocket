@@ -588,8 +588,20 @@ export function AssistantTurnRenderer({ turn, allMessages, historicalTaskSubject
 
   const childBlocksMap = new Map<string, SDKContentBlock[]>()
   const topLevelBlocks: SDKContentBlock[] = []
+  // 断线重放与 JSONL checkpoint 在同一帧并存时，极少数情况下会带来同一个
+  // tool_use.id 的重复 assistant block。工具 ID 是 SDK 的调用主键，重复展示会把
+  // 「执行过程」的次数虚增（例如真实 4 次显示为 6 次）；只忽略同 ID 的重复块，
+  // 不会合并两次真正不同的 Bash / AskUser 调用。
+  const renderedToolUseIds = new Set<string>()
 
   for (const eb of enrichedBlocks) {
+    if (eb.block.type === 'tool_use') {
+      const toolUseId = (eb.block as SDKToolUseBlock).id
+      if (typeof toolUseId === 'string' && toolUseId.length > 0) {
+        if (renderedToolUseIds.has(toolUseId)) continue
+        renderedToolUseIds.add(toolUseId)
+      }
+    }
     if (eb.parentToolUseId && agentToolIds.has(eb.parentToolUseId)) {
       const children = childBlocksMap.get(eb.parentToolUseId) ?? []
       children.push(eb.block)
