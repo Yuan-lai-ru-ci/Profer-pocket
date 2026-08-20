@@ -13,6 +13,7 @@
 
 import type { AgentStreamEvent, AgentStreamCompletePayload, StreamChunkEvent, StreamReasoningEvent, StreamCompleteEvent, StreamErrorEvent, StreamToolActivityEvent, GenerateTitleInput } from '@profer/shared'
 import { CHAT_IPC_CHANNELS, BUILTIN_DEFAULT_ID, BUILTIN_DEFAULT_PROMPT } from '@profer/shared'
+import { debugLog } from '@/lib/debug-hud'
 
 /** WsClient 满足的最小远程命令面（与 ws-client.ts 方法一一对应） */
 interface PocketRemoteClient {
@@ -353,13 +354,15 @@ export function installElectronApiStub(): void {
     // ---- 命令映射：Agent 核心动作 → WS 远程命令 ----
     sendAgentMessage: (input: Record<string, unknown>) => {
       if (!remoteClient) return Promise.reject(new Error('移动端连接未就绪'))
-      return remoteClient.sendMessage({
+      const payload = {
         sessionId: String(input.sessionId || ''),
         userMessage: String(input.userMessage || ''),
         channelId: String(input.channelId || ''),
         modelId: input.modelId as string | undefined,
         workspaceId: input.workspaceId as string | undefined,
-      })
+      }
+      debugLog(`[WS send] session=${payload.sessionId} chars=${payload.userMessage.length}`)
+      return remoteClient.sendMessage(payload)
     },
     queueAgentMessage: async (input: Record<string, unknown>) => {
       // 平板队列消息必须走主进程 queue_message 指令（注入正在运行的 Agent）：
@@ -584,6 +587,8 @@ export function installElectronApiStub(): void {
     stopAgent: (sessionId: string) => {
       // 记录用户主动停止标记：run_idle 桥接 STREAM_COMPLETE 时用（stoppedByUser 展示“已停止”）
       if (sessionId) pocketStoppedByUser.add(String(sessionId))
+      const stack = new Error().stack?.split('\n').slice(1, 4).map((line) => line.trim()).join(' ← ')
+      debugLog(`[WS stop] session=${String(sessionId)} source=${stack || 'unknown'}`)
       if (!remoteClient) return Promise.reject(new Error('移动端连接未就绪'))
       return remoteClient.stopAgent(sessionId)
     },

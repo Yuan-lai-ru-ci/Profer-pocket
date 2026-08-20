@@ -47,6 +47,55 @@ function stableHash(value: string): string {
   return (hash >>> 0).toString(16)
 }
 
+/**
+ * 发送请求确认前的持久化幂等账本。
+ *
+ * WebView 被系统杀掉的极小窗口里，服务端可能已经接收 send_message，但客户端还没收到
+ * command_result。重启后若 UI/运行时重试同一请求，新的 clientMessageId 会绕过服务端
+ * 去重并重新启动 Agent。只持久化不可逆摘要键和随机请求 ID（不保存正文），收到 accepted
+ * 后立即删除；超时条目自动过期，用户稍后主动重发相同文本仍是新请求。
+ */
+const PENDING_SEND_LEDGER_PREFIX = 'profer-remote-pending-send:'
+const PENDING_SEND_LEDGER_TTL_MS = 2 * 60 * 1000
+
+type PendingSendLedger = { clientMessageId: string; expiresAt: number }
+
+function pendingSendLedgerKey(payload: { sessionId: string; userMessage: string; channelId: string; modelId?: string; workspaceId?: string }): string {
+  return `${PENDING_SEND_LEDGER_PREFIX}${stableHash([
+    payload.sessionId,
+    payload.userMessage,
+    payload.channelId,
+    payload.modelId ?? '',
+    payload.workspaceId ?? '',
+  ].join('\u0000'))}`
+}
+
+function claimPendingSendId(payload: { sessionId: string; userMessage: string; channelId: string; modelId?: string; workspaceId?: string }, createId: () => string): string {
+  const key = pendingSendLedgerKey(payload)
+  const now = Date.now()
+  try {
+    const previous = JSON.parse(localStorage.getItem(key) ?? 'null') as PendingSendLedger | null
+    if (previous && typeof previous.clientMessageId === 'string' && previous.clientMessageId && previous.expiresAt > now) {
+      return previous.clientMessageId
+    }
+    const clientMessageId = createId()
+    localStorage.setItem(key, JSON.stringify({ clientMessageId, expiresAt: now + PENDING_SEND_LEDGER_TTL_MS }))
+    return clientMessageId
+  } catch {
+    return createId()
+  }
+}
+
+function settlePendingSendId(payload: { sessionId: string; userMessage: string; channelId: string; modelId?: string; workspaceId?: string }, clientMessageId: string): void {
+  const key = pendingSendLedgerKey(payload)
+  try {
+    const current = JSON.parse(localStorage.getItem(key) ?? 'null') as PendingSendLedger | null
+    if (current?.clientMessageId === clientMessageId) localStorage.removeItem(key)
+  } catch {
+    /* localStorage 不可用时仅失去跨进程重试去重，不影响本次发送。 */
+  }
+}
+
 type CommandResultMessage = {
   kind: 'command_result'
   requestId: string | null
@@ -608,8 +657,9 @@ export class WsClient {
   }
 
   sendMessage(payload: { sessionId: string; userMessage: string; channelId: string; modelId?: string; workspaceId?: string }): Promise<unknown> {
-    // 幂等去重键：每次发送同一逻辑消息共享同一 clientMessageId，重连重放时服务端据此去重。
-    const clientMessageId = WsClient.newClientMessageId()
+    // 幂等去重键既要覆盖同一 WebView 的 WS 重连，也要覆盖“服务端已接收但 WebView
+    // 被系统杀掉、未收到 accepted”的跨进程恢复窗口。
+    const clientMessageId = claimPendingSendId(payload, WsClient.newClientMessageId)
     const frame = { type: 'send_message', ...payload, clientMessageId }
     return this.queueMessageOrSend(frame)
   }
@@ -651,6 +701,13 @@ export class WsClient {
     // 立即返回 accepted，不等待 run 结束）。成功即从「待确认」中移除。
     this.sendCommand(frame).then(
       (r) => {
+        settlePendingSendId({
+          sessionId: String(frame.sessionId ?? ''),
+          userMessage: String(frame.userMessage ?? ''),
+          channelId: String(frame.channelId ?? ''),
+          modelId: typeof frame.modelId === 'string' ? frame.modelId : undefined,
+          workspaceId: typeof frame.workspaceId === 'string' ? frame.workspaceId : undefined,
+        }, clientMessageId)
         resolve(r)
       },
       (err: Error) => {
@@ -659,6 +716,13 @@ export class WsClient {
         if (isTransientConnectionError(err)) {
           this.outgoingQueue.push({ payload: frame, clientMessageId, resolve, reject })
         } else {
+          settlePendingSendId({
+            sessionId: String(frame.sessionId ?? ''),
+            userMessage: String(frame.userMessage ?? ''),
+            channelId: String(frame.channelId ?? ''),
+            modelId: typeof frame.modelId === 'string' ? frame.modelId : undefined,
+            workspaceId: typeof frame.workspaceId === 'string' ? frame.workspaceId : undefined,
+          }, clientMessageId)
           reject(err)
         }
       },
