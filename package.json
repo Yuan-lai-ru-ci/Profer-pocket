@@ -1,6 +1,6 @@
 {
   "name": "@profer/pocket-client",
-  "version": "0.1.8",
+  "version": "0.1.9",
   "description": "Profer 移动端独立客户端（主仓库移动版 1:1 移植，复用桌面组件栈 + WsClient + electronapi-stub）",
   "author": "Profer Team",
   "private": true,
