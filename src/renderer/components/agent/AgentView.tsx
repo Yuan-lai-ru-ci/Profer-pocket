@@ -1128,6 +1128,7 @@ export function AgentView({ sessionId, pocketMode = false, hideAgentHeader = fal
                 cacheCreationTokens: state.cacheCreationTokens,
                 contextWindow: state.contextWindow,
                 model: state.model,
+                startedAt: state.startedAt,
               })
             } else if (state.backgroundWaiting) {
               // 无 usage 数据但处于软空闲：保留标志，清空展示字段
@@ -1136,12 +1137,14 @@ export function AgentView({ sessionId, pocketMode = false, hideAgentHeader = fal
                 backgroundWaiting: true,
                 content: '',
                 toolActivities: taskActivities,
+                startedAt: state.startedAt,
               })
             } else if (taskActivities.length > 0) {
               map.set(sessionId, {
                 running: false,
                 content: '',
                 toolActivities: taskActivities,
+                startedAt: state.startedAt,
               })
             } else {
               map.delete(sessionId)

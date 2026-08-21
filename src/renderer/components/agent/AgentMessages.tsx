@@ -43,7 +43,7 @@ import { ContentBlock } from './ContentBlock'
 import { parseThinkTagsFromText } from './thinking-tag-parser'
 import { AgentHistorySelectionLayer } from './AgentHistorySelectionLayer'
 import type { AgentEventUsage, RetryAttempt, SDKMessage } from '@profer/shared'
-import type { AgentStreamState } from '@/atoms/agent-atoms'
+import { isAgentStreamActive, type AgentStreamState } from '@/atoms/agent-atoms'
 
 function stableStringify(value: unknown): string {
   if (value == null || typeof value !== 'object') return JSON.stringify(value) ?? String(value)
@@ -511,7 +511,7 @@ export function DurationBadge({ durationMs, usage }: { durationMs: number; usage
 }
 
 /** Agent 运行指示器 — Shimmer Spinner + 无括号的运行时间 */
-function AgentRunningIndicator({ startedAt }: { startedAt?: number }): React.ReactElement {
+function AgentRunningIndicator({ startedAt, backgroundWaiting = false }: { startedAt?: number; backgroundWaiting?: boolean }): React.ReactElement {
   const [elapsed, setElapsed] = React.useState(0)
 
   React.useEffect(() => {
@@ -532,7 +532,9 @@ function AgentRunningIndicator({ startedAt }: { startedAt?: number }): React.Rea
   return (
     <div className="flex items-center gap-2 min-h-[28px]">
       <Spinner size="sm" className="text-primary/75" />
-      <span className="text-[13px] font-light text-muted-foreground/75 tabular-nums">Agent Running {formatTime(elapsed)}</span>
+      <span className="text-[13px] font-light text-muted-foreground/75 tabular-nums">
+        Agent Running{backgroundWaiting ? ' · 后台任务执行中' : ''} {formatTime(elapsed)}
+      </span>
     </div>
   )
 }
@@ -591,6 +593,7 @@ export function AgentMessages({ sessionId, sessionModelId, messagesLoaded, persi
   const agentStreamingModel = streamingModelId ? resolveModelDisplayName(streamingModelId, channels) : undefined
   const retrying = streamState?.retrying
   const startedAt = streamState?.startedAt
+  const agentStreamActive = isAgentStreamActive(streamState)
 
   const { displayedContent: rawSmoothContent } = useSmoothStream({
     content: streamingContent,
@@ -787,7 +790,7 @@ export function AgentMessages({ sessionId, sessionModelId, messagesLoaded, persi
             </button>
           </div>
         )}
-        {!hasContent && !streaming ? (
+        {!hasContent && !agentStreamActive ? (
           <EmptyState />
         ) : (
           <>
@@ -799,7 +802,7 @@ export function AgentMessages({ sessionId, sessionModelId, messagesLoaded, persi
               const shouldDisableActions = isLive && !isErrorGroup
               // 会话活跃态（streaming 或 backgroundWaiting）时禁用压缩/重试操作，
               // 防止用户误操作触发与正在运行的 agent session 冲突
-              const isSessionActive = streaming || (streamState?.backgroundWaiting ?? false)
+              const isSessionActive = agentStreamActive
               // 仅在最后一个 assistant-turn 上显示"已被用户中断" badge
               const isLastAssistantTurn = !streaming && stoppedByUser
                 && group.type === 'assistant-turn'
@@ -829,13 +832,13 @@ export function AgentMessages({ sessionId, sessionModelId, messagesLoaded, persi
             {hasLiveAssistantContent && !suppressAgentRunning && (
               <div className="pl-[56px] min-h-[28px]">
                 {retrying && <RetryingNotice retrying={retrying} />}
-                {streaming && <AgentRunningIndicator startedAt={startedAt} />}
+                {agentStreamActive && <AgentRunningIndicator startedAt={startedAt} backgroundWaiting={streamState?.backgroundWaiting === true} />}
               </div>
             )}
 
             {/* 无实时助手内容时：显示完整气泡（含头像/名称/时间） */}
             {/* 注意：工具活动已通过 SDK 渲染路径（liveGroups）展示 */}
-            {!hasLiveAssistantContent && !suppressAgentRunning && (streaming || smoothContent || retrying) && (
+            {!hasLiveAssistantContent && !suppressAgentRunning && !streamState?.backgroundWaiting && (streaming || smoothContent || retrying) && (
               <Message from="assistant">
                 <MessageHeader
                   model={agentStreamingModel}
@@ -860,10 +863,10 @@ export function AgentMessages({ sessionId, sessionModelId, messagesLoaded, persi
                           />
                         ))}
                       </div>
-                      {streaming && <AgentRunningIndicator startedAt={startedAt} />}
+                      {agentStreamActive && <AgentRunningIndicator startedAt={startedAt} backgroundWaiting={streamState?.backgroundWaiting === true} />}
                     </>
                   ) : (
-                    streaming && <AgentRunningIndicator startedAt={startedAt} />
+                    agentStreamActive && <AgentRunningIndicator startedAt={startedAt} backgroundWaiting={streamState?.backgroundWaiting === true} />
                   )}
                 </MessageContent>
               </Message>
@@ -873,17 +876,10 @@ export function AgentMessages({ sessionId, sessionModelId, messagesLoaded, persi
                 视觉上被流中新出现的"上下文已压缩"分隔符无缝替换 */}
             {streamState?.isCompacting && <CompactingIndicator />}
 
-            {/* 后台任务等待态指示器：主轮次文本输出已完成，但后台任务（subagent/Bash 等）仍在执行。
-                此时 running=false、backgroundWaiting=true，AgentRunningIndicator 不渲染，
-                若无此指示器用户会误以为对话已结束从而触发压缩等危险操作 */}
-            {streamState?.backgroundWaiting && !suppressAgentRunning && !streamState?.isCompacting && (
+            {/* 后台等待没有实时文本时仍沿用同一 Running 指示器，避免额外弱 Spinner 与它重复。 */}
+            {streamState?.backgroundWaiting && !hasLiveAssistantContent && !suppressAgentRunning && (
               <div className="pl-[56px] min-h-[28px]">
-                <div className="flex items-center gap-2">
-                  <Spinner size="sm" className="text-muted-foreground/40" />
-                  <span className="text-[13px] font-light text-muted-foreground/45 tabular-nums">
-                    后台任务执行中
-                  </span>
-                </div>
+                <AgentRunningIndicator startedAt={startedAt} backgroundWaiting />
               </div>
             )}
 
