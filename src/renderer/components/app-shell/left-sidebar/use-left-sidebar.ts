@@ -91,6 +91,7 @@ import type { NavigationAction } from '@/lib/navigation-actions'
 import {
   replaceAgentSessionInFreshnessOrder,
   sortAgentSessionsByUpdatedAtDesc,
+  upsertAgentSession,
 } from '@/lib/agent-session-list'
 import type { AgentSessionMeta, AgentWorkspace, WorkspaceCapabilities } from '@profer/shared'
 
@@ -802,7 +803,7 @@ export function useLeftSidebar(pocketMode?: boolean) {
         targetWorkspaceId,
         agentModelId || undefined,
       )
-      setAgentSessions((prev) => [meta, ...prev])
+      setAgentSessions((prev) => upsertAgentSession(prev, meta))
       // 从全局默认值初始化 per-session 渠道/模型配置
       if (agentChannelId) {
         setSessionChannelMap((prev) => {
@@ -847,13 +848,7 @@ export function useLeftSidebar(pocketMode?: boolean) {
         agentChannelId || undefined,
         agentModelId || undefined,
       )
-      setAgentSessions((previous) => {
-        const index = previous.findIndex((item) => item.id === session.id)
-        if (index === -1) return [session, ...previous]
-        const next = [...previous]
-        next[index] = session
-        return next
-      })
+      setAgentSessions((previous) => upsertAgentSession(previous, session))
       setDraftSessionIds((previous: Set<string>) => {
         if (previous.has(session.id)) return previous
         const next = new Set(previous)

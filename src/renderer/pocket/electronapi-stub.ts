@@ -34,6 +34,52 @@ interface HeatmapRemoteClient {
   getWorkspaceHeatmapDaily(workspaceId: string): Promise<unknown>
 }
 
+interface AgentSessionMetaRecord extends Record<string, unknown> {
+  id: string
+  title: string
+  createdAt: number
+  updatedAt: number
+}
+
+interface AgentSessionMetaRemoteClient {
+  listSessions(): Promise<unknown>
+}
+
+function isAgentSessionMetaRecord(value: unknown): value is AgentSessionMetaRecord {
+  if (!value || typeof value !== 'object') return false
+  const record = value as Record<string, unknown>
+  return typeof record.id === 'string'
+    && typeof record.title === 'string'
+    && typeof record.createdAt === 'number'
+    && typeof record.updatedAt === 'number'
+}
+
+/**
+ * WS 命令结果与 session_updated 事件统一以远端持久化元数据为准。
+ * 兼容旧端仅返回 sessionId/title 的命令结果，但不再用本机时钟拼装影子对象。
+ */
+export async function resolveAuthoritativeAgentSession(
+  client: AgentSessionMetaRemoteClient,
+  sessionId: string,
+  commandResult?: unknown,
+): Promise<AgentSessionMetaRecord> {
+  const resultRecord = commandResult && typeof commandResult === 'object'
+    ? commandResult as Record<string, unknown>
+    : undefined
+  const directCandidate = resultRecord?.session ?? commandResult
+  if (isAgentSessionMetaRecord(directCandidate)) return directCandidate
+
+  const sessions = await client.listSessions()
+  if (Array.isArray(sessions)) {
+    const persisted = sessions.find((session) => (
+      isAgentSessionMetaRecord(session) && session.id === sessionId
+    ))
+    if (persisted && isAgentSessionMetaRecord(persisted)) return persisted
+  }
+
+  throw new Error(`远端未返回完整会话元数据: ${sessionId}`)
+}
+
 /**
  * 读取远程工作区热力图，并对不受信任的 WS 响应执行运行时形状校验。
  * 未注入 client 时返回空数组；client 已就绪后的错误必须继续向调用方 reject。
@@ -637,16 +683,24 @@ export function installElectronApiStub(): void {
     listAgentSessions: () => remoteClient?.listSessions() ?? Promise.resolve([]),
     createAgentSession: async (title?: string, channelId?: string, workspaceId?: string, modelId?: string) => {
       if (!remoteClient) throw new Error('移动端连接未就绪')
-      const created = await remoteClient.createSession({ title, channelId, workspaceId, modelId }) as { sessionId: string; title: string }
-      return { id: created.sessionId, title: created.title, channelId, modelId, workspaceId, createdAt: Date.now(), updatedAt: Date.now() }
+      const created = await remoteClient.createSession({ title, channelId, workspaceId, modelId }) as Record<string, unknown>
+      const sessionId = typeof created.id === 'string' ? created.id : String(created.sessionId || '')
+      if (!sessionId) throw new Error('远端创建会话未返回 sessionId')
+      return resolveAuthoritativeAgentSession(remoteClient, sessionId, created)
     },
     ensureProjectDraftAgentSession: async (workspaceId: string, channelId?: string, modelId?: string) => {
       if (!remoteClient) throw new Error('移动端连接未就绪')
       // 复用语义：项目已有草稿会话则返回它（不再每次新建），对齐桌面 ensureProjectDraftAgentSession
-      const created = await remoteClient.ensureProjectDraftSession({ workspaceId, channelId, modelId }) as { sessionId: string; title: string; draft?: boolean }
-      return { id: created.sessionId, title: created.title, channelId, modelId, workspaceId, draft: created.draft ?? true, createdAt: Date.now(), updatedAt: Date.now() }
+      const created = await remoteClient.ensureProjectDraftSession({ workspaceId, channelId, modelId }) as Record<string, unknown>
+      const sessionId = typeof created.id === 'string' ? created.id : String(created.sessionId || '')
+      if (!sessionId) throw new Error('远端草稿会话未返回 sessionId')
+      return resolveAuthoritativeAgentSession(remoteClient, sessionId, created)
     },
-    updateAgentSessionTitle: (id: string, title: string) => remoteClient?.renameSession(id, title) ?? Promise.reject(new Error('移动端连接未就绪')),
+    updateAgentSessionTitle: async (id: string, title: string) => {
+      if (!remoteClient) throw new Error('移动端连接未就绪')
+      const updated = await remoteClient.renameSession(id, title)
+      return resolveAuthoritativeAgentSession(remoteClient, id, updated)
+    },
     getAgentSessionMeta: async (id: string) => {
       const sessions = await (remoteClient?.listSessions() ?? Promise.resolve([])) as Array<{ id: string }>
       return sessions.find((session) => session.id === id)
@@ -930,7 +984,8 @@ export function installElectronApiStub(): void {
     // 且 LeftSidebar 读 updated.pinned/updated.id 会拿到 undefined 崩溃。
     togglePinAgentSession: async (id: string) => {
       if (!remoteClient) throw new Error('移动端连接未就绪')
-      return remoteClient.toggleSessionPin(id) as Promise<Record<string, unknown>>
+      const updated = await remoteClient.toggleSessionPin(id)
+      return resolveAuthoritativeAgentSession(remoteClient, id, updated)
     },
     toggleArchiveAgentSession: async (id: string) => {
       if (!remoteClient) throw new Error('移动端连接未就绪')

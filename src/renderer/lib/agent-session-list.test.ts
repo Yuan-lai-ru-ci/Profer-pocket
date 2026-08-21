@@ -65,6 +65,24 @@ describe('upsertAgentSession', () => {
     expect(a.workspaceId).toBe('ws-1')
   })
 
+  test('Given 历史列表已含重复 id When upsert Then 收敛为单条并保留既有字段', () => {
+    const result = upsertAgentSession(
+      [
+        makeSession('a', 1, { workspaceId: 'ws-old' }),
+        makeSession('a', 2, { channelId: 'ch-newer' }),
+        makeSession('b', 3),
+      ],
+      makeSession('a', 9, { title: '权威标题' }),
+    )
+
+    expect(result.filter((session) => session.id === 'a')).toHaveLength(1)
+    expect(result.find((session) => session.id === 'a')).toMatchObject({
+      title: '权威标题',
+      updatedAt: 9,
+    })
+    expect(result.map((session) => session.id)).toEqual(['a', 'b'])
+  })
+
   test('核心回归：upsert 子会话时绝不删除其它会话（含刚结束 turn 的父会话）', () => {
     const parent = makeSession('parent', 10)
     const childA = makeSession('child-a', 11, {
