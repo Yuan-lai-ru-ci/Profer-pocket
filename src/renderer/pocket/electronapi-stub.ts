@@ -15,8 +15,49 @@ import type { AgentStreamEvent, AgentStreamCompletePayload, StreamChunkEvent, St
 import { CHAT_IPC_CHANNELS, BUILTIN_DEFAULT_ID, BUILTIN_DEFAULT_PROMPT } from '@profer/shared'
 import { debugLog } from '@/lib/debug-hud'
 
+interface HeatmapDailyEntry {
+  date: string
+  tokens: number
+}
+
+function isHeatmapDailyEntry(value: unknown): value is HeatmapDailyEntry {
+  if (!value || typeof value !== 'object') return false
+  const record = value as Record<string, unknown>
+  return typeof record.date === 'string'
+    && record.date.length > 0
+    && typeof record.tokens === 'number'
+    && Number.isFinite(record.tokens)
+    && record.tokens >= 0
+}
+
+interface HeatmapRemoteClient {
+  getWorkspaceHeatmapDaily(workspaceId: string): Promise<unknown>
+}
+
+/**
+ * 读取远程工作区热力图，并对不受信任的 WS 响应执行运行时形状校验。
+ * 未注入 client 时返回空数组；client 已就绪后的错误必须继续向调用方 reject。
+ */
+export async function requestWorkspaceHeatmapDaily(
+  client: HeatmapRemoteClient | null,
+  workspaceId: string,
+): Promise<HeatmapDailyEntry[]> {
+  if (!client) return []
+
+  const data = await client.getWorkspaceHeatmapDaily(workspaceId)
+  if (!Array.isArray(data)) {
+    throw new Error('工作区热力图响应必须是数组')
+  }
+
+  if (!data.every(isHeatmapDailyEntry)) {
+    throw new Error('工作区热力图响应包含非法条目')
+  }
+
+  return data
+}
+
 /** WsClient 满足的最小远程命令面（与 ws-client.ts 方法一一对应） */
-interface PocketRemoteClient {
+interface PocketRemoteClient extends HeatmapRemoteClient {
   listSessions(): Promise<unknown>
   listWorkspaces(): Promise<unknown>
   createWorkspace(name: string): Promise<unknown>
@@ -849,7 +890,8 @@ export function installElectronApiStub(): void {
     },
     getModels: () => Promise.resolve([]),
     getWorkspaceCapabilities: () => Promise.resolve(null),
-    getWorkspaceHeatmapDaily: () => Promise.resolve([]),
+    getWorkspaceHeatmapDaily: (workspaceId: string) =>
+      requestWorkspaceHeatmapDaily(remoteClient, workspaceId),
     getAccountCapabilities: () => Promise.resolve({ membershipTier: 'free', canSelfConfig: true }),
     getWorkspaceFilesPath: () => Promise.resolve(null),
     getGitRepoStatus: () => Promise.resolve(null),

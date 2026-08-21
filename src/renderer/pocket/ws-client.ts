@@ -516,6 +516,10 @@ export class WsClient {
     return this.sendCommand({ type: 'list_workspaces' })
   }
 
+  getWorkspaceHeatmapDaily(workspaceId: string): Promise<unknown> {
+    return this.sendCommand({ type: 'get_workspace_heatmap_daily', workspaceId })
+  }
+
   createWorkspace(name: string): Promise<unknown> {
     return this.sendCommand({ type: 'create_workspace', name })
   }
