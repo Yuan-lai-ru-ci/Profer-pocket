@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test'
 import {
   DEFAULT_CONTEXT_WINDOW,
   ONE_MILLION_CONTEXT_WINDOW,
+  CODEX_GPT_CONTEXT_WINDOW,
   inferContextWindow,
   isDeepSeekV4Model,
   normalizeContextModelId,
@@ -34,6 +35,10 @@ describe('DeepSeek V4 1M 上下文能力', () => {
 
   test('Given GLM 显式 1M 变体 When 规范化 Then 保持其 1M 能力', () => {
     expect(supports1MContext('glm-x-preview[1m]')).toBe(true)
+  })
+
+  test('Given ChatGPT Codex Terra When renderer requires a temporary fallback Then use the verified 1.05M window', () => {
+    expect(inferContextWindow('gpt-5.6-terra')).toBe(CODEX_GPT_CONTEXT_WINDOW)
   })
 })
 
@@ -94,5 +99,11 @@ describe('多模型 result 上下文窗口解析', () => {
       'small-subagent': { contextWindow: DEFAULT_CONTEXT_WINDOW },
       'larger-model': { contextWindow: 400_000 },
     }, 'unknown-model')).toBe(400_000)
+  })
+
+  test('Given GLM-X-Preview result key loses its 1M suffix When configured model preserves it Then retain 1M', () => {
+    expect(resolveContextWindowFromModelUsage({
+      'glm-x-preview': {},
+    }, 'glm-x-preview[1m]')).toBe(ONE_MILLION_CONTEXT_WINDOW)
   })
 })
