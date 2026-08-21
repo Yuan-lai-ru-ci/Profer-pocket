@@ -3,20 +3,18 @@
  *
  * 在没有会话时展示：
  * 1. 个性化时段问候
- * 2. 平台感知的小 Tips
- * 3. Chat/Agent 模式切换 Tab
- * 4. Agent 模式 + 普通工作区：编码活跃热力图
+ * 2. Chat/Agent 模式切换 Tab
+ * 3. Agent 模式 + 普通工作区：编码活跃热力图
  */
 
 import * as React from 'react'
 import { useAtomValue, useAtom } from 'jotai'
-import { Lightbulb, MessageSquare, Bot, StickyNote } from 'lucide-react'
+import { MessageSquare, Bot, StickyNote } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { userProfileAtom } from '@/atoms/user-profile'
 import { appModeAtom, type AppMode } from '@/atoms/app-mode'
 import { themeStyleAtom } from '@/atoms/theme'
 import { currentAgentWorkspaceIdAtom, agentWorkspacesAtom } from '@/atoms/agent-atoms'
-import { getRandomTip, getPlatform, type Tip } from '@/lib/tips'
 import { UsageHeatmap } from './UsageHeatmap'
 
 /** 根据小时返回时段问候 */
@@ -48,9 +46,6 @@ export function WelcomeEmptyState(): React.ReactElement {
   )
   const showHeatmap = mode === 'agent' && currentWorkspace?.type !== 'team'
 
-  // 稳定的随机 Tip（组件挂载时选一条）
-  const [tip] = React.useState<Tip>(() => getRandomTip(getPlatform()))
-
   const hour = new Date().getHours()
   const greeting = getGreeting(hour)
   const displayName = userProfile.userName || '用户'
@@ -70,12 +65,6 @@ export function WelcomeEmptyState(): React.ReactElement {
       <h1 className="text-[26px] font-semibold tracking-tight text-foreground">
         {displayName}，{greeting}
       </h1>
-
-      {/* Tips */}
-      <div className="flex items-center gap-2.5 rounded-full bg-muted/50 px-4 py-2 text-[13px] text-muted-foreground">
-        <Lightbulb size={14} className="flex-shrink-0 text-amber-500/80" />
-        <span>{tip.text}</span>
-      </div>
 
       {/* 模式切换 Tab */}
       <div className="relative flex rounded-xl bg-muted/60 p-1">
