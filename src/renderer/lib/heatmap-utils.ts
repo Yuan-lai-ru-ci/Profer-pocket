@@ -34,6 +34,12 @@ export function valueToLevel(value: number, thresholds: [number, number, number]
   return 4
 }
 
+/** 将 Date 按本地日历日期格式化为热力图使用的 YYYY-MM-DD key。 */
+export function formatLocalDateKey(date: Date): string {
+  const pad = (value: number): string => String(value).padStart(2, '0')
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`
+}
+
 /**
  * 将后端返回的 WorkspaceHeatmapEntry[] 转成热力图渲染格式。
  * 每一天的 level 由当日 tokens 在所有非零值中的百分位决定。

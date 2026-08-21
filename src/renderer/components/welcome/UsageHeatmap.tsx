@@ -12,7 +12,7 @@ import * as React from 'react'
 import { useAtomValue } from 'jotai'
 import { currentAgentWorkspaceIdAtom } from '@/atoms/agent-atoms'
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip'
-import { toCalendarData, type WorkspaceHeatmapEntry } from '@/lib/heatmap-utils'
+import { formatLocalDateKey, toCalendarData, type WorkspaceHeatmapEntry } from '@/lib/heatmap-utils'
 
 // ── 布局常量 ──────────────────────────────────────────────
 const CELL = 11                         // 格子尺寸 px
@@ -58,7 +58,7 @@ function buildWeekGrid(entries: WorkspaceHeatmapEntry[], weeks: number = WEEKS) 
     for (let r = 0; r < 7; r++) {
       const d = new Date(startDate)
       d.setDate(startDate.getDate() + col * 7 + r)
-      const dateStr = d.toISOString().slice(0, 10)
+      const dateStr = formatLocalDateKey(d)
       const future = d.getTime() > today.getTime()
 
       if (future) {
