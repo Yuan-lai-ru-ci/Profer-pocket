@@ -19,6 +19,9 @@ android {
     buildTypes {
         release {
             minifyEnabled false
+            // 当前未配置生产 keystore，先用 Android debug keystore 生成可安装的 release variant。
+            // 接入正式签名时仅替换此 signingConfig，不改变 build-apk.mjs 的构建流程。
+            signingConfig signingConfigs.debug
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
         }
     }

@@ -13,9 +13,10 @@
  *   | versionCode    | 9                | 20                         |
  *   | versionName    | 0.1.10           | 0.1.10-dev                  |
  *
- * 步骤：校验环境 → 写入 variant 配置 → 同步 web → cap sync android → gradlew assembleDebug。
+ * 步骤：校验环境 → 写入 variant 配置 → 同步 web → cap sync android → 使用 no-daemon 执行 variant 对应的 Gradle 任务并复制产物。
  * 环境要求：ANDROID_HOME=C:\Android\Sdk、JAVA_HOME=C:\Android\jdk-21（必须 JDK 21）。
- * 产物：android/app/build/outputs/apk/debug/app-debug.apk，并复制到 releases/。
+ * 产物：dev 为 android/app/build/outputs/apk/debug/app-debug.apk，release 为
+ * android/app/build/outputs/apk/release/app-release.apk，均复制到 releases/。
  * 命名规则（工作区 CLAUDE.md）：dev 版文件名只用当前分支提交短 ID（Profer-Pocket-<commit>.apk），不附带版本号，
  * 提交 ID 已唯一标识该分支构建；区分多分支并行出的 dev 包，防 AList 互相覆盖。
  * release 版文件名用版本号（Profer-Pocket-<版本>.apk），不用提交 ID。
@@ -39,12 +40,16 @@ const VARIANTS = {
     appName: 'Profer Pocket（开发版）',
     versionCode: '20',
     versionName: '0.1.10-dev',
+    gradleTask: 'assembleDebug',
+    apkPath: 'app/build/outputs/apk/debug/app-debug.apk',
   },
   release: {
     appId: 'com.profer.pocket',
     appName: 'Profer Pocket',
     versionCode: '9',
     versionName: '0.1.10',
+    gradleTask: 'assembleRelease',
+    apkPath: 'app/build/outputs/apk/release/app-release.apk',
   },
 }
 const DEV_CFG = VARIANTS.dev
@@ -197,30 +202,35 @@ try {
   step('maven 镜像 patch')
   patchGradleRepos()
 
-  // 5. gradle 打 debug APK
-  step('gradlew assembleDebug')
+  // 5. 按 variant 执行 Gradle 构建：release 不再误走 debug variant。
+  step(`gradlew ${cfg.gradleTask}`)
   if (process.platform === 'win32') {
     // 本机 cmd 对带空格/中文用户路径的 .bat 参数解析不稳定，使用 PowerShell 直接调用 wrapper。
     const wrapper = resolve(androidRoot, 'gradlew.bat').replace(/'/g, "''")
+    const gradleCommand = `& '${wrapper}' ${cfg.gradleTask} --no-daemon; exit $LASTEXITCODE`
     const gr = spawnSync('powershell.exe', [
       '-NoProfile',
+      '-NonInteractive',
       '-ExecutionPolicy', 'Bypass',
-      '-Command', `& '${wrapper}' assembleDebug`,
+      '-Command', gradleCommand,
     ], {
       cwd: androidRoot,
       stdio: 'inherit',
       shell: false,
     })
     if (gr.status !== 0) {
-      throw new Error('[build-apk] 失败: gradlew assembleDebug')
+      throw new Error(`[build-apk] 失败: gradlew ${cfg.gradleTask}`)
     }
   } else {
-    run('./gradlew', ['assembleDebug'], androidRoot)
+    run('./gradlew', [cfg.gradleTask, '--no-daemon'], androidRoot)
   }
 
   // 6. 复制产物：dev 版文件名只用提交短 ID（不附带版本号）；release 用版本号
   step('复制 APK 产物')
-  const apk = resolve(androidRoot, 'app/build/outputs/apk/debug/app-debug.apk')
+  const apk = resolve(androidRoot, cfg.apkPath)
+  if (!existsSync(apk)) {
+    throw new Error(`[build-apk] 未找到构建产物: ${apk}`)
+  }
   const outDir = resolve(appRoot, 'releases')
   mkdirSync(outDir, { recursive: true })
   const commitId = variant === 'dev' ? getCommitShortId() : null
