@@ -6,7 +6,9 @@ import {
   agentStreamingStatesAtom,
   allPendingPermissionRequestsAtom,
   applyAgentEvent,
+  clearNonFailedRetry,
   isAgentStreamActive,
+  settleInactiveAgentStreamState,
   shouldClearInactiveAgentStreamState,
   type AgentStreamState,
 } from './agent-atoms'
@@ -19,6 +21,39 @@ function makeState(overrides: Partial<AgentStreamState> = {}): AgentStreamState 
     ...overrides,
   }
 }
+
+describe('retry 状态收敛', () => {
+  test('text_complete 清除非失败 retry，保留失败记录', () => {
+    const retrying = {
+      currentAttempt: 2,
+      maxAttempts: 3,
+      history: [],
+      failed: false,
+    }
+    const failedRetrying = { ...retrying, failed: true }
+
+    expect(clearNonFailedRetry(retrying)).toBeUndefined()
+    expect(clearNonFailedRetry(failedRetrying)).toBe(failedRetrying)
+    expect(applyAgentEvent(
+      makeState({ retrying }),
+      { type: 'text_complete', text: '回放完成文本' },
+    )).toMatchObject({ content: '回放完成文本', retrying: undefined })
+    expect(applyAgentEvent(
+      makeState({ retrying: failedRetrying }),
+      { type: 'text_complete', text: '失败后的持久文本' },
+    )).toMatchObject({ content: '失败后的持久文本', retrying: failedRetrying })
+    expect(settleInactiveAgentStreamState(makeState({ retrying }))).toMatchObject({
+      running: false,
+      backgroundWaiting: false,
+      stopping: false,
+      retrying: undefined,
+    })
+    expect(settleInactiveAgentStreamState(makeState({ retrying: failedRetrying }))).toMatchObject({
+      running: false,
+      retrying: failedRetrying,
+    })
+  })
+})
 
 describe('Agent 用户可见活跃态', () => {
   test('backgroundWaiting 仍被视为活跃，并驱动会话运行指示', () => {

@@ -223,6 +223,28 @@ export function isAgentStreamActive(state?: AgentStreamState): boolean {
 }
 
 /**
+ * 清除成功收敛的重试状态，但保留最终失败记录供用户查看。
+ */
+export function clearNonFailedRetry(
+  retrying: AgentStreamState['retrying'],
+): AgentStreamState['retrying'] {
+  return retrying?.failed === true ? retrying : undefined
+}
+
+/**
+ * 收敛服务端 inactive 快照对应的本地流式状态。
+ */
+export function settleInactiveAgentStreamState(state: AgentStreamState): AgentStreamState {
+  return {
+    ...state,
+    running: false,
+    backgroundWaiting: false,
+    stopping: false,
+    retrying: clearNonFailedRetry(state.retrying),
+  }
+}
+
+/**
  * 异步会话快照是否可以清除本地 running 标记。
  *
  * 仅当请求期间没有收到该 session 的新 Agent 事件、且未开始带新 startedAt 的乐观 run 时，
@@ -679,7 +701,8 @@ export function applyAgentEvent(
 
     case 'text_complete':
       // 用完整文本替换增量累积的文本（用于回放场景：只需 text_complete 即可重建文本状态）
-      return { ...prev, content: event.text }
+      // 完整文本代表本轮已有成功输出；仅保留明确失败的 retry 记录。
+      return { ...prev, content: event.text, retrying: clearNonFailedRetry(prev.retrying) }
 
     case 'tool_start': {
       const existing = prev.toolActivities.find((t) => t.toolUseId === event.toolUseId)

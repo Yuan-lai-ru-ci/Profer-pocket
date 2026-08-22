@@ -10,8 +10,8 @@
  *   | 项             | release          | dev                        |
  *   | appId          | com.profer.pocket | com.profer.pocket.dev      |
  *   | appName        | Profer Pocket     | Profer Pocket（开发版）    |
- *   | versionCode    | 8                | 19                         |
- *   | versionName    | 0.1.9            | 0.1.9-dev                  |
+ *   | versionCode    | 9                | 20                         |
+ *   | versionName    | 0.1.10           | 0.1.10-dev                  |
  *
  * 步骤：校验环境 → 写入 variant 配置 → 同步 web → cap sync android → gradlew assembleDebug。
  * 环境要求：ANDROID_HOME=C:\Android\Sdk、JAVA_HOME=C:\Android\jdk-21（必须 JDK 21）。
@@ -37,14 +37,14 @@ const VARIANTS = {
   dev: {
     appId: 'com.profer.pocket.dev',
     appName: 'Profer Pocket（开发版）',
-    versionCode: '19',
-    versionName: '0.1.9-dev',
+    versionCode: '20',
+    versionName: '0.1.10-dev',
   },
   release: {
     appId: 'com.profer.pocket',
     appName: 'Profer Pocket',
-    versionCode: '8',
-    versionName: '0.1.9',
+    versionCode: '9',
+    versionName: '0.1.10',
   },
 }
 const DEV_CFG = VARIANTS.dev
