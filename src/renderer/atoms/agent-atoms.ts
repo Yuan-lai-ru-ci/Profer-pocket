@@ -217,6 +217,31 @@ export interface AgentPendingPrompt {
 
 export const agentSessionsAtom = atom<AgentSessionMeta[]>([])
 export const agentWorkspacesAtom = atom<AgentWorkspace[]>([])
+/** 用户可见的 Agent 活跃态：主轮运行或后台任务等待都表示本轮尚未结束。 */
+export function isAgentStreamActive(state?: AgentStreamState): boolean {
+  return state?.running === true || state?.backgroundWaiting === true
+}
+
+/**
+ * 异步会话快照是否可以清除本地 running 标记。
+ *
+ * 仅当请求期间没有收到该 session 的新 Agent 事件、且未开始带新 startedAt 的乐观 run 时，
+ * inactive 快照才有资格收敛状态；这样较旧的 list_sessions 响应不会覆盖 Pocket 已观察到的新活动。
+ */
+export function shouldClearInactiveAgentStreamState(
+  state: AgentStreamState | undefined,
+  remoteActive: boolean,
+  snapshotActivityRevision: number,
+  currentActivityRevision: number,
+  snapshotStartedAt?: number,
+): boolean {
+  return isAgentStreamActive(state)
+    && !remoteActive
+    && snapshotActivityRevision === currentActivityRevision
+    // undefined === undefined 保持旧状态的清理语义；有值时 startedAt 是乐观新 run 的内存身份。
+    && state?.startedAt === snapshotStartedAt
+}
+
 export const currentAgentWorkspaceIdAtom = atom<string | null>(null)
 /** 全局默认渠道 ID（新会话继承用，从 settings.json 加载） */
 export const agentChannelIdAtom = atom<string | null>(null)
@@ -577,7 +602,7 @@ export const agentRunningSessionIdsAtom = atom<Set<string>>((get) => {
   const states = get(agentStreamingStatesAtom)
   const ids = new Set<string>()
   for (const [id, state] of states) {
-    if (state.running) ids.add(id)
+    if (isAgentStreamActive(state)) ids.add(id)
   }
   return ids
 })
@@ -624,7 +649,7 @@ export const agentSessionIndicatorMapAtom = atom<Map<string, SessionIndicatorSta
   const map = new Map<string, SessionIndicatorStatus>()
 
   for (const [id, state] of streamStates) {
-    if (!state.running) continue
+    if (!isAgentStreamActive(state)) continue
     const hasBlock = (pendingPerms.get(id)?.length ?? 0) > 0
       || (pendingAskUser.get(id)?.length ?? 0) > 0
       || (pendingExitPlan.get(id)?.length ?? 0) > 0

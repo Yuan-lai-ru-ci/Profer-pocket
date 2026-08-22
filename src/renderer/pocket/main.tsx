@@ -32,7 +32,7 @@ import { useGlobalChatListeners } from '@/hooks/useGlobalChatListeners'
 import { userProfileAtom } from '@/atoms/user-profile'
 import { authStatusAtom } from '@/atoms/identity-atoms'
 import { channelsAtom, channelsLoadedAtom, conversationsAtom, currentConversationIdAtom } from '@/atoms/chat-atoms'
-import { agentSessionsAtom, agentWorkspacesAtom, currentAgentSessionIdAtom, currentAgentWorkspaceIdAtom, agentChannelIdAtom, agentModelIdAtom, agentChannelIdsAtom, agentStreamingStatesAtom, agentMessageRefreshAtom, allPendingPermissionRequestsAtom, allPendingAskUserRequestsAtom, allPendingExitPlanRequestsAtom } from '@/atoms/agent-atoms'
+import { agentSessionsAtom, agentWorkspacesAtom, currentAgentSessionIdAtom, currentAgentWorkspaceIdAtom, agentChannelIdAtom, agentModelIdAtom, agentChannelIdsAtom, agentStreamingStatesAtom, agentMessageRefreshAtom, allPendingPermissionRequestsAtom, allPendingAskUserRequestsAtom, allPendingExitPlanRequestsAtom, shouldClearInactiveAgentStreamState } from '@/atoms/agent-atoms'
 import { appModeAtom } from '@/atoms/app-mode'
 import { initPocketUiScale } from '@/atoms/ui-scale'
 import { initPocketScreenOrientation } from '@/lib/pocket-screen-orientation'
@@ -152,6 +152,15 @@ const pendingStopTimers = new Map<string, ReturnType<typeof setTimeout>>()
 // 只保留 loadSessions（列表刷新无副作用）。旧服务端（无 run_completed）时 run_idle 仍正常成为唯一信号。
 const runCompletedProcessed = new Map<string, number>()
 const RUN_COMPLETED_DEDUP_WINDOW_MS = 3000
+
+// list_sessions 没有可与 WS eventId 比较的服务端版本；仅记录本地观察到的 session 活动，
+// 防止请求期间收到的新 Agent event 被较早发起的 inactive 快照反向覆盖。
+const sessionActivityRevisions = new Map<string, number>()
+function markSessionActivity(sessionId: string): number {
+  const revision = (sessionActivityRevisions.get(sessionId) ?? 0) + 1
+  sessionActivityRevisions.set(sessionId, revision)
+  return revision
+}
 
 {
   const origStopAgent = window.electronAPI.stopAgent.bind(window.electronAPI)
@@ -280,7 +289,7 @@ function App(): React.ReactElement {
           // 导致远程端看不到 GPT/Claude 官方模型。这里在连接成功后置为已登录态以放行官方渠道。
           setAuthStatus((prev) => ({ ...prev, isLoggedIn: true }))
           void loadChannels(client)
-          void loadSessions(client, { reconcileActive: true })
+          void loadSessions(client)
           void loadConversations(client)
           void loadUserProfile(client)
         } else if (status === 'unauthorized') {
@@ -301,7 +310,7 @@ function App(): React.ReactElement {
         debugLog(`[WS resume] replayed=${status.replayed} complete=${status.complete} snapshot=${status.requiresSnapshot} duplicate=${status.duplicateEvents} reorder=${status.outOfOrderEvents}`)
         if (status.requiresSnapshot) {
           // 事件窗口过期或主端重启后，按现有权威快照恢复，不继续拼接不完整的事件流。
-          void loadSessions(client, { reconcileActive: true })
+          void loadSessions(client)
         }
       },
       onChatEvent: (evt) => handleChatEvent(evt),
@@ -347,7 +356,12 @@ function App(): React.ReactElement {
     } catch (e) { console.error('拉取渠道失败', e) }
   }, [setChannels, setChannelsLoaded, setAgentChannelIds, setAgentChannelId, setAgentModelId])
 
-  const loadSessions = useCallback(async (client: WsClient, options?: { reconcileActive?: boolean }) => {
+  const loadSessions = useCallback(async (client: WsClient) => {
+    // 只比较本次快照开始时已观察到的活动；请求期间的任意新 Agent event 或乐观新 run 都会使对应 session 的清理失效。
+    const snapshotActivityRevisions = new Map(sessionActivityRevisions)
+    const snapshotStartedAts = new Map(
+      Array.from(pocketStore.get(agentStreamingStatesAtom), ([sessionId, state]) => [sessionId, state.startedAt]),
+    )
     try {
       const data = await client.listSessions() as SessionInfo[]
       if (!Array.isArray(data)) return
@@ -400,22 +414,28 @@ function App(): React.ReactElement {
       const staleIds = new Set<string>()
       const missingActiveIds = new Set<string>()
       for (const [sid, st] of pocketStore.get(agentStreamingStatesAtom)) {
-        if (st?.running && !remoteActiveIds.has(sid)) staleIds.add(sid)
+        if (shouldClearInactiveAgentStreamState(
+          st,
+          remoteActiveIds.has(sid),
+          snapshotActivityRevisions.get(sid) ?? 0,
+          sessionActivityRevisions.get(sid) ?? 0,
+          snapshotStartedAts.get(sid),
+        )) {
+          staleIds.add(sid)
+        }
       }
       // 断线期间 Pocket 会丢掉 agent_event；重连后的会话列表是主端的权威 active 快照。
-      // 若远端仍 active 而本地没有 running，占位恢复 Agent Running，避免完成事件/流式首帧丢失后永久变成空闲。
-      if (options?.reconcileActive) {
-        for (const sid of remoteActiveIds) {
-          const state = pocketStore.get(agentStreamingStatesAtom).get(sid)
-          if (!state?.running && !state?.backgroundWaiting) missingActiveIds.add(sid)
-        }
+      // 若远端仍 active 而本地没有用户可见的活跃态，占位恢复 Agent Running，避免完成事件/流式首帧丢失后永久变成空闲。
+      for (const sid of remoteActiveIds) {
+        const state = pocketStore.get(agentStreamingStatesAtom).get(sid)
+        if (!state?.running && !state?.backgroundWaiting) missingActiveIds.add(sid)
       }
       if (staleIds.size > 0 || missingActiveIds.size > 0) {
         pocketStore.set(agentStreamingStatesAtom, (prev) => {
           const map = new Map(prev)
           for (const sid of staleIds) {
             const cur = map.get(sid)
-            if (cur?.running) map.set(sid, { ...cur, running: false, stopping: false })
+            if (cur) map.set(sid, { ...cur, running: false, backgroundWaiting: false, stopping: false })
           }
           for (const sid of missingActiveIds) {
             const cur = map.get(sid)
@@ -570,6 +590,7 @@ function App(): React.ReactElement {
   }, [])
 
   const handleAgentEvent = useCallback((client: WsClient, evt: AgentWorkflowEvent) => {
+    markSessionActivity(evt.sessionId)
     emitPocketAgentStreamEvent({ sessionId: evt.sessionId, payload: evt.payload as AgentStreamPayload })
     const p = evt.payload as { kind?: string; event?: { type?: string; stoppedByUser?: boolean; startedAt?: number; resultSubtype?: string; resultErrors?: string[]; backgroundTasksPending?: boolean } } | null
     // run_completed（remote-service 在 orchestrator onComplete 时广播，携带真实完成元数据）
