@@ -1,14 +1,14 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import { resolve } from 'path'
-import pkg from './package.json' with { type: 'json' }
+import releaseConfig from './pocket-app/release.config.json' with { type: 'json' }
 
 export default defineConfig({
   plugins: [react()],
   // __APP_VERSION__ 在 AboutSettings 模块顶层被引用（const APP_VERSION = __APP_VERSION__），
-  // 不 define 会在设置面板模块求值时抛 ReferenceError。版本来源：Profer-pocket 自身 package.json。
+  // 不 define 会在设置面板模块求值时抛 ReferenceError。版本来源：Pocket release config。
   define: {
-    __APP_VERSION__: JSON.stringify(pkg.version),
+    __APP_VERSION__: JSON.stringify(releaseConfig.versionName),
   },
   // root 指向 pocket 目录：单入口 html 相对 root 为 index.html，
   // 构建时直接输出 dist/index.html（匹配 Capacitor sync-web 的 webDir 入口）；

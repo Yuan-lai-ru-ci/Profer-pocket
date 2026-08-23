@@ -33,3 +33,9 @@ pocket-app/node_modules
 pocket-app/web
 
 pocket-app/releases
+
+# Pocket release signing secrets
+pocket-app/android/app/signing.properties
+pocket-app/android/app/*.jks
+pocket-app/android/app/*.keystore
+pocket-app/android/app/*.p12

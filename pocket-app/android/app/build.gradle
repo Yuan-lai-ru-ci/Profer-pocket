@@ -1,34 +1,98 @@
 apply plugin: 'com.android.application'
 
+import groovy.json.JsonSlurper
+import java.util.Properties
+
+def releaseConfig = new JsonSlurper().parse(file('../../release.config.json'))
+
+// Release signing is deliberately fail-closed. Debug keeps the Android default debug key.
+def releaseSigning = [:]
+def signingProperties = file('signing.properties')
+if (signingProperties.exists()) {
+    def properties = new Properties()
+    signingProperties.withInputStream { properties.load(it) }
+    releaseSigning.storeFile = properties.getProperty('storeFile')
+    releaseSigning.storePassword = properties.getProperty('storePassword')
+    releaseSigning.keyAlias = properties.getProperty('keyAlias')
+    releaseSigning.keyPassword = properties.getProperty('keyPassword')
+}
+
+def releaseSigningEnv = [
+    storeFile: System.getenv('POCKET_RELEASE_KEYSTORE_PATH'),
+    storePassword: System.getenv('POCKET_RELEASE_STORE_PASSWORD'),
+    keyAlias: System.getenv('POCKET_RELEASE_KEY_ALIAS'),
+    keyPassword: System.getenv('POCKET_RELEASE_KEY_PASSWORD'),
+]
+releaseSigningEnv.each { key, value ->
+    if (value != null && !value.trim().isEmpty()) {
+        releaseSigning[key] = value
+    }
+}
+
+def missingReleaseSigning = ['storeFile', 'storePassword', 'keyAlias', 'keyPassword'].findAll {
+    def value = releaseSigning[it]
+    value == null || value.toString().trim().isEmpty()
+}
+if (missingReleaseSigning) {
+    logger.lifecycle("Pocket release signing is not configured; release packaging will fail closed (missing: ${missingReleaseSigning.join(', ')})")
+}
+
+def requireReleaseSigning = {
+    if (missingReleaseSigning) {
+        throw new GradleException(
+            "Pocket release signing is required. Configure POCKET_RELEASE_KEYSTORE_PATH, " +
+            "POCKET_RELEASE_STORE_PASSWORD, POCKET_RELEASE_KEY_ALIAS, POCKET_RELEASE_KEY_PASSWORD " +
+            "or pocket-app/android/app/signing.properties. Missing: ${missingReleaseSigning.join(', ')}"
+        )
+    }
+}
+
 android {
     namespace "com.profer.pocket"
     compileSdk rootProject.ext.compileSdkVersion
+    signingConfigs {
+        production {
+            storeFile releaseSigning.storeFile ? file(releaseSigning.storeFile) : file('missing-production-keystore.jks')
+            storePassword releaseSigning.storePassword ?: 'missing-production-store-password'
+            keyAlias releaseSigning.keyAlias ?: 'missing-production-key-alias'
+            keyPassword releaseSigning.keyPassword ?: 'missing-production-key-password'
+        }
+    }
     defaultConfig {
         applicationId "com.profer.pocket.dev"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 20
-        versionName "0.1.10-dev"
+        versionCode releaseConfig.versionCode + 1000
+        versionName "${releaseConfig.versionName}-dev"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
-             // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
-             // Default: https://android.googlesource.com/platform/frameworks/base/+/282e181b58cf72b6ca770dc7ca5f91f135444502/tools/aapt/AaptAssets.cpp#61
+            // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
             ignoreAssetsPattern '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
         }
     }
     buildTypes {
         release {
             minifyEnabled false
-            // 当前未配置生产 keystore，先用 Android debug keystore 生成可安装的 release variant。
-            // 接入正式签名时仅替换此 signingConfig，不改变 build-apk.mjs 的构建流程。
-            signingConfig signingConfigs.debug
+            signingConfig signingConfigs.production
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
         }
     }
 }
 
+// Fail during configuration before a requested release task can package an unsigned APK.
+def releaseTaskRequested = gradle.startParameter.taskNames.any { it.toLowerCase().contains('release') }
+if (releaseTaskRequested) {
+    requireReleaseSigning()
+}
+
+tasks.configureEach { task ->
+    if (task.name.toLowerCase().contains('release')) {
+        task.doFirst { requireReleaseSigning() }
+    }
+}
+
 repositories {
-    flatDir{
+    flatDir {
         dirs '../capacitor-cordova-android-plugins/src/main/libs', 'libs'
     }
 }
@@ -38,7 +102,6 @@ dependencies {
     implementation "androidx.appcompat:appcompat:$androidxAppCompatVersion"
     implementation "androidx.coordinatorlayout:coordinatorlayout:$androidxCoordinatorLayoutVersion"
     implementation "androidx.core:core-splashscreen:$coreSplashScreenVersion"
-    // 后台消息通道：原生 okhttp WebSocket 长连接（mavenCentral，阿里云镜像已配）
     implementation 'com.squareup.okhttp3:okhttp:4.12.0'
     implementation project(':capacitor-android')
     testImplementation "junit:junit:$junitVersion"
@@ -55,5 +118,5 @@ try {
         apply plugin: 'com.google.gms.google-services'
     }
 } catch(Exception e) {
-    logger.info("google-services.json not found, google-services plugin not applied. Push Notifications won't work")
+    logger.info('google-services.json not found, google-services plugin not applied. Push Notifications will not work')
 }
