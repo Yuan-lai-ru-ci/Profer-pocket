@@ -1,0 +1,6 @@
+# Copy to signing.properties locally, or provide all four POCKET_RELEASE_* environment variables.
+# Never commit real credentials or a production keystore.
+storeFile=C:/secure/path/profer-pocket-release.jks
+storePassword=REPLACE_ME
+keyAlias=REPLACE_ME
+keyPassword=REPLACE_ME

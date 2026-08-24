@@ -36,6 +36,8 @@ import { agentSessionsAtom, agentWorkspacesAtom, currentAgentSessionIdAtom, curr
 import { appModeAtom } from '@/atoms/app-mode'
 import { initPocketUiScale } from '@/atoms/ui-scale'
 import { initPocketScreenOrientation } from '@/lib/pocket-screen-orientation'
+import { checkPocketUpdate, initializePocketUpdater } from '@/atoms/pocket-updater'
+import { PocketUpdateCard } from '@/components/pocket/PocketUpdateCard'
 import { getPocketPendingNotification, normalizeWsUrl, setPocketKeepaliveForeground, startPocketKeepalive, stopPocketKeepalive, getPocketKeepaliveLogs } from '@/lib/pocket-keepalive'
 import { initDebugHud, debugLog } from '@/lib/debug-hud'
 import { UiScaleContainer } from '@/components/UiScaleContainer'
@@ -43,7 +45,7 @@ import { FilePreviewContainer } from '@/components/file-browser/FilePreviewConta
 import { Button } from '@/components/ui/button'
 import { AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogFooter, AlertDialogTitle, AlertDialogDescription, AlertDialogAction, AlertDialogCancel } from '@/components/ui/alert-dialog'
 import { TooltipProvider, Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip'
-import { Menu, Plus, Palette, Link, Loader2, Bell, RefreshCw } from 'lucide-react'
+import { Menu, Plus, Palette, Link, Loader2, Bell, RefreshCw, Download } from 'lucide-react'
 import { type AgentStreamPayload, type AskUserRequest, type ExitPlanModeRequest, type PermissionRequest } from '@profer/shared'
 import { pocketBackgroundMessagingAtom, pocketConnectionStatusAtom, pocketNotifyCompleteAtom, pocketUnbindRequestAtom } from '@/atoms/pocket-settings'
 
@@ -104,13 +106,18 @@ initPocketUiScale(pocketStore)
 // 此处兜底同步 UI；浏览器环境安全降级。
 void initPocketScreenOrientation(pocketStore)
 
-// ===== 平板设置系统：直接搬运桌面 SettingsDialog，tab 白名单只保留平板可用的「连接 / 外观 / 通知」=====
+// 更新检查独立于 WS 连接与界面渲染：先恢复原生已校验缓存，再异步请求 GitHub Releases。
+// 不等待此 Promise，更新失败不会阻塞连接、聊天或主界面。
+void initializePocketUpdater(pocketStore).then((available) => { if (available) void checkPocketUpdate(pocketStore) })
+
+// ===== 平板设置系统：仅暴露本设备可用的设置页面 =====
 // （连接/通知为本设备本地能力：localStorage + WS 状态，不依赖 Electron IPC；外观全部本地持久化。
 // 其余 tab 大量依赖 electronAPI 能力，在平板上会显示空壳/伪状态，故不暴露）
 const POCKET_SETTINGS_TABS: SettingsTabItem[] = [
   { id: 'connection', label: '连接', icon: <Link size={16} /> },
   { id: 'appearance', label: '外观设置', icon: <Palette size={16} /> },
   { id: 'notifications', label: '通知', icon: <Bell size={16} /> },
+  { id: 'updates', label: '软件更新', icon: <Download size={16} /> },
 ]
 
 // ===== Agent 完成提醒音（Web Audio API 合成，零插件依赖，浏览器与 Capacitor WebView 通用）=====
@@ -196,6 +203,7 @@ function PocketApp(): React.ReactElement {
         {/* 设置入口：LeftSidebar 底部头像/设置按钮置位 settingsOpenAtom，此处渲染原版 Dialog；
             Portal 到 body，不随缩放容器变换 */}
         <SettingsDialog tabsOverride={POCKET_SETTINGS_TABS} />
+        <PocketUpdateCard store={pocketStore} />
         {/* 文件预览弹窗容器：监听 profer:file-preview 事件（Pocket 端 chip 点击派发），
             弹 FilePreviewDialog 预览电脑端文件（走 WS 读取）。Pocket 无 tab 渲染系统，
             预览只能以弹窗形式呈现。 */}

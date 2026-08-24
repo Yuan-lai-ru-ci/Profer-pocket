@@ -66,6 +66,7 @@ import { PocketNotificationSettings } from "./PocketNotificationSettings";
 import { OpenApiSettings } from "./OpenApiSettings";
 import { ProxySettings } from "./ProxySettings";
 import { DevicesSettings } from "./DevicesSettings";
+import { PocketUpdateSettings } from './PocketUpdateSettings'
 
 /** 设置 Tab 定义 */
 export interface SettingsTabItem {
@@ -153,6 +154,8 @@ function renderTabContent(tab: SettingsTab, pocketMode = false): React.ReactElem
       return <PocketConnectionSettings />;
     case "notifications":
       return <PocketNotificationSettings />;
+    case "updates":
+      return <PocketUpdateSettings />;
     case "about":
       return <AboutSettings />;
     case "bots":
