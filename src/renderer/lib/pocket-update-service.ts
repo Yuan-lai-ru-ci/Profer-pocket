@@ -1,5 +1,7 @@
 /** GitHub Releases protocol parser for Pocket APK updates. No file or installer work belongs here. */
 
+import { fetchPocketGithubJson, type PocketGithubJsonFetcher } from './pocket-updater'
+
 export const POCKET_RELEASES_API = 'https://api.github.com/repos/Yuan-lai-ru-ci/Profer-pocket/releases/latest'
 
 export interface PocketReleaseAsset { name: string; browser_download_url: string }
@@ -30,6 +32,7 @@ function httpsGithubApiUrl(value: string): boolean {
   try {
     const url = new URL(value)
     return url.protocol === 'https:' && url.hostname === 'api.github.com' &&
+      url.pathname === '/repos/Yuan-lai-ru-ci/Profer-pocket/releases/latest' && !url.search && !url.hash &&
       !url.username && !url.password && (url.port === '' || url.port === '443')
   } catch { return false }
 }
@@ -68,7 +71,7 @@ export function isPocketUpdateAvailable(currentVersionCode: number, update: Pock
   return Number.isInteger(currentVersionCode) && currentVersionCode > 0 && update.versionCode > currentVersionCode
 }
 
-async function responseJson(response: Response, label: string): Promise<unknown> {
+async function responseJson(response: Pick<Response, 'ok' | 'status' | 'json'>, label: string): Promise<unknown> {
   if (!response.ok) throw new Error(`${label}失败（HTTP ${response.status}）`)
   try { return await response.json() } catch { throw new Error(`${label}返回了无法读取的数据`) }
 }
@@ -76,7 +79,7 @@ async function responseJson(response: Response, label: string): Promise<unknown>
 export const POCKET_RELEASE_REQUEST_TIMEOUT_MS = 15_000
 
 async function responseJsonWithTimeout(
-  fetcher: typeof fetch,
+  fetcher: PocketGithubJsonFetcher,
   url: string,
   init: RequestInit,
   label: string,
@@ -98,7 +101,7 @@ async function responseJsonWithTimeout(
 }
 
 /** Fetches exactly the latest official GitHub release, then its declared manifest asset. */
-export async function fetchLatestPocketRelease(fetcher: typeof fetch = fetch, timeoutMs = POCKET_RELEASE_REQUEST_TIMEOUT_MS): Promise<PocketReleaseUpdate> {
+export async function fetchLatestPocketRelease(fetcher: PocketGithubJsonFetcher = fetchPocketGithubJson, timeoutMs = POCKET_RELEASE_REQUEST_TIMEOUT_MS): Promise<PocketReleaseUpdate> {
   let release: PocketReleaseResponse
   try {
     release = await responseJsonWithTimeout(fetcher, POCKET_RELEASES_API, { headers: { Accept: 'application/vnd.github+json' } }, '获取 GitHub Release', timeoutMs, httpsGithubApiUrl) as PocketReleaseResponse
