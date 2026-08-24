@@ -9,6 +9,7 @@ export interface PocketDownloadProgress { percent: number; transferred: number; 
 type PluginListener = { remove: () => void }
 type PocketUpdaterPlugin = {
   getCurrentVersion?: () => Promise<PocketNativeVersion>
+  fetchGithubJson?: (options: { url: string }) => Promise<{ json?: unknown }>
   getDownloadedUpdate?: () => Promise<RawDownloadedPocketUpdate | undefined | null>
   downloadUpdate?: (options: { url: string; sha256: string; versionCode: number; versionName: string }) => Promise<void>
   installDownloadedUpdate?: () => Promise<void>
@@ -25,6 +26,29 @@ function plugin(): PocketUpdaterPlugin | undefined {
 }
 
 function unavailable(): Error { return new Error('当前环境不支持 APK 更新，请在 Android 应用内操作。') }
+
+export interface PocketGithubJsonResponse { ok: boolean; status: number; url?: string; json: () => Promise<unknown> }
+export type PocketGithubJsonFetcher = (url: string, init: RequestInit) => Promise<PocketGithubJsonResponse>
+
+/** Parses the explicit native envelope instead of trusting arbitrary Capacitor values. */
+export function parsePocketGithubJsonPayload(payload: { json?: unknown } | undefined | null): unknown {
+  if (!payload || typeof payload.json !== 'string') throw new Error('GitHub 更新信息返回了无法读取的数据')
+  try { return JSON.parse(payload.json) as unknown } catch { throw new Error('GitHub 更新信息返回了无法读取的数据') }
+}
+
+/**
+ * Uses Android networking when the current native shell exposes it: GitHub rejects WebView REST
+ * requests without User-Agent. Browser previews and old shells intentionally retain standard fetch.
+ */
+export const fetchPocketGithubJson: PocketGithubJsonFetcher = async (url, init) => {
+  const native = plugin()?.fetchGithubJson
+  if (native) {
+    const payload = await native({ url })
+    return { ok: true, status: 200, json: async () => parsePocketGithubJsonPayload(payload) }
+  }
+  const response = await fetch(url, init)
+  return response
+}
 
 export async function getPocketNativeVersion(): Promise<PocketNativeVersion> {
   const value = await plugin()?.getCurrentVersion?.()

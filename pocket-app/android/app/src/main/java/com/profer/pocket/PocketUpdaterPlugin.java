@@ -17,12 +17,14 @@ import com.getcapacitor.PluginMethod;
 import com.getcapacitor.annotation.CapacitorPlugin;
 
 import java.io.BufferedInputStream;
+import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.net.HttpURLConnection;
 import java.net.URL;
+import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.Locale;
@@ -48,9 +50,12 @@ public class PocketUpdaterPlugin extends Plugin {
     private static final String TEMP_FILE_NAME = "pocket-update.apk.part";
     private static final String APK_MIME_TYPE = "application/vnd.android.package-archive";
     private static final int BUFFER_SIZE = 32 * 1024;
+    private static final String GITHUB_API_HOST = "api.github.com";
     private static final String GITHUB_HOST = "github.com";
     private static final String GITHUB_OBJECTS_HOST = "objects.githubusercontent.com";
     private static final String GITHUB_RELEASE_ASSETS_HOST = "release-assets.githubusercontent.com";
+    private static final String LATEST_RELEASE_PATH = "/repos/Yuan-lai-ru-ci/Profer-pocket/releases/latest";
+    private static final int GITHUB_JSON_MAX_BYTES = 2 * 1024 * 1024;
 
     private final ExecutorService worker = Executors.newSingleThreadExecutor();
 
@@ -117,6 +122,38 @@ public class PocketUpdaterPlugin extends Plugin {
 
         final DownloadRequest request = new DownloadRequest(url, sha256, versionCode, versionName.trim());
         submitWorker(call, () -> downloadAndVerify(call, request));
+    }
+
+    /**
+     * Fetches the Release API response or the manifest asset through Android networking. WebView
+     * requests to GitHub REST without User-Agent receive HTTP 403, so this bridge owns that header.
+     */
+    @PluginMethod
+    public void fetchGithubJson(PluginCall call) {
+        final String url = call.getString("url");
+        if (!isTrustedGithubJsonUrl(url)) {
+            call.reject("更新信息地址必须是受信任的 GitHub Release 或 asset HTTPS 链接");
+            return;
+        }
+        submitWorker(call, () -> {
+            HttpURLConnection connection = null;
+            try {
+                connection = openGithubJsonConnection(url);
+                int responseCode = connection.getResponseCode();
+                if (responseCode < 200 || responseCode >= 300) {
+                    throw new IOException("GitHub 返回错误（HTTP " + responseCode + "）");
+                }
+                JSObject result = new JSObject();
+                result.put("json", readUtf8(connection));
+                call.resolve(result);
+            } catch (IOException error) {
+                call.reject("获取 GitHub 更新信息失败：" + readableNetworkError(error), error);
+            } catch (Exception error) {
+                call.reject("获取 GitHub 更新信息时发生错误，请稍后重试", error);
+            } finally {
+                if (connection != null) connection.disconnect();
+            }
+        });
     }
 
     @PluginMethod
@@ -259,6 +296,7 @@ public class PocketUpdaterPlugin extends Plugin {
         connection.setConnectTimeout(20_000);
         connection.setReadTimeout(30_000);
         connection.setInstanceFollowRedirects(true);
+        connection.setRequestProperty("User-Agent", githubUserAgent());
         connection.setRequestProperty("Accept", APK_MIME_TYPE + ", application/octet-stream");
         connection.connect();
         if (!isTrustedGithubUrl(connection.getURL().toString())) {
@@ -266,6 +304,52 @@ public class PocketUpdaterPlugin extends Plugin {
             throw new IOException("下载跳转到了不受信任的地址");
         }
         return connection;
+    }
+
+    private HttpURLConnection openGithubJsonConnection(String rawUrl) throws IOException {
+        URL url = new URL(rawUrl);
+        if (!isTrustedGithubJsonUrl(rawUrl)) throw new IOException("更新信息地址不受信任");
+        HttpURLConnection connection = (HttpURLConnection) url.openConnection();
+        connection.setConnectTimeout(20_000);
+        connection.setReadTimeout(30_000);
+        connection.setInstanceFollowRedirects(true);
+        connection.setRequestProperty("User-Agent", githubUserAgent());
+        connection.setRequestProperty("Accept", "application/vnd.github+json, application/json");
+        connection.connect();
+        if (!isTrustedGithubJsonUrl(connection.getURL().toString())) {
+            connection.disconnect();
+            throw new IOException("更新信息跳转到了不受信任的地址");
+        }
+        return connection;
+    }
+
+    private String githubUserAgent() {
+        try {
+            PackageInfo packageInfo = getContext().getPackageManager()
+                    .getPackageInfo(getContext().getPackageName(), 0);
+            String versionName = packageInfo.versionName;
+            if (versionName != null && !versionName.trim().isEmpty()) {
+                return "Profer-Pocket/" + versionName.trim().replaceAll("[\\r\\n]", "");
+            }
+        } catch (PackageManager.NameNotFoundException ignored) {
+            // A stable fallback preserves GitHub's required User-Agent contract.
+        }
+        return "Profer-Pocket/unknown";
+    }
+
+    private static String readUtf8(HttpURLConnection connection) throws IOException {
+        try (BufferedInputStream input = new BufferedInputStream(connection.getInputStream());
+             ByteArrayOutputStream output = new ByteArrayOutputStream()) {
+            byte[] buffer = new byte[BUFFER_SIZE];
+            int count;
+            int total = 0;
+            while ((count = input.read(buffer)) != -1) {
+                total += count;
+                if (total > GITHUB_JSON_MAX_BYTES) throw new IOException("GitHub 更新信息过大");
+                output.write(buffer, 0, count);
+            }
+            return output.toString(StandardCharsets.UTF_8.name());
+        }
     }
 
     private boolean submitWorker(PluginCall call, Runnable task) {
@@ -387,17 +471,42 @@ public class PocketUpdaterPlugin extends Plugin {
     }
 
     private static boolean isTrustedGithubUrl(String value) {
+        return isTrustedGithubAssetUrl(value);
+    }
+
+    private static boolean isTrustedGithubJsonUrl(String value) {
+        return isLatestGithubApiUrl(value) || isTrustedGithubAssetUrl(value);
+    }
+
+    private static boolean isTrustedGithubAssetUrl(String value) {
         try {
             URL url = new URL(value);
-            String host = url.getHost().toLowerCase(Locale.ROOT);
-            int port = url.getPort();
-            return "https".equalsIgnoreCase(url.getProtocol())
-                    && url.getUserInfo() == null
-                    && (port == -1 || port == 443)
-                    && (GITHUB_HOST.equals(host) || GITHUB_OBJECTS_HOST.equals(host) || GITHUB_RELEASE_ASSETS_HOST.equals(host));
+            return isTrustedHttpsGithubUrl(url)
+                    && (GITHUB_HOST.equals(url.getHost().toLowerCase(Locale.ROOT))
+                    || GITHUB_OBJECTS_HOST.equals(url.getHost().toLowerCase(Locale.ROOT))
+                    || GITHUB_RELEASE_ASSETS_HOST.equals(url.getHost().toLowerCase(Locale.ROOT)));
         } catch (Exception error) {
             return false;
         }
+    }
+
+    private static boolean isLatestGithubApiUrl(String value) {
+        try {
+            URL url = new URL(value);
+            return isTrustedHttpsGithubUrl(url)
+                    && GITHUB_API_HOST.equals(url.getHost().toLowerCase(Locale.ROOT))
+                    && LATEST_RELEASE_PATH.equals(url.getPath())
+                    && (url.getQuery() == null || url.getQuery().isEmpty());
+        } catch (Exception error) {
+            return false;
+        }
+    }
+
+    private static boolean isTrustedHttpsGithubUrl(URL url) {
+        int port = url.getPort();
+        return "https".equalsIgnoreCase(url.getProtocol())
+                && url.getUserInfo() == null
+                && (port == -1 || port == 443);
     }
 
     private static String sha256ForFile(File file) throws IOException, NoSuchAlgorithmException {
