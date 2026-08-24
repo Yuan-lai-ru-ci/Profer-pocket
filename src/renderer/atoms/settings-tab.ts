@@ -20,11 +20,12 @@
  * - team: 团队管理
  * - about: 关于（含意见反馈）
  * - connection / notifications: 平板连接 / 平板通知（仅平板白名单使用）
+ * - updates: 平板 GitHub Releases APK 更新（仅平板白名单使用）
  */
 
 import { atom } from 'jotai'
 
-export type SettingsTab = 'general' | 'channels' | 'appearance' | 'about' | 'agent' | 'prompts' | 'tools' | 'bots' | 'tutorial' | 'shortcuts' | 'voice-input' | 'team' | 'credits' | 'subscription' | 'openapi' | 'data-management' | 'proxy' | 'devices' | 'connection' | 'notifications'
+export type SettingsTab = 'general' | 'channels' | 'appearance' | 'about' | 'agent' | 'prompts' | 'tools' | 'bots' | 'tutorial' | 'shortcuts' | 'voice-input' | 'team' | 'credits' | 'subscription' | 'openapi' | 'data-management' | 'proxy' | 'devices' | 'connection' | 'notifications' | 'updates'
 
 /** 当前设置标签页（不持久化，每次打开设置默认显示通用设置） */
 export const settingsTabAtom = atom<SettingsTab>('general')

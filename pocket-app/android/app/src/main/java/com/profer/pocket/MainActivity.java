@@ -15,6 +15,8 @@ public class MainActivity extends BridgeActivity {
         this.registerPlugin(ScreenOrientationPlugin.class);
         // 注册后台消息通道插件（原生前台服务 + 系统通知 + 通知点击导航）
         this.registerPlugin(PocketMessengerPlugin.class);
+        // 注册 APK 更新插件（后台下载、SHA-256 校验与系统安装器桥接）。
+        this.registerPlugin(PocketUpdaterPlugin.class);
         super.onCreate(savedInstanceState);
         // 冷启动由通知点击拉起时，消费 intent 中的导航信息（前端轮询 getPendingNotification 读取）
         consumeNotificationIntent(getIntent());
