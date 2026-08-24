@@ -71,22 +71,29 @@ export function getDelegatedChildStatus(
   agentIndicatorMap: Map<string, SessionIndicatorStatus>,
 ): SessionIndicatorStatus {
   const status = agentIndicatorMap.get(session.id)
-  if (status) return status
-  return session.delegationStatus === 'running' ? 'running' : 'idle'
+  // 实时 blocked/running 应立即反映；但子会话本轮 stream 结束时可能先产生
+  // completed 指示、后更新 delegationStatus。只要持久化委派仍是 running，
+  // 就不能让这段时序窗口把父会话误显示为已完成。
+  if (status === 'blocked' || status === 'running') return status
+  if (session.delegationStatus === 'running') return 'running'
+  return status ?? 'idle'
 }
 
 export function getSessionTreeStatus(
   item: AgentSessionTreeItem,
   agentIndicatorMap: Map<string, SessionIndicatorStatus>,
 ): SessionIndicatorStatus {
-  const statuses = [
-    agentIndicatorMap.get(item.session.id) ?? 'idle',
-    ...item.childSessions.map((session) => getDelegatedChildStatus(session, agentIndicatorMap)),
-  ]
+  const parentStatus = agentIndicatorMap.get(item.session.id) ?? 'idle'
+  // 子会话只向上聚合 blocked/running；完成未查看属于 child 自身结果，
+  // 不能让父会话被误标为已完成。
+  const childActiveStatuses = item.childSessions
+    .map((session) => getDelegatedChildStatus(session, agentIndicatorMap))
+    .filter((status): status is 'blocked' | 'running' =>
+      status === 'blocked' || status === 'running')
 
-  if (statuses.includes('blocked')) return 'blocked'
-  if (statuses.includes('running')) return 'running'
-  if (statuses.includes('completed')) return 'completed'
+  if (parentStatus === 'blocked' || childActiveStatuses.includes('blocked')) return 'blocked'
+  if (parentStatus === 'running' || childActiveStatuses.includes('running')) return 'running'
+  if (parentStatus === 'completed') return 'completed'
   return 'idle'
 }
 
