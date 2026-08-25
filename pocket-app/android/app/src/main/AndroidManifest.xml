@@ -45,6 +45,8 @@
     <!-- Permissions -->
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- 仅为调用系统 Package Installer；实际安装仍由用户在系统界面确认。 -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <!-- 通知权限（Android 13+ 运行时权限；前台服务在无权限时仍可保活，仅通知不可见） -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <!-- 前台服务权限 + dataSync 类型（Android 14+ 强制要求声明） -->

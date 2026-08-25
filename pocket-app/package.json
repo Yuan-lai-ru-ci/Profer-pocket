@@ -1,13 +1,15 @@
 {
   "name": "profer-pocket",
-  "version": "0.1.10",
+  "version": "0.1.12",
   "description": "Profer-pocket 移动端 Capacitor 壳（装载独立瘦客户端的静态产物）",
   "private": true,
   "type": "module",
   "scripts": {
     "sync:web": "node scripts/sync-web.mjs",
     "build": "node scripts/sync-web.mjs && npx cap sync android",
-    "apk": "node scripts/build-apk.mjs"
+    "apk": "node scripts/build-apk.mjs",
+    "release:test": "node --test scripts/release-utils.test.mjs",
+    "release:prepare": "node scripts/prepare-github-release.mjs"
   },
   "dependencies": {
     "@capacitor/android": "^7.0.0",
