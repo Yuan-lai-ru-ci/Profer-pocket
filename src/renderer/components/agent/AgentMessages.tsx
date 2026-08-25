@@ -143,6 +143,8 @@ interface AgentMessagesProps {
   persistedSDKMessages?: SDKMessage[]
   streaming: boolean
   streamState?: AgentStreamState
+  /** 仍在运行中的直接协作子会话数；父会话本轮结束后展示等待态。 */
+  runningDelegationCount?: number
   /** Phase 2: 实时 SDKMessage 列表（流式期间累积） */
   liveMessages?: SDKMessage[]
   /** 当前会话工作目录，用于解析相对文件路径 */
@@ -539,7 +541,7 @@ function AgentRunningIndicator({ startedAt, backgroundWaiting = false }: { start
   )
 }
 
-export function AgentMessages({ sessionId, sessionModelId, messagesLoaded, persistedSDKMessages, streaming, streamState, liveMessages, sessionPath, attachedDirs, stoppedByUser, onRetry, onRetryInNewSession, onFork, onRewind, onCompact, pocketMode = false, onLoadEarlierHistory, historyMoreAvailable, historyLoadingEarlier }: AgentMessagesProps): React.ReactElement {
+export function AgentMessages({ sessionId, sessionModelId, messagesLoaded, persistedSDKMessages, streaming, streamState, runningDelegationCount = 0, liveMessages, sessionPath, attachedDirs, stoppedByUser, onRetry, onRetryInNewSession, onFork, onRewind, onCompact, pocketMode = false, onLoadEarlierHistory, historyMoreAvailable, historyLoadingEarlier }: AgentMessagesProps): React.ReactElement {
   const userProfile = useAtomValue(userProfileAtom)
   const setMinimapCache = useSetAtom(tabMinimapCacheAtom)
   const channels = useAtomValue(channelsAtom)
@@ -575,7 +577,7 @@ export function AgentMessages({ sessionId, sessionModelId, messagesLoaded, persi
       return
     }
 
-    if ((!persistedSDKMessages || persistedSDKMessages.length === 0) && !streaming) {
+    if ((!persistedSDKMessages || persistedSDKMessages.length === 0) && !streaming && runningDelegationCount === 0) {
       setSkipFadeIn(true)
       setReady(true)
       return
@@ -585,7 +587,7 @@ export function AgentMessages({ sessionId, sessionModelId, messagesLoaded, persi
       if (!cancelled) setReady(true)
     })
     return () => { cancelled = true }
-  }, [streaming, liveMessages, persistedSDKMessages, messagesLoaded])
+  }, [streaming, liveMessages, persistedSDKMessages, messagesLoaded, runningDelegationCount])
 
   // 从 streamState 属性中计算派生值
   const streamingContent = streamState?.content ?? ''
@@ -790,7 +792,7 @@ export function AgentMessages({ sessionId, sessionModelId, messagesLoaded, persi
             </button>
           </div>
         )}
-        {!hasContent && !agentStreamActive ? (
+        {!hasContent && !agentStreamActive && runningDelegationCount === 0 ? (
           <EmptyState />
         ) : (
           <>
@@ -802,7 +804,7 @@ export function AgentMessages({ sessionId, sessionModelId, messagesLoaded, persi
               const shouldDisableActions = isLive && !isErrorGroup
               // 会话活跃态（streaming 或 backgroundWaiting）时禁用压缩/重试操作，
               // 防止用户误操作触发与正在运行的 agent session 冲突
-              const isSessionActive = agentStreamActive
+              const isSessionActive = agentStreamActive || runningDelegationCount > 0
               // 仅在最后一个 assistant-turn 上显示"已被用户中断" badge
               const isLastAssistantTurn = !streaming && stoppedByUser
                 && group.type === 'assistant-turn'
@@ -880,6 +882,18 @@ export function AgentMessages({ sessionId, sessionModelId, messagesLoaded, persi
             {streamState?.backgroundWaiting && !hasLiveAssistantContent && !suppressAgentRunning && (
               <div className="pl-[56px] min-h-[28px]">
                 <AgentRunningIndicator startedAt={startedAt} backgroundWaiting />
+              </div>
+            )}
+
+            {/* 父会话本轮已结束，但协作子会话仍在远端运行；主端收齐结果后会自动续跑。 */}
+            {!streaming && runningDelegationCount > 0 && !suppressAgentRunning && !streamState?.isCompacting && (
+              <div className="pl-[56px] min-h-[28px]">
+                <div className="flex items-center gap-2">
+                  <Spinner size="sm" className="text-blue-500/70" />
+                  <span className="text-[13px] font-light text-muted-foreground/70 tabular-nums">
+                    本轮已答复，仍在等待 {runningDelegationCount} 个协作子会话；完成后将自动继续。
+                  </span>
+                </div>
               </div>
             )}
 

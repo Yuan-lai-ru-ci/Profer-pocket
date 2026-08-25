@@ -23,6 +23,7 @@ import { KnowledgeReferencePicker } from '@/components/knowledge-base/KnowledgeR
 import { agentKnowledgePreviewMapAtom } from '@/atoms/knowledge-preview-atoms'
 // previewPanelOpenMapAtom 由下方现有 atoms import 统一提供。
 import { AgentMessages } from './AgentMessages'
+import { getDirectDelegatedChildren } from '../app-shell/left-sidebar/session-tree'
 import { AgentHeader } from './AgentHeader'
 import { ContextUsageBadge } from './ContextUsageBadge'
 import { resolvePlanQuotaChannelId } from './context-usage-badge-channel'
@@ -674,6 +675,12 @@ export function AgentView({ sessionId, pocketMode = false, hideAgentHeader = fal
     [sessions, sessionId],
   )
   const hasSessionMeta = Boolean(sessionMeta)
+  // 父会话本轮空闲时，直接子会话仍在运行也要保留协作等待态。
+  const runningDelegationCount = React.useMemo(
+    () => getDirectDelegatedChildren(sessions, sessionId)
+      .filter((session) => session.delegationStatus === 'running').length,
+    [sessions, sessionId],
+  )
   // 正在运行或被 AskUser / 权限 / Plan 审批阻塞的会话，其当前 turn 是恢复现场的一部分。
   // 不能沿用普通历史会话的轻量尾页，否则冷启动先渲染消息尾部、稍后才单独出现横幅，
   // 导致用户看不到问题和 AskUser 前的执行过程。仅对当前打开的这类会话全量水合；
@@ -2877,6 +2884,7 @@ export function AgentView({ sessionId, pocketMode = false, hideAgentHeader = fal
           persistedSDKMessages={persistedSDKMessages}
           streaming={streaming}
           streamState={streamState}
+          runningDelegationCount={runningDelegationCount}
           liveMessages={liveMessages}
           sessionPath={sessionPath}
           attachedDirs={allAttachedDirs}
