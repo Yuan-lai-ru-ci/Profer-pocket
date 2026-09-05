@@ -13,6 +13,7 @@ import { useAtomValue } from 'jotai'
 import { currentAgentWorkspaceIdAtom } from '@/atoms/agent-atoms'
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip'
 import { formatLocalDateKey, toCalendarData, type WorkspaceHeatmapEntry } from '@/lib/heatmap-utils'
+import { getHeatmapScale } from '@/lib/heatmap-responsive'
 
 // ── 布局常量 ──────────────────────────────────────────────
 const CELL = 11                         // 格子尺寸 px
@@ -21,6 +22,11 @@ const STEP = CELL + GAP                 // 格子+间距
 const WEEKS = 26                        // 约半年
 const DAY_LABELS = ['一', '', '三', '', '五', '', '日']
 const MONTH_NAMES = ['1月','2月','3月','4月','5月','6月','7月','8月','9月','10月','11月','12月']
+
+// 热力图内容的正常布局宽度：星期标签、间距和 26 周网格。
+// 容器不足时只缩放这个整体，避免改变网格的宽高比例或引入横向滚动。
+const HEATMAP_CONTENT_WIDTH = 26 + 2 + 2 + WEEKS * CELL + (WEEKS - 1) * GAP
+
 
 // ── 色阶：用 Profer 的 --primary token，opacity 控制深浅 ──
 // 这样自动适配所有主题（forest-light=绿, ocean=蓝, slate=灰...）
@@ -114,6 +120,9 @@ export function UsageHeatmap({ workspaceId }: UsageHeatmapProps = {}): React.Rea
   const targetWorkspaceId = workspaceId !== undefined ? workspaceId : currentWorkspaceId
   const [entries, setEntries] = React.useState<WorkspaceHeatmapEntry[] | null>(null)
   const [loading, setLoading] = React.useState(true)
+  const heatmapContainerRef = React.useRef<HTMLDivElement>(null)
+  const [availableWidth, setAvailableWidth] = React.useState(0)
+  const heatmapScale = getHeatmapScale(availableWidth, HEATMAP_CONTENT_WIDTH)
 
   const refresh = React.useCallback(
     (opts?: { silent?: boolean }) => {
@@ -143,30 +152,64 @@ export function UsageHeatmap({ workspaceId }: UsageHeatmapProps = {}): React.Rea
     return () => window.clearInterval(timer)
   }, [refresh, targetWorkspaceId])
 
-  // ── 加载态 ──
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center min-h-[140px]">
-        <span className="text-[13px] text-muted-foreground/50">加载中...</span>
-      </div>
-    )
-  }
+  // 监听外层容器而不是 window.innerWidth：侧栏、分屏等布局变化也需要重新计算。
+  React.useLayoutEffect(() => {
+    const container = heatmapContainerRef.current
+    if (!container) return
 
-  // ── 无数据态 ──
-  if (!entries || entries.length === 0) {
-    return (
-      <div className="flex items-center justify-center min-h-[140px]">
-        <span className="text-[13px] text-muted-foreground/50">
-          开始你的第一个 Agent 会话，Token 消耗热力图将在这里显示
-        </span>
-      </div>
-    )
-  }
+    const updateWidth = (): void => {
+      // 根节点使用 px-1，clientWidth 包含两侧内边距，实际可用宽度需扣除 8px。
+      const nextWidth = Math.max(0, container.clientWidth - 8)
+      setAvailableWidth((previous) => (previous === nextWidth ? previous : nextWidth))
+    }
+    updateWidth()
 
+    if (typeof ResizeObserver === 'undefined') {
+      window.addEventListener('resize', updateWidth)
+      return () => window.removeEventListener('resize', updateWidth)
+    }
+
+    const observer = new ResizeObserver(updateWidth)
+    observer.observe(container)
+    return () => observer.disconnect()
+  }, [])
+
+  const scaledWidth = HEATMAP_CONTENT_WIDTH * heatmapScale
+  // 月份行 16px + 网格 95px + 图例（上边距 8px、内容 11px）。
+  const scaledHeight = 130 * heatmapScale
+
+  return (
+    <div ref={heatmapContainerRef} className="select-none w-full min-w-0 overflow-hidden px-1">
+      {loading || !entries || entries.length === 0 ? (
+        <div className="flex items-center justify-center min-h-[140px]">
+          <span className="text-[13px] text-muted-foreground/50">
+            {loading ? '加载中...' : '开始你的第一个 Agent 会话，Token 消耗热力图将在这里显示'}
+          </span>
+        </div>
+      ) : (
+        <div className="flex justify-center" style={{ width: '100%', height: scaledHeight }}>
+          <div className="shrink-0" style={{ width: scaledWidth, height: scaledHeight }}>
+            <div
+              style={{
+                width: HEATMAP_CONTENT_WIDTH,
+                transform: `scale(${heatmapScale})`,
+                transformOrigin: 'top left',
+              }}
+            >
+              <HeatmapGrid entries={entries} />
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function HeatmapGrid({ entries }: { entries: WorkspaceHeatmapEntry[] }): React.ReactElement {
   const { cells, monthLabels } = buildWeekGrid(entries)
 
   return (
-    <div className="select-none px-1">
+    <>
       {/* ── 月份标签行 ── */}
       <div className="relative mb-[2px] ml-7 h-[14px]">
         {monthLabels.map((ml) => (
@@ -195,7 +238,7 @@ export function UsageHeatmap({ workspaceId }: UsageHeatmapProps = {}): React.Rea
         </div>
 
         {/* ── 热力网格 ── */}
-        <div className="overflow-x-auto">
+        <div>
           <div
             className="grid"
             style={{
@@ -227,7 +270,7 @@ export function UsageHeatmap({ workspaceId }: UsageHeatmapProps = {}): React.Rea
       </div>
 
       {/* ── 图例 ── */}
-      <div className="flex items-center justify-end gap-1 mt-2 text-[10px] text-muted-foreground/60">
+      <div className="flex h-[11px] items-center justify-end gap-1 mt-2 text-[10px] leading-[11px] text-muted-foreground/60">
         <span>少</span>
         {LEVEL_CLASSES.map((cls, i) => (
           <div
@@ -238,6 +281,6 @@ export function UsageHeatmap({ workspaceId }: UsageHeatmapProps = {}): React.Rea
         ))}
         <span>多</span>
       </div>
-    </div>
+    </>
   )
 }
