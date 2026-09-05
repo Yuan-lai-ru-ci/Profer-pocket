@@ -1597,6 +1597,23 @@
   content: none;
 }
 
+/* ===== 消息 Markdown 表格：保留列宽并允许横向查看 =====
+ * 不把单元格内容强行折行，否则数据列会变得难以阅读。容器负责横向滚动，
+ * Pocket 触屏中可直接手指左右拖动，桌面端仍可用触控板/滚轮横移。
+ */
+.markdown-table-scroll {
+  -webkit-overflow-scrolling: touch;
+}
+
+.markdown-table-scroll > table {
+  table-layout: auto;
+}
+
+.markdown-table-scroll > table th,
+.markdown-table-scroll > table td {
+  white-space: nowrap;
+}
+
 /* ===== FileBrowser 自动定位的高亮脉冲 =====
  * 末关键帧用 transparent 是故意的：Agent 自动 reveal（select=false）一行不进入选中态，
  * 动画结束后行需要恢复无背景色。如果改成 hsl(--accent) 等不透明色，那一行会一直停留
@@ -2518,6 +2535,16 @@
  * 避免出现“正文已左移、底下虚线与分叉按钮仍停在 46px”的错位。
  */
 @media (orientation: portrait) {
+  /* Markdown 正文中的图片不能按原始尺寸撑高消息区；点击图片仍可查看原图。 */
+  body.pocket-mode .message-item .message-content .prose img {
+    display: block;
+    width: auto;
+    height: auto;
+    max-width: 100%;
+    max-height: min(360px, 35vh);
+    object-fit: contain;
+  }
+
   body.pocket-mode .message-item .message-content {
     padding-left: 6px;
   }
@@ -2536,6 +2563,7 @@
  */
 .pocket-safe-area {
   padding-top: max(env(safe-area-inset-top), 0px) !important;
+  padding-bottom: max(env(safe-area-inset-bottom), 0px) !important;
 }
 
 /* ===== 移动模式：隐藏滚动条（触控滚动，滚动条多余且占视觉空间） =====
@@ -2549,6 +2577,11 @@ body.pocket-mode *::-webkit-scrollbar {
 body.pocket-mode * {
   scrollbar-width: none;
   -ms-overflow-style: none;
+}
+
+/* 允许代码块、长表格和长链接在触屏上横向拖动；页面本身仍保持自然滚动。 */
+body.pocket-mode .overflow-x-auto {
+  touch-action: pan-x pan-y;
 }
 
 /* ===== 平板竖屏：模型名保留显示 =====

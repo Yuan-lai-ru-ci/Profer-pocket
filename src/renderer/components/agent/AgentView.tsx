@@ -553,7 +553,7 @@ function ToolbarGraphButton({ onClick }: { onClick: () => void }): React.ReactEl
 }
 
 /** 平板远程模式下从输入工具栏隐藏的项（依赖桌面文件系统/语音/全局设置，浏览器环境无意义） */
-const POCKET_HIDDEN_TOOLBAR_KEYS = new Set(['thinking', 'speech', 'attach-file', 'attach-folder', 'auto-preview', 'graph'])
+const POCKET_HIDDEN_TOOLBAR_KEYS = new Set(['thinking', 'speech', 'attach-folder', 'auto-preview', 'graph'])
 
 export interface AgentViewProps {
   sessionId: string
@@ -835,6 +835,7 @@ export function AgentView({ sessionId, pocketMode = false, hideAgentHeader = fal
   const [workspaceFilesPath, setWorkspaceFilesPath] = React.useState<string | null>(null)
   const [isDragOver, setIsDragOver] = React.useState(false)
   const [errorCopied, setErrorCopied] = React.useState(false)
+  const pocketFileInputRef = React.useRef<HTMLInputElement>(null)
 
 
   // pendingFiles ref（供 addFilesAsAttachments 读取最新列表，避免闭包旧值）
@@ -1396,8 +1397,13 @@ export function AgentView({ sessionId, pocketMode = false, hideAgentHeader = fal
     }
   }, [attachSessionFile, makeUniqueFilename, setPendingFiles])
 
-  /** 打开文件选择对话框 */
+  /** 打开文件选择器；Pocket 使用 WebView 原生选择器，桌面端继续走 IPC。 */
   const handleOpenFileDialog = React.useCallback(async (): Promise<void> => {
+    if (pocketMode) {
+      pocketFileInputRef.current?.click()
+      return
+    }
+
     try {
       const result = await window.electronAPI.openFileDialog()
       const largeFiles = result.largeFiles ?? []
@@ -1441,7 +1447,14 @@ export function AgentView({ sessionId, pocketMode = false, hideAgentHeader = fal
     } catch (error) {
       console.error('[AgentView] 文件选择对话框失败:', error)
     }
-  }, [addLargeDialogFilesAsReferences, setPendingFiles])
+  }, [addLargeDialogFilesAsReferences, pocketMode, setPendingFiles])
+
+  /** Pocket 原生文件选择器回调：File 对象直接复用现有 Base64 附件链路。 */
+  const handlePocketFileSelect = React.useCallback((event: React.ChangeEvent<HTMLInputElement>): void => {
+    const files = Array.from(event.target.files ?? [])
+    event.target.value = ''
+    if (files.length > 0) void addFilesAsAttachments(files)
+  }, [addFilesAsAttachments])
 
   /** 附加文件夹（不复制，仅记录路径） */
   const handleAttachFolder = React.useCallback(async (): Promise<void> => {
@@ -3013,6 +3026,16 @@ export function AgentView({ sessionId, pocketMode = false, hideAgentHeader = fal
                 </button>
               </div>
             )}
+
+            <input
+              ref={pocketFileInputRef}
+              type="file"
+              accept="image/*,.pdf,.txt,.md,.csv,.json,.js,.jsx,.ts,.tsx,.py,.java,.go,.rs,.html,.css,.doc,.docx,.xls,.xlsx,.ppt,.pptx"
+              multiple
+              className="hidden"
+              tabIndex={-1}
+              onChange={handlePocketFileSelect}
+            />
 
             <RichTextInput
               value={inputContent}

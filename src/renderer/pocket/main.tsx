@@ -60,6 +60,14 @@ const SAFE_AREA_CLS = isNativeApp ? 'pocket-safe-area' : ''
 // ===== 移动模式标记：Portal 到 body 的组件（设置弹窗等）需要 CSS 定向（竖屏差异化布局）=====
 if (typeof document !== 'undefined') {
   document.body.classList.add('pocket-mode')
+  // Android 状态栏跟随当前主题，避免浅色主题仍显示成深色条。
+  const syncPocketThemeColor = (): void => {
+    const meta = document.querySelector('meta[name="theme-color"]')
+    const background = getComputedStyle(document.documentElement).getPropertyValue('--background').trim()
+    if (meta && background) meta.setAttribute('content', `hsl(${background})`)
+  }
+  syncPocketThemeColor()
+  new MutationObserver(syncPocketThemeColor).observe(document.documentElement, { attributes: true, attributeFilter: ['class'] })
 }
 
 // ===== Token 存取 =====
@@ -197,7 +205,7 @@ function PocketApp(): React.ReactElement {
       <TooltipProvider>
         <Toaster theme="system" position="top-center" richColors />
         {/* 等比缩放容器：内容整体 scale(s)，容器反补偿保持视口内，区域不放大 */}
-        <UiScaleContainer>
+        <UiScaleContainer pocketMode>
           <App />
         </UiScaleContainer>
         {/* 设置入口：LeftSidebar 底部头像/设置按钮置位 settingsOpenAtom，此处渲染原版 Dialog；
@@ -516,7 +524,10 @@ function App(): React.ReactElement {
         .filter((w): w is NonNullable<typeof w> => w != null)
       const fallback = workspaces[0] ?? { id: 'default', name: '默认工作区', slug: 'default', type: 'personal', createdAt: 0, updatedAt: 0 }
       setNativeWorkspaces(workspaces.length > 0 ? workspaces as never : [fallback] as never)
-      setNativeWorkspaceId(fallback.id)
+      const currentWorkspaceId = pocketStore.get(currentAgentWorkspaceIdAtom)
+      if (!currentWorkspaceId || !workspaces.some((workspace) => workspace.id === currentWorkspaceId)) {
+        setNativeWorkspaceId(fallback.id)
+      }
     } catch (e) { console.error('拉取会话失败', e) }
   }, [setNativeSessions, setNativeWorkspaces, setNativeWorkspaceId])
 
@@ -545,21 +556,23 @@ function App(): React.ReactElement {
 
   // ===== 打开会话：AgentView 自行加载持久化消息与流式状态，平板只切换 sessionId =====
   const openSession = useCallback(async (sessionId: string, title?: string) => {
-    // 不收起侧栏抽屉：切换会话后保持侧栏打开，由用户自行收起（点遮罩 / Escape）
+    // 移动端选中会话后立即收起抽屉，避免导航层继续遮挡对话区。
     setCurrentSessionId(sessionId)
     setNativeSessionId(sessionId)
     setNativeAppMode('agent')
     setCurrentTitle(title || '')
+    setSidebarOpen(false)
     saveLastView({ mode: 'agent', sessionId })
   }, [setNativeSessionId, setNativeAppMode])
 
   /** 打开 Chat 对话：ChatView 自行加载消息与流式状态，平板只切换 conversationId 与模式 */
   const openChatConversation = useCallback((conversationId: string, title?: string) => {
-    // 不收起侧栏抽屉：切换对话后保持侧栏打开，由用户自行收起（点遮罩 / Escape）
+    // 移动端选中对话后立即收起抽屉，回到内容区继续阅读。
     setCurrentChatId(conversationId)
     setNativeConversationId(conversationId)
     setNativeAppMode('chat')
     setCurrentTitle(title || '')
+    setSidebarOpen(false)
     saveLastView({ mode: 'chat', conversationId })
   }, [setNativeConversationId, setNativeAppMode])
 
@@ -682,6 +695,10 @@ function App(): React.ReactElement {
   const submitToken = useCallback(() => {
     const t = tokenInput.trim()
     if (!t) { setErrMsg('请输入访问令牌'); return }
+    if (isNativeApp && !serverInput.trim()) {
+      setErrMsg('App 端请填写电脑的服务器地址，例如 http://192.168.1.10:7788')
+      return
+    }
     storeToken(t)
     storeServerUrl(serverInput)
     setErrMsg(undefined)
@@ -842,33 +859,55 @@ function App(): React.ReactElement {
     <>
       {showLogin ? (
         // 未连接：token 页
-        <div className={`flex h-full w-full items-center justify-center bg-background text-foreground p-6 ${SAFE_AREA_CLS}`}>
-        <div className="w-full max-w-sm space-y-6">
-          <div className="space-y-1.5">
-            <div className="text-xl font-semibold italic tracking-tight">Profer</div>
-            <div className="text-sm text-muted-foreground">在电脑上以 <code className="px-1.5 py-0.5 rounded bg-muted/60 font-mono text-xs">--pocket</code> 启动后连接</div>
+        <div className={`pocket-login-shell flex h-full w-full items-center justify-center bg-background text-foreground px-6 py-10 pb-[max(2.5rem,env(safe-area-inset-bottom))] ${SAFE_AREA_CLS}`}>
+        <div className="pocket-login-panel w-full max-w-sm space-y-6 rounded-3xl bg-card/80 p-6 shadow-2xl shadow-primary/5 backdrop-blur-xl sm:p-8">
+          <div className="space-y-4">
+            <div className="flex items-center gap-3">
+              <div className="flex size-11 items-center justify-center rounded-2xl bg-primary text-lg font-semibold text-primary-foreground shadow-lg shadow-primary/20" aria-hidden> P </div>
+              <div>
+                <div className="text-xl font-semibold tracking-tight">Profer <span className="text-muted-foreground">Pocket</span></div>
+                <div className="mt-0.5 text-xs text-muted-foreground">随时连接你的电脑工作台</div>
+              </div>
+            </div>
+            <div className="rounded-2xl bg-muted/45 px-3.5 py-3 text-sm leading-6 text-muted-foreground">
+              在电脑上以 <code className="rounded-md bg-background/70 px-1.5 py-0.5 font-mono text-xs text-foreground">--pocket</code> 启动 Profer，然后输入连接信息。
+            </div>
           </div>
-          <input
-            value={serverInput}
-            onChange={(e) => setServerInput(e.target.value)}
-            placeholder="服务器地址，如 http://192.168.1.10:7788（留空自动）"
-            className="w-full rounded-lg border border-border bg-background px-3.5 py-3 text-sm outline-none focus:ring-2 focus:ring-primary/30 placeholder:text-muted-foreground/60"
-          />
-          <input
-            type="password"
-            value={tokenInput}
-            onChange={(e) => setTokenInput(e.target.value)}
-            placeholder="访问令牌"
-            autoFocus
-            autoComplete="off"
-            autoCapitalize="none"
-            autoCorrect="off"
-            spellCheck={false}
-            className="w-full rounded-lg border border-border bg-background px-3.5 py-3 text-sm outline-none focus:ring-2 focus:ring-primary/30 placeholder:text-muted-foreground/60"
-          />
-          {errMsg && <div className="text-sm text-destructive">{errMsg}</div>}
-          <button onClick={submitToken} className="w-full rounded-lg bg-primary text-primary-foreground py-3 text-sm font-medium active:scale-[0.98] transition">
-            {connection === 'connecting' ? '连接中…' : '连接'}
+          <div className="space-y-3">
+            <label className="block space-y-1.5 text-xs font-medium text-muted-foreground" htmlFor="pocket-server">
+              服务器地址 <span className="font-normal opacity-70">{isNativeApp ? '（App 端必填）' : '（可留空自动发现）'}</span>
+              <input
+                id="pocket-server"
+                value={serverInput}
+                onChange={(e) => setServerInput(e.target.value)}
+                placeholder="例如 http://192.168.1.10:7788"
+                inputMode="url"
+                autoCapitalize="none"
+                autoCorrect="off"
+                spellCheck={false}
+                className="w-full rounded-xl border border-border/70 bg-background/75 px-3.5 py-3 text-sm font-normal outline-none transition focus:border-primary/60 focus:ring-2 focus:ring-primary/20 placeholder:text-muted-foreground/55"
+              />
+            </label>
+            <label className="block space-y-1.5 text-xs font-medium text-muted-foreground" htmlFor="pocket-token">
+              访问令牌
+              <input
+                id="pocket-token"
+                type="password"
+                value={tokenInput}
+                onChange={(e) => setTokenInput(e.target.value)}
+                placeholder="粘贴电脑端启动日志中的 Token"
+                autoFocus
+                autoComplete="off"
+                autoCapitalize="none"
+                autoCorrect="off"
+                spellCheck={false}
+                className="w-full rounded-xl border border-border/70 bg-background/75 px-3.5 py-3 text-sm font-normal outline-none transition focus:border-primary/60 focus:ring-2 focus:ring-primary/20 placeholder:text-muted-foreground/55"
+              />
+            </label>
+          </div>
+          {errMsg && <div className="rounded-xl bg-destructive/10 px-3.5 py-2.5 text-sm leading-5 text-destructive" role="alert">{errMsg}</div>}
+          <button onClick={submitToken} className="w-full rounded-xl bg-primary py-3.5 text-sm font-medium text-primary-foreground shadow-lg shadow-primary/15 transition active:scale-[0.98] disabled:opacity-60" disabled={connection === 'connecting'}>
+            {connection === 'connecting' ? '正在连接…' : '连接到 Profer'}
           </button>
           {hasStoredBinding && (
             <div className="space-y-2">
@@ -876,7 +915,7 @@ function App(): React.ReactElement {
               <div className="flex items-center justify-center gap-1.5 text-[12px] text-muted-foreground">
                 <span className="size-1.5 shrink-0 rounded-full bg-emerald-500" aria-hidden />
                 <span className="truncate">
-                  已绑定{getStoredServerUrl() ? `：${getStoredServerUrl()}` : '（自动地址）'}
+                  已绑定{getStoredServerUrl() ? `：${getStoredServerUrl()}` : isNativeApp ? '（缺少服务器地址）' : '（自动地址）'}
                 </span>
               </div>
               <button
@@ -1009,13 +1048,14 @@ function App(): React.ReactElement {
 
 // ===== 平板直接复用桌面 LeftSidebar；浏览器端只以 WebSocket adapter 替代 Electron IPC。 =====
 function NativePocketSidebar({ mobileOpen, onDismiss }: { mobileOpen: boolean; onDismiss: () => void }): React.ReactElement {
+  const drawerWidth = Math.max(200, Math.min(288, window.innerWidth - 24))
   return (
     <>
       <div className="hidden h-full shrink-0 landscape:min-[1024px]:block"><LeftSidebar width={288} pocketMode /></div>
       <div className={`fixed inset-0 z-50 landscape:min-[1024px]:hidden ${mobileOpen ? 'pointer-events-auto' : 'pointer-events-none'}`} aria-hidden={!mobileOpen}>
         <button type="button" className={`absolute inset-0 z-0 bg-black/40 transition-opacity duration-200 ${mobileOpen ? 'opacity-100' : 'opacity-0'}`} onClick={onDismiss} aria-label="关闭会话导航" tabIndex={mobileOpen ? 0 : -1} />
         <div
-          className={`absolute inset-y-0 left-0 z-10 touch-pan-y transition-transform duration-200 ease-out ${SAFE_AREA_CLS} ${mobileOpen ? 'translate-x-0' : '-translate-x-full'}`}
+          className={`absolute inset-y-0 left-0 z-10 w-[min(288px,calc(100vw-24px))] max-w-[calc(100vw-24px)] touch-pan-y transition-transform duration-200 ease-out ${SAFE_AREA_CLS} ${mobileOpen ? 'translate-x-0' : '-translate-x-full'}`}
           // 再次点击当前已选中会话：收起抽屉（冒泡阶段判断；子会话箭头/操作按钮已 stopPropagation 不会冒泡到此处）
           onClick={(e) => {
             if ((e.target as Element | null)?.closest?.('[data-profer-navigation-item="session"][data-profer-navigation-active="true"]')) {
@@ -1025,7 +1065,7 @@ function NativePocketSidebar({ mobileOpen, onDismiss }: { mobileOpen: boolean; o
         >
           {/* 搜索面板（SearchDialog）是全局 atom + Portal，只需渲染一份；由横屏固定侧栏实例承担。
               抽屉实例设为 false，避免双 SearchDialog 叠加导致打开即被 interactOutside 关闭（“一闪即逝”）。 */}
-          <LeftSidebar width={288} pocketMode renderSearchDialog={false} />
+          <LeftSidebar width={drawerWidth} pocketMode renderSearchDialog={false} />
         </div>
       </div>
     </>

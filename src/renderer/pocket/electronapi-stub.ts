@@ -124,6 +124,7 @@ interface PocketRemoteClient extends HeatmapRemoteClient {
   getPendingInteractions(sessionId?: string): Promise<unknown>
   listChannels(): Promise<unknown>
   createSession(payload: { title?: string; channelId?: string; workspaceId?: string; modelId?: string }): Promise<unknown>
+  migrateChatToAgent(conversationId: string, agentSessionId: string): Promise<unknown>
   ensureProjectDraftSession(payload: { workspaceId: string; channelId?: string; modelId?: string }): Promise<unknown>
   renameSession(sessionId: string, title: string): Promise<unknown>
   getSdkMessages(
@@ -1032,7 +1033,10 @@ export function installElectronApiStub(): void {
     saveFilesToAgentSession: () => unsupported('保存文件到会话'),
     addAgentKnowledgeReferences: () => unsupported('知识库引用'),
     removeAgentKnowledgeReference: () => unsupported('知识库引用'),
-    migrateChatToAgent: () => unsupported('Chat 迁移到 Agent'),
+    migrateChatToAgent: (conversationId: string, agentSessionId: string) => {
+      if (!remoteClient) return Promise.reject(new Error('移动端连接未就绪'))
+      return remoteClient.migrateChatToAgent(conversationId, agentSessionId)
+    },
     // 提示词编辑（PromptEditorSidebar/SystemPromptSelector 的 CRUD）：平板不暴露设置入口，
     // 必须明确拒绝，避免 Proxy 兜底 undefined 污染 promptConfigAtom / selectedPromptIdAtom。
     createSystemPrompt: () => unsupported('提示词编辑'),
