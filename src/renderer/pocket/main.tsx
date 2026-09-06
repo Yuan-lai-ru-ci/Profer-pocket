@@ -32,7 +32,7 @@ import { useGlobalChatListeners } from '@/hooks/useGlobalChatListeners'
 import { userProfileAtom } from '@/atoms/user-profile'
 import { authStatusAtom } from '@/atoms/identity-atoms'
 import { channelsAtom, channelsLoadedAtom, conversationsAtom, currentConversationIdAtom } from '@/atoms/chat-atoms'
-import { agentSessionsAtom, agentWorkspacesAtom, currentAgentSessionIdAtom, currentAgentWorkspaceIdAtom, agentChannelIdAtom, agentModelIdAtom, agentChannelIdsAtom, agentStreamingStatesAtom, agentMessageRefreshAtom, allPendingPermissionRequestsAtom, allPendingAskUserRequestsAtom, allPendingExitPlanRequestsAtom, settleInactiveAgentStreamState, shouldClearInactiveAgentStreamState } from '@/atoms/agent-atoms'
+import { agentSessionsAtom, agentWorkspacesAtom, currentAgentSessionIdAtom, currentAgentWorkspaceIdAtom, agentChannelIdAtom, agentModelIdAtom, agentChannelIdsAtom, agentStreamingStatesAtom, agentMessageRefreshAtom, agentDefaultPermissionModeAtom, allPendingPermissionRequestsAtom, allPendingAskUserRequestsAtom, allPendingExitPlanRequestsAtom, settleInactiveAgentStreamState, shouldClearInactiveAgentStreamState } from '@/atoms/agent-atoms'
 import { appModeAtom } from '@/atoms/app-mode'
 import { initPocketUiScale } from '@/atoms/ui-scale'
 import { initPocketScreenOrientation } from '@/lib/pocket-screen-orientation'
@@ -47,6 +47,7 @@ import { AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogFooter, 
 import { TooltipProvider, Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip'
 import { Menu, Plus, Palette, Link, Loader2, Bell, RefreshCw, Download } from 'lucide-react'
 import { type AgentStreamPayload, type AskUserRequest, type ExitPlanModeRequest, type PermissionRequest } from '@profer/shared'
+import { filterPocketPendingInteractionSnapshot, markPocketResolvedInteraction, type PendingInteractionKind } from './pending-interaction-reconciliation'
 import { pocketBackgroundMessagingAtom, pocketConnectionStatusAtom, pocketNotifyCompleteAtom, pocketUnbindRequestAtom } from '@/atoms/pocket-settings'
 
 // ===== 先安装 electronAPI stub（必须在任何复用组件求值前）=====
@@ -477,23 +478,19 @@ function App(): React.ReactElement {
           exitPlans?: unknown[]
         }
         const allowedSessionIds = new Set(personalSessions.map((s) => s.id))
-        const groupBySession = <T extends { sessionId?: unknown; requestId?: unknown }>(items: unknown[] | undefined): Map<string, T[]> => {
+        const groupBySession = <T extends { sessionId?: unknown; requestId?: unknown }>(items: unknown[] | undefined, kind: PendingInteractionKind): Map<string, T[]> => {
           const grouped = new Map<string, T[]>()
-          for (const rawItem of items ?? []) {
-            if (!rawItem || typeof rawItem !== 'object') continue
-            const item = rawItem as T
+          for (const item of filterPocketPendingInteractionSnapshot(items as T[] | undefined, kind)) {
             const sessionId = item.sessionId
             if (typeof sessionId !== 'string' || !allowedSessionIds.has(sessionId)) continue
-            if (typeof item.requestId !== 'string' || item.requestId.length === 0) continue
             const current = grouped.get(sessionId) ?? []
-            if (current.some((entry) => entry.requestId === item.requestId)) continue
             grouped.set(sessionId, [...current, item])
           }
           return grouped
         }
-        pocketStore.set(allPendingPermissionRequestsAtom, groupBySession<PermissionRequest>(snapshot?.permissions))
-        pocketStore.set(allPendingAskUserRequestsAtom, groupBySession<AskUserRequest>(snapshot?.askUsers))
-        pocketStore.set(allPendingExitPlanRequestsAtom, groupBySession<ExitPlanModeRequest>(snapshot?.exitPlans))
+        pocketStore.set(allPendingPermissionRequestsAtom, groupBySession<PermissionRequest>(snapshot?.permissions, 'permission'))
+        pocketStore.set(allPendingAskUserRequestsAtom, groupBySession<AskUserRequest>(snapshot?.askUsers, 'askUser'))
+        pocketStore.set(allPendingExitPlanRequestsAtom, groupBySession<ExitPlanModeRequest>(snapshot?.exitPlans, 'exitPlan'))
       } catch (error) {
         console.warn('[Pocket] 同步待处理交互失败，保留现有状态:', error)
       }
@@ -599,6 +596,16 @@ function App(): React.ReactElement {
 
   const handleAgentEvent = useCallback((client: WsClient, evt: AgentWorkflowEvent) => {
     markSessionActivity(evt.sessionId)
+    const payload = evt.payload as { kind?: string; event?: { type?: string; requestId?: string } } | null
+    if (payload?.kind === 'profer_event' && payload.event && typeof payload.event.requestId === 'string') {
+      const interactionKinds: Partial<Record<string, PendingInteractionKind>> = {
+        permission_resolved: 'permission',
+        ask_user_resolved: 'askUser',
+        exit_plan_mode_resolved: 'exitPlan',
+      }
+      const kind = payload.event.type ? interactionKinds[payload.event.type] : undefined
+      if (kind) markPocketResolvedInteraction({ kind, sessionId: evt.sessionId, requestId: payload.event.requestId })
+    }
     emitPocketAgentStreamEvent({ sessionId: evt.sessionId, payload: evt.payload as AgentStreamPayload })
     const p = evt.payload as { kind?: string; event?: { type?: string; stoppedByUser?: boolean; startedAt?: number; resultSubtype?: string; resultErrors?: string[]; backgroundTasksPending?: boolean } } | null
     // run_completed（remote-service 在 orchestrator onComplete 时广播，携带真实完成元数据）
@@ -656,7 +663,8 @@ function App(): React.ReactElement {
     const client = clientRef.current
     if (!client || !client.isOpen()) return
     try {
-      const data = await client.createSession({ title: '新会话' }) as { sessionId: string; title: string }
+      const permissionMode = pocketStore.get(agentDefaultPermissionModeAtom)
+      const data = await client.createSession({ title: '新会话', permissionMode }) as { sessionId: string; title: string; permissionMode?: string }
       if (data?.sessionId) {
         await openSession(data.sessionId, data.title)
         void loadSessions(client)

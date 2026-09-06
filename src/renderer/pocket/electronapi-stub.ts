@@ -123,14 +123,14 @@ interface PocketRemoteClient extends HeatmapRemoteClient {
   getUserProfile(): Promise<unknown>
   getPendingInteractions(sessionId?: string): Promise<unknown>
   listChannels(): Promise<unknown>
-  createSession(payload: { title?: string; channelId?: string; workspaceId?: string; modelId?: string }): Promise<unknown>
+  createSession(payload: { title?: string; channelId?: string; workspaceId?: string; modelId?: string; permissionMode?: 'auto' | 'plan' | 'bypassPermissions' }): Promise<unknown>
   ensureProjectDraftSession(payload: { workspaceId: string; channelId?: string; modelId?: string }): Promise<unknown>
   renameSession(sessionId: string, title: string): Promise<unknown>
   getSdkMessages(
     sessionId: string,
     opts?: { before?: number; targetMessages?: number },
   ): Promise<unknown>
-  sendMessage(payload: { sessionId: string; userMessage: string; channelId: string; modelId?: string; workspaceId?: string }): Promise<unknown>
+  sendMessage(payload: { sessionId: string; userMessage: string; channelId: string; modelId?: string; workspaceId?: string; permissionMode?: 'auto' | 'plan' | 'bypassPermissions' }): Promise<unknown>
   /** 向正在运行的 Agent 注入消息（对齐桌面 queueAgentMessage：interrupt 软打断 / uuid 幂等） */
   queueMessage(payload: {
     sessionId: string
@@ -447,6 +447,7 @@ export function installElectronApiStub(): void {
         channelId: String(input.channelId || ''),
         modelId: input.modelId as string | undefined,
         workspaceId: input.workspaceId as string | undefined,
+        permissionMode: input.permissionModeOverride as 'auto' | 'plan' | 'bypassPermissions' | undefined,
       }
       debugLog(`[WS send] session=${payload.sessionId} chars=${payload.userMessage.length}`)
       return remoteClient.sendMessage(payload)
@@ -681,9 +682,9 @@ export function installElectronApiStub(): void {
     },
     // ---- 命令映射：LeftSidebar 会话管理（已在 WebSocket 建连后注入） ----
     listAgentSessions: () => remoteClient?.listSessions() ?? Promise.resolve([]),
-    createAgentSession: async (title?: string, channelId?: string, workspaceId?: string, modelId?: string) => {
+    createAgentSession: async (title?: string, channelId?: string, workspaceId?: string, modelId?: string, permissionMode?: 'auto' | 'plan' | 'bypassPermissions') => {
       if (!remoteClient) throw new Error('移动端连接未就绪')
-      const created = await remoteClient.createSession({ title, channelId, workspaceId, modelId }) as Record<string, unknown>
+      const created = await remoteClient.createSession({ title, channelId, workspaceId, modelId, permissionMode }) as Record<string, unknown>
       const sessionId = typeof created.id === 'string' ? created.id : String(created.sessionId || '')
       if (!sessionId) throw new Error('远端创建会话未返回 sessionId')
       return resolveAuthoritativeAgentSession(remoteClient, sessionId, created)

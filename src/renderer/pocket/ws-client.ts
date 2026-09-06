@@ -651,7 +651,7 @@ export class WsClient {
     return this.sendCommand({ type: 'rename_session', sessionId, title })
   }
 
-  createSession(payload: { title?: string; channelId?: string; workspaceId?: string; modelId?: string }): Promise<unknown> {
+  createSession(payload: { title?: string; channelId?: string; workspaceId?: string; modelId?: string; permissionMode?: 'auto' | 'plan' | 'bypassPermissions' }): Promise<unknown> {
     return this.sendCommand({ type: 'create_session', ...payload })
   }
 
@@ -660,7 +660,7 @@ export class WsClient {
     return this.sendCommand({ type: 'ensure_project_draft_session', ...payload })
   }
 
-  sendMessage(payload: { sessionId: string; userMessage: string; channelId: string; modelId?: string; workspaceId?: string }): Promise<unknown> {
+  sendMessage(payload: { sessionId: string; userMessage: string; channelId: string; modelId?: string; workspaceId?: string; permissionMode?: 'auto' | 'plan' | 'bypassPermissions' }): Promise<unknown> {
     // 幂等去重键既要覆盖同一 WebView 的 WS 重连，也要覆盖“服务端已接收但 WebView
     // 被系统杀掉、未收到 accepted”的跨进程恢复窗口。
     const clientMessageId = claimPendingSendId(payload, WsClient.newClientMessageId)
