@@ -792,7 +792,10 @@ export function installElectronApiStub(): void {
       if (!remoteClient) return Promise.reject(new Error('移动端连接未就绪'))
       return remoteClient.getPendingInteractions(sessionId)
     },
-    getSystemTheme: () => Promise.resolve(true),
+    // Pocket 不经过桌面主进程；直接读取 WebView 暴露的系统外观，避免始终回报暗色。
+    getSystemTheme: () => Promise.resolve(
+      typeof window !== 'undefined' && window.matchMedia('(prefers-color-scheme: dark)').matches,
+    ),
     // SystemPromptSelector（ChatHeader）挂载时拉取提示词配置并 setConfig 覆写 promptConfigAtom：
     // 必须返回桌面同构默认配置，否则 Proxy 兜底的 undefined 会把 promptConfigAtom 覆写成 undefined，
     // 导致 defaultPromptIdAtom 等派生 atom 抛 “Cannot read properties of undefined (reading 'defaultPromptId')”，

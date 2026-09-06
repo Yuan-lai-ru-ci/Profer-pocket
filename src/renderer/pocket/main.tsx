@@ -34,6 +34,13 @@ import { authStatusAtom } from '@/atoms/identity-atoms'
 import { channelsAtom, channelsLoadedAtom, conversationsAtom, currentConversationIdAtom } from '@/atoms/chat-atoms'
 import { agentSessionsAtom, agentWorkspacesAtom, currentAgentSessionIdAtom, currentAgentWorkspaceIdAtom, agentChannelIdAtom, agentModelIdAtom, agentChannelIdsAtom, agentStreamingStatesAtom, agentMessageRefreshAtom, agentDefaultPermissionModeAtom, allPendingPermissionRequestsAtom, allPendingAskUserRequestsAtom, allPendingExitPlanRequestsAtom, settleInactiveAgentStreamState, shouldClearInactiveAgentStreamState } from '@/atoms/agent-atoms'
 import { appModeAtom } from '@/atoms/app-mode'
+import {
+  themeModeAtom,
+  themeStyleAtom,
+  systemIsDarkAtom,
+  resolvedThemeAtom,
+  applyThemeToDOM,
+} from '@/atoms/theme'
 import { initPocketUiScale } from '@/atoms/ui-scale'
 import { initPocketScreenOrientation } from '@/lib/pocket-screen-orientation'
 import { checkPocketUpdate, initializePocketUpdater } from '@/atoms/pocket-updater'
@@ -190,10 +197,63 @@ function markSessionActivity(sessionId: string): number {
   }) as typeof window.electronAPI.stopAgent
 }
 
+// ===== 移动端主题初始化 =====
+// Pocket 入口不复用桌面 renderer/main.tsx，因此必须在此独立同步系统主题。
+// Android/HarmonyOS 的 WebView 会在系统外观变化时更新 prefers-color-scheme；
+// 监听 MediaQueryList change 可让“跟随系统”无需重启应用即可切换。
+function PocketThemeInitializer(): null {
+  const themeMode = useAtomValue(themeModeAtom)
+  const themeStyle = useAtomValue(themeStyleAtom)
+  const systemIsDark = useAtomValue(systemIsDarkAtom)
+  const resolvedTheme = useAtomValue(resolvedThemeAtom)
+  const setSystemIsDark = useSetAtom(systemIsDarkAtom)
+
+  useEffect(() => {
+    const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)')
+    const syncSystemTheme = (): void => setSystemIsDark(mediaQuery.matches)
+    const onNativeThemeChange = (event: Event): void => {
+      const detail = (event as CustomEvent<{ isDark?: unknown }>).detail
+      if (typeof detail?.isDark === 'boolean') setSystemIsDark(detail.isDark)
+    }
+    syncSystemTheme()
+    // 部分鸿蒙/卓易通 WebView 不会刷新 prefers-color-scheme；Android 壳在
+    // uiMode 变化时主动派发此事件，作为 MediaQueryList change 的可靠兜底。
+    window.addEventListener('profer:system-theme-change', onNativeThemeChange)
+
+    if (typeof mediaQuery.addEventListener === 'function') {
+      mediaQuery.addEventListener('change', syncSystemTheme)
+      return () => {
+        mediaQuery.removeEventListener('change', syncSystemTheme)
+        window.removeEventListener('profer:system-theme-change', onNativeThemeChange)
+      }
+    }
+
+    // 兼容鸿蒙卓易通可能使用的旧版 WebView MediaQueryList API。
+    mediaQuery.addListener(syncSystemTheme)
+    return () => {
+      mediaQuery.removeListener(syncSystemTheme)
+      window.removeEventListener('profer:system-theme-change', onNativeThemeChange)
+    }
+  }, [setSystemIsDark])
+
+  useEffect(() => {
+    applyThemeToDOM(themeMode, themeStyle, systemIsDark)
+    // 同步浏览器/容器的 theme-color 元数据；Android 原生系统栏由 values-night
+    // 资源随系统 UI mode 提供对应的日间/夜间颜色。
+    document.querySelector('meta[name="theme-color"]')?.setAttribute(
+      'content',
+      resolvedTheme === 'dark' ? '#0b0d0e' : '#ffffff',
+    )
+  }, [themeMode, themeStyle, systemIsDark, resolvedTheme])
+
+  return null
+}
+
 // ===== 根组件 =====
 function PocketApp(): React.ReactElement {
   return (
     <Provider store={pocketStore}>
+      <PocketThemeInitializer />
       {/* AgentView/LeftSidebar 组件树大量使用 Tooltip，缺少 Provider 会批量抛错 */}
       <TooltipProvider>
         <Toaster theme="system" position="top-center" richColors />

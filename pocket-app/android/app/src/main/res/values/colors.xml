@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- System-bar colors follow Android's day/night UI mode. -->
+    <color name="profer_window_background">#ffffff</color>
+    <color name="profer_status_bar">#ffffff</color>
+    <color name="profer_navigation_bar">#ffffff</color>
+</resources>

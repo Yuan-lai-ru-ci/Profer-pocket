@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="profer_window_background">#0b0d0e</color>
+    <color name="profer_status_bar">#0b0d0e</color>
+    <color name="profer_navigation_bar">#0b0d0e</color>
+</resources>
