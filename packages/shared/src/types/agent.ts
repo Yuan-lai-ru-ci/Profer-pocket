@@ -1349,6 +1349,10 @@ export interface AgentStreamCompletePayload {
   resultErrors?: string[]
   /** 本轮主体结束但仍有后台任务/定时任务在飞行：UI 进入"空闲可输入"态，等待任务完成自动唤醒 */
   backgroundTasksPending?: boolean
+  /** 归一化后的结束原因（仅主 orchestrator 路径透传；completed 不触发 chip） */
+  endReason?: AgentEndReason
+  /** 结束原因的可读短文案（AGENT_END_REASON_LABELS 之一），供 chip / toast 展示 */
+  endReasonLabel?: string
 }
 
 // ===== 文件浏览器 =====

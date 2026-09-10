@@ -58,7 +58,6 @@ export function PlanModeDashedBorder(): React.ReactElement {
             rx={BORDER_RADIUS + OFFSET}
             ry={BORDER_RADIUS + OFFSET}
             fill="none"
-            stroke="hsl(var(--primary) / 0.45)"
             strokeWidth={STROKE_WIDTH}
             strokeDasharray={`${DASH_LENGTH} ${DASH_GAP}`}
             strokeLinecap="round"

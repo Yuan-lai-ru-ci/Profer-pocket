@@ -53,17 +53,21 @@ import { Button } from '@/components/ui/button'
 import { AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogFooter, AlertDialogTitle, AlertDialogDescription, AlertDialogAction, AlertDialogCancel } from '@/components/ui/alert-dialog'
 import { TooltipProvider, Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip'
 import { Menu, Plus, Palette, Link, Loader2, Bell, RefreshCw, Download } from 'lucide-react'
-import { type AgentStreamPayload, type AskUserRequest, type ExitPlanModeRequest, type PermissionRequest } from '@profer/shared'
+import { type AgentStreamPayload, type AgentEndReason, type AskUserRequest, type ExitPlanModeRequest, type PermissionRequest } from '@profer/shared'
 import { filterPocketPendingInteractionSnapshot, markPocketResolvedInteraction, type PendingInteractionKind } from './pending-interaction-reconciliation'
 import { pocketBackgroundMessagingAtom, pocketConnectionStatusAtom, pocketNotifyCompleteAtom, pocketUnbindRequestAtom } from '@/atoms/pocket-settings'
 
 // ===== 先安装 electronAPI stub（必须在任何复用组件求值前）=====
 installElectronApiStub()
 
-// ===== Capacitor 原生 App 环境检测 =====
-// App 内 WebView 沉浸式全屏，系统状态栏（通知栏）会盖住顶部内容；浏览器模式 env() 为 0 无需处理。
+// ===== 原生 App 安全区处理 =====
+// App 内 WebView 沉浸式全屏，系统状态栏（通知栏）会盖住顶部内容、底部导航条会盖住输入区/抽屉。
+// .pocket-safe-area 类始终挂载：桌面浏览器 env(safe-area-inset-*) 为 0 → padding 归零无副作用；
+// 真机 WebView（Capacitor / 鸿蒙兼容层）只要支持 env() 即自动获得上下安全区。
+// 不再依赖 Capacitor.isNativePlatform()——鸿蒙兼容层未必能检测到 Capacitor，漏判会导致安全区不生效。
+// 注意：isNativeApp 仍保留，用于登录页「App 端必填服务器地址」等与安全区无关的判断。
 const isNativeApp = typeof window !== 'undefined' && !!((window as unknown as { Capacitor?: { isNativePlatform?: () => boolean } }).Capacitor?.isNativePlatform?.())
-const SAFE_AREA_CLS = isNativeApp ? 'pocket-safe-area' : ''
+const SAFE_AREA_CLS = 'pocket-safe-area'
 
 // ===== 移动模式标记：Portal 到 body 的组件（设置弹窗等）需要 CSS 定向（竖屏差异化布局）=====
 if (typeof document !== 'undefined') {
@@ -680,7 +684,7 @@ function App(): React.ReactElement {
       if (kind) markPocketResolvedInteraction({ kind, sessionId: evt.sessionId, requestId: payload.event.requestId })
     }
     emitPocketAgentStreamEvent({ sessionId: evt.sessionId, payload: evt.payload as AgentStreamPayload })
-    const p = evt.payload as { kind?: string; event?: { type?: string; stoppedByUser?: boolean; startedAt?: number; resultSubtype?: string; resultErrors?: string[]; backgroundTasksPending?: boolean } } | null
+    const p = evt.payload as { kind?: string; event?: { type?: string; stoppedByUser?: boolean; startedAt?: number; resultSubtype?: string; resultErrors?: string[]; backgroundTasksPending?: boolean; endReason?: AgentEndReason; endReasonLabel?: string } } | null
     // run_completed（remote-service 在 orchestrator onComplete 时广播，携带真实完成元数据）
     // 与 run_idle（orchestrator finally 释放 active 时广播）都可能到达；两者都表示"本轮结束"。
     // 优先用 run_completed 携带的真实 startedAt/stoppedByUser，避免用 Date.now() 伪造 startedAt
@@ -714,6 +718,10 @@ function App(): React.ReactElement {
           resultSubtype: p.event.resultSubtype,
           resultErrors: p.event.resultErrors,
           backgroundTasksPending: p.event.backgroundTasksPending,
+          // 服务端 run_completed 携 endReason / label（orchestrator 归一化后的真实结束原因）：
+          // 透传后 useGlobalAgentListeners 才能置位中断 chip 并弹错 toast。
+          endReason: p.event.endReason,
+          endReasonLabel: p.event.endReasonLabel,
         })
         // Agent 完成提醒音：仅平板前台时播放——后台由「后台消息通知」系统通知通道负责提醒。
         // WebView 在后台不冻结 JS（Capacitor keepRunning=true），必须显式判断 document.hidden，

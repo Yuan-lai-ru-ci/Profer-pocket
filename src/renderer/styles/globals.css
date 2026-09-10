@@ -1578,6 +1578,14 @@
 .plan-mode-border {
   position: relative;
 }
+/*
+ * SVG presentation attribute 中的 hsl(var(--primary) / alpha) 在部分 Electron/主题组合
+ * （例如 skin-slate-light）会被计算成 stroke:none。默认 stroke 必须作为 CSS 属性声明，
+ * 深色主题规则再按需覆盖；这样桌面与 pocket 共用同一可靠渲染路径。
+ */
+.plan-mode-border .plan-mode-stroke {
+  stroke: hsl(var(--primary) / 0.45);
+}
 /* 深色主题 plan 虚线颜色加亮 */
 .theme-ocean-dark .plan-mode-border .plan-mode-stroke {
   stroke: hsl(210 30% 50% / 0.7);

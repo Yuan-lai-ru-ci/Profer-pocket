@@ -92,6 +92,21 @@ export function PresetSelector({ sessionId, persistedPresetId, workspaceSlug }: 
     }
   }, [effectiveId, sessionId, setPresetMap, setAgentSessions])
 
+  // meta 真源同步（与 PermissionModeSelector 同策略）：其它设备（桌面）修改会话预设后，
+  // SESSION_UPDATED → agentSessionsAtom → persistedPresetId 变化时把本地乐观缓存收敛到 meta，
+  // 避免 agentSessionPresetMapAtom 的陈旧值长期盖过会话元数据（“预设切换后双端不同步”）。
+  // meta 尚未携带预设（persistedPresetId 为空）时不覆盖，保留本地乐观更新/回滚语义。
+  React.useEffect(() => {
+    if (!persistedPresetId) return
+    setPresetMap((prev: Map<string, string>) => {
+      const current = prev.get(sessionId)
+      if (current === persistedPresetId) return prev
+      const next = new Map(prev)
+      next.set(sessionId, persistedPresetId)
+      return next
+    })
+  }, [persistedPresetId, sessionId, setPresetMap])
+
   if (presets.length === 0) return null
 
   return (

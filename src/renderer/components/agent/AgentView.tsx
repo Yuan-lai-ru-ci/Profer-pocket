@@ -1740,10 +1740,9 @@ export function AgentView({ sessionId, pocketMode = false, hideAgentHeader = fal
     return { channelId: agentChannelId, modelId: agentModelId }
   }, [agentChannelId, agentModelId])
 
-  // 防止瞬态 null 传递给 ModelSelector（防御 overflow remount 时 stableModelInfoRef 丢失）
-  const stableSelectedModelRef = React.useRef(computedSelectedModel)
-  if (computedSelectedModel) stableSelectedModelRef.current = computedSelectedModel
-  const externalSelectedModel = computedSelectedModel ?? stableSelectedModelRef.current
+  // Agent 会话 projection 是选择真源；权威 selection 暂时为空时也必须传 null，
+  // 不能用旧模型缓存掩盖“已切换/目录更新中”的状态。
+  const externalSelectedModel = computedSelectedModel
 
   // ===== 运行中追加消息队列：注入/发送辅助 =====
 
@@ -2671,6 +2670,7 @@ export function AgentView({ sessionId, pocketMode = false, hideAgentHeader = fal
         <ModelSelector
           filterChannelIds={sessionAgentRuntime === 'pi' ? undefined : agentChannelIds}
           preferredProtocol={sessionAgentRuntime === 'pi' ? 'openai' : 'anthropic'}
+          agentProjectionDisplay
           externalSelectedModel={externalSelectedModel}
           onModelSelect={handleModelSelect}
           autoFocusSearch={!pocketMode}
@@ -2835,6 +2835,24 @@ export function AgentView({ sessionId, pocketMode = false, hideAgentHeader = fal
     pocketMode,
   ])
 
+  // ---- 发送按钮 ghost-click 防护（触屏高嫌疑根因） ----
+  // 窄屏/触屏下权限、预设等工具按钮会被 InputToolbarOverflow 折叠进「更多」二级 Popover，
+  // 其弹层可能覆盖在右下角发送按钮上方。触摸选择完成后弹层收起，浏览器会把下一次合成
+  // click 重定向到坐标下方的发送按钮（ghost click），误触 handleSend → 会话进入 running，
+  // 但服务端并未收到消息 → 点停止无效、刷新才消失。
+  // 真实点击发送按钮必然先在本按钮上触发 pointerdown；纯合成 ghost click 没有本按钮的
+  // pointerdown，据此拦截（窗口 400ms）。键盘 Enter / Ctrl(⌘)+Enter 均不受影响。
+  const sendPointerDownAtRef = React.useRef(0)
+  const onSendPointerDown = React.useCallback(() => { sendPointerDownAtRef.current = Date.now() }, [])
+  const handleSendButtonClick = React.useCallback((event: React.MouseEvent<HTMLButtonElement>) => {
+    if (Date.now() - sendPointerDownAtRef.current > 400) {
+      // 无本按钮 pointerdown 的 click：判定为弹层收起的合成/ghost click，丢弃一次。
+      event.preventDefault()
+      return
+    }
+    void handleSend()
+  }, [handleSend])
+
   const inputTrailingNode = (streaming || streamState?.stopping) ? (
     <Tooltip>
       <TooltipTrigger asChild>
@@ -2868,7 +2886,8 @@ export function AgentView({ sessionId, pocketMode = false, hideAgentHeader = fal
           ? 'text-primary hover:bg-primary/10'
           : 'text-foreground/30 cursor-not-allowed'
       )}
-      onClick={handleSend}
+      onClick={handleSendButtonClick}
+      onPointerDown={onSendPointerDown}
       disabled={!canSend}
     >
       <CornerDownLeft className="size-[22px]" />
@@ -3045,18 +3064,19 @@ export function AgentView({ sessionId, pocketMode = false, hideAgentHeader = fal
               onPasteLongText={handlePasteLongText}
               longTextPasteThreshold={longTextPasteAsAttachmentEnabled ? LONG_TEXT_ATTACHMENT_THRESHOLD : undefined}
               placeholder={
-                // 平板触屏：输入框保持干净，不显示占位提示文字
-                pocketMode
-                  ? ''
-                  : isCompacting
-                    ? '正在压缩上下文，完成后可继续对话...'
-                    : agentChannelId && hasAvailableModel
-                      ? sendWithCmdEnter
+                // 移动端触屏语义（RichTextInput pocketMode）：Enter 只换行（拆分段），
+                // 发送由右下角发送按钮或 Ctrl/Cmd+Enter 承担，因此不显示桌面版 Shift+Enter/⌘ 文案。
+                isCompacting
+                  ? '正在压缩上下文，完成后可继续对话...'
+                  : agentChannelId && hasAvailableModel
+                    ? pocketMode
+                      ? '输入消息... (Enter 换行，点击发送；@ 引用文件，/ 调用 Skill，# 调用 MCP，& 引用会话)'
+                      : sendWithCmdEnter
                         ? '输入消息... (⌘/Ctrl+Enter 发送，Enter 换行，@ 引用文件，/ 调用 Skill，# 调用 MCP，& 引用会话)'
                         : '输入消息... (Enter 发送，Shift+Enter 换行，@ 引用文件，/ 调用 Skill，# 调用 MCP，& 引用会话)'
-                      : !agentChannelId
-                        ? '请先在设置中选择 Agent 供应商'
-                        : '暂无可用模型，请先在设置中启用渠道'
+                    : !agentChannelId
+                      ? '请先在设置中选择 Agent 供应商'
+                      : '暂无可用模型，请先在设置中启用渠道'
               }
               disabled={!agentChannelId || !hasAvailableModel}
               autoFocusTrigger={sessionId}
