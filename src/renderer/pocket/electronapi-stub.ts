@@ -106,6 +106,7 @@ export async function requestWorkspaceHeatmapDaily(
 interface PocketRemoteClient extends HeatmapRemoteClient {
   listSessions(): Promise<unknown>
   listWorkspaces(): Promise<unknown>
+  getWorkspaceCapabilities(workspaceSlug: string): Promise<unknown>
   createWorkspace(name: string): Promise<unknown>
   deleteSession(sessionId: string): Promise<unknown>
   /** 分叉会话 */
@@ -411,6 +412,26 @@ const safeNoop = (): Promise<unknown> => Promise.resolve(undefined)
 /** 平板明确不支持的能力 → 拒绝并给出中文提示（调用方 catch 后 toast 呈现） */
 const unsupported = (what: string): Promise<never> =>
   Promise.reject(new Error(`平板暂不支持${what}`))
+
+/**
+ * 未显式 stub 的 electronAPI 成员名（按首次访问顺序）。
+ * 用于开发期聚合告警，也供诊断/测试断言「能力缺口被识别」而不是静默成功。
+ */
+const missingElectronApiKeys = new Set<string>()
+
+/** 供诊断/测试：已探测到但未在 pocket stub 中实现的 electronAPI 成员名。 */
+export function getMissingElectronApiKeys(): string[] {
+  return [...missingElectronApiKeys]
+}
+
+/** 是否开发构建（渲染层由 vite 注入 import.meta.env；bun test 等环境安全回退 false）。 */
+function isDevBuild(): boolean {
+  try {
+    return Boolean((import.meta as unknown as { env?: { DEV?: boolean } })?.env?.DEV)
+  } catch {
+    return false
+  }
+}
 
 /**
  * 安装平板版 electronAPI 桥。
@@ -948,7 +969,11 @@ export function installElectronApiStub(): void {
       return normalized
     },
     getModels: () => Promise.resolve([]),
-    getWorkspaceCapabilities: () => Promise.resolve(null),
+    getWorkspaceCapabilities: async (workspaceSlug: string) => {
+      if (!remoteClient) throw new Error('移动端连接未就绪')
+      const result = await remoteClient.getWorkspaceCapabilities(workspaceSlug)
+      return result ?? null
+    },
     getWorkspaceHeatmapDaily: (workspaceId: string) =>
       requestWorkspaceHeatmapDaily(remoteClient, workspaceId),
     getAccountCapabilities: () => Promise.resolve({ membershipTier: 'free', canSelfConfig: true }),
@@ -958,6 +983,18 @@ export function installElectronApiStub(): void {
     getWorkspaceAttachedFiles: () => Promise.resolve([]),
     getSessionProcessCount: () => Promise.resolve(0),
     listSessionProcesses: () => Promise.resolve([]),
+    // 归档会话计数：pocket 当前左侧栏无归档徽标调用点（grep=0），按主仓库 tablet 参照补 0 计数兜底。
+    getArchivedCounts: () => Promise.resolve({ conversations: 0, agentSessions: 0 }),
+    // 商业版开关：pocket 无主进程配置源，恒按「非商业版」处理（useCreditsLoader → clearCreditsState）。
+    getCommercialMode: () => Promise.resolve(false),
+    // Pi 模型推理档位能力：pocket 无该数据源 → undefined（档位菜单按「未知能力」渲染）。
+    getPiReasoningCapability: () => Promise.resolve(undefined),
+    // 会话本地目录：pocket 无本地文件系统，远程协议未暴露会话路径 → null（调用方走「无路径」分支）。
+    getAgentSessionPath: () => Promise.resolve(null),
+    // 清除「已完成未确认」标记：pocket 无本地会话库 → 明确拒绝；调用方带 .catch（仅记日志）。
+    clearAgentCompletionState: () => unsupported('清除会话完成标记'),
+    // git diff 缓存失效：pocket 无本地 git 缓存 → 安全空操作（useGlobalAgentListeners 写工具完成路径直接调用）。
+    invalidateGitDiffCache: safeNoop,
     getAgentKnowledgeReferences: () => Promise.resolve([]),
     knowledge: {
       getLibrarySnapshot: () => Promise.resolve({ items: [] }),
@@ -1034,6 +1071,15 @@ export function installElectronApiStub(): void {
       if (!remoteClient) throw new Error('移动端连接未就绪')
       return remoteClient.readFileAsDataUrl(filePath, access)
     },
+    // 文件存在性解析（resolveFilePath）：pocket 无本地文件系统，无法判断桌面端文件是否存在。
+    // 返回非 null 的 `{ url: '' }` 使 chip 的 `resolved !== null` 判真 → 保持 resolved 态（与改动前
+    // deep stub 返回 undefined → `undefined !== null` 判真一致），零视觉回归；图片/媒体预览拿到
+    // 空 url 走「无数据」分支（与改动前 `if (undefined)` 走 else 一致）。
+    resolveFilePath: () => Promise.resolve({ url: '' }),
+    // 用系统默认程序打开本地文件（systemOpenFile）：pocket 无本地文件系统 → 静默无操作。
+    // 所有 pocket 可达调用点（file-path-chip:184 / message:568,572,575 / reasoning:233 / DefaultAppOpenButton:33）
+    // 均带 `.catch`，返回 Promise 不会产生同步 TypeError；`.catch` 拦不住同步 TypeError 但能拦 Promise rejection。
+    systemOpenFile: safeNoop,
     saveFilesToAgentSession: () => unsupported('保存文件到会话'),
     addAgentKnowledgeReferences: () => unsupported('知识库引用'),
     removeAgentKnowledgeReference: () => unsupported('知识库引用'),
@@ -1051,43 +1097,38 @@ export function installElectronApiStub(): void {
     killProcess: () => unsupported('进程管理'),
   }
 
-  // 用 Proxy 兜底：任何未显式 stub 的方法都返回安全空实现，杜绝 "undefined is not a function"
-  const handler = {
-    get(_target: Record<string, unknown>, prop: string): unknown {
-      if (prop in _target) return _target[prop]
-      // 常见 IPC 返回 Promise；纯函数返回 undefined
-      if (prop.startsWith('get') || prop.endsWith('Async') || prop === 'invoke') {
-        return safeNoop
+  // ===== 未显式 stub 的能力：返回真 undefined，而不是「永远成功」的可调用对象 =====
+  //
+  // 历史行为：未命中的 key → 可调用 Proxy（恒 resolve(undefined)、可无限嵌套）。
+  // 它把能力缺口全变成静默失败：
+  //   ① `if (window.electronAPI?.onXxx)` 判真 → 「假注册」（监听永不触发、零报错零日志）；
+  //   ② 存在性检测 + 降级逻辑被骗过（如 showDesktopNotification → Web Notification 兜底失效）；
+  //   ③ 缺口没有任何可观测信号，只能靠人工 grep 发现。
+  // 现在：未显式 stub 的 key 一律返回 undefined（存在性检测看到真相，调用方据此降级或隐藏入口），
+  // 开发构建下按首次访问聚合告警并列出缺失方法名。
+  const reportMissingKey = (key: string): undefined => {
+    if (!missingElectronApiKeys.has(key)) {
+      missingElectronApiKeys.add(key)
+      if (isDevBuild()) {
+        console.warn(
+          `[Pocket] electronAPI.${key} 未在 pocket stub 中显式实现，已按 undefined 返回。` +
+            `累计缺失 ${missingElectronApiKeys.size} 项：${[...missingElectronApiKeys].join(', ')}`,
+        )
       }
-      return noop
-    },
+    }
+    return undefined
   }
 
-  // 需要嵌套命名空间（electronAPI.team.*, electronAPI.chat.* 等）也 Proxy 化。
-  // ⚠️ 必须返回【可调用】对象：target 是函数（typeof 为 function），否则
-  // window.electronAPI.xxx() 直接调用会抛 "is not a function"（曾因返回纯对象 Proxy 踩坑）。
-  const makeDeepStub = (): unknown => {
-    const fn = (() => Promise.resolve(undefined)) as unknown as Record<string, unknown>
-    return new Proxy(fn, {
-      get: (_t, p) => {
-        if (typeof p === 'string') return makeDeepStub()
-        return undefined
-      },
-      apply: () => Promise.resolve(undefined),
-    })
-  }
-
-  // 顶层也允许任意嵌套访问
+  // 顶层：显式 stub 的成员照常返回，其余返回 undefined（不再伪造可调用对象）
   const top = new Proxy(stub, {
     get(t, p) {
-      if (typeof p === 'string' && p in t) return t[p]
-      if (typeof p === 'string') return makeDeepStub()
-      return undefined
+      if (typeof p !== 'string') return undefined
+      if (Object.prototype.hasOwnProperty.call(t, p)) return Reflect.get(t, p)
+      return reportMissingKey(p)
     },
   }) as unknown as Record<string, unknown>
 
   ;(globalThis as unknown as { electronAPI?: Record<string, unknown> }).electronAPI = top
-  void handler
 }
 
 /** 检查当前是否在 Electron/有真实 electronAPI（供平板逻辑判断） */

@@ -15,6 +15,24 @@
 
 import type { AgentEffort, ProferPermissionMode } from './agent'
 
+/** 预设作用域。 */
+export type AgentPresetScope = 'builtin-meta' | 'user-global' | 'workspace'
+
+/**
+ * 会话/默认配置对某个预设的稳定引用。
+ *
+ * 与旧版「仅 presetId」不同：scope 决定解析路径（内置元预设 / 全局 / 工作区），
+ * 避免跨工作区同名 ID 歧义。缺失字段兼容旧版仅 presetId 的记录。
+ */
+export interface PresetReference {
+  presetId: string
+  presetScope: AgentPresetScope
+  /** workspace 作用域必须提供；全局作用域不得依赖工作区 slug 解析。 */
+  workspaceSlug?: string
+  /** 可选的解析/审计版本。 */
+  presetVersion?: string
+}
+
 /** 产品内置工具组（预设可禁用，注入时直接不注册对应工具） */
 export const AGENT_PRESET_TOOL_GROUPS = ['task-graph', 'memory', 'collaboration', 'automation'] as const
 export type AgentPresetToolGroup = (typeof AGENT_PRESET_TOOL_GROUPS)[number]

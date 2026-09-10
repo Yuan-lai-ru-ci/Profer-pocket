@@ -342,6 +342,12 @@ export const agentPendingFilesAtomFamily = atomFamily((sessionId: string) =>
 /** 工作区能力版本号 — 每次修改 MCP/Skills 后自增，触发侧边栏重新获取 */
 export const workspaceCapabilitiesVersionAtom = atom(0)
 
+/** 会话删除墓碑 revision（sessionId → revision）；低 revision upsert 不能复活已删除会话。 */
+export const agentSessionTombstoneRevisionsAtom = atom<Map<string, number>>(new Map())
+
+/** 目录失效 revision（`catalog:workspaceSlug` → revision）；旧目录响应不能覆盖较新状态。 */
+export const agentCatalogRevisionsAtom = atom<Map<string, number>>(new Map())
+
 /** 工作区文件版本号 — 文件变化时自增，触发文件浏览器重新加载 */
 export const workspaceFilesVersionAtom = atom(0)
 

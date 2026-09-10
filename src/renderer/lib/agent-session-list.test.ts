@@ -5,6 +5,8 @@ import {
   replaceAgentSessionInFreshnessOrder,
   upsertAgentSession,
   mergeFetchedAgentSessions,
+  upsertAgentSessionProjection,
+  deleteAgentSessionProjection,
 } from './agent-session-list'
 
 function makeSession(
@@ -115,6 +117,89 @@ describe('upsertAgentSession', () => {
       sourceDelegationId: 'delegation-a',
       delegationStatus: 'completed',
     })
+  })
+})
+
+describe('upsertAgentSessionProjection', () => {
+  const projection = (revision: number, extra: Partial<import('@profer/shared').AgentSessionUiProjection> = {}): import('@profer/shared').AgentSessionUiProjection => ({
+    schemaVersion: 1,
+    id: 'a',
+    revision,
+    title: `标题-${revision}`,
+    createdAt: 1,
+    updatedAt: revision,
+    channelId: revision === 2 ? null : 'channel',
+    modelId: revision === 2 ? null : 'model',
+    agentRuntime: 'claude',
+    permissionMode: 'auto',
+    presetId: null,
+    presetReference: null,
+    openAIThinkingLevel: null,
+    codexFastMode: false,
+    autoQueueSendEnabled: true,
+    workspaceId: null,
+    pinned: false,
+    archived: false,
+    draft: false,
+    parentSessionId: null,
+    rootSessionId: null,
+    sourceDelegationId: null,
+    delegationRole: null,
+    delegationStatus: null,
+    delegationDepth: null,
+    sourceAutomationId: null,
+    automationGraduated: false,
+    completedButUnconfirmed: false,
+    stoppedByUser: false,
+    lastInterruptReason: null,
+    lastInterruptLabel: null,
+    lastInterruptAt: null,
+    ...extra,
+  })
+
+  test('Given 乱序完整快照 When 低 revision 晚到 Then 保留较新权威状态与本地附件', () => {
+    const local = makeSession('a', 20, {
+      revision: 3,
+      title: '新状态',
+      channelId: 'new-channel',
+      attachedDirectories: ['C:/local-only'],
+    })
+    const result = upsertAgentSessionProjection([local], projection(2, { title: '旧状态' }))
+
+    expect(result[0]).toMatchObject({ revision: 3, title: '新状态', channelId: 'new-channel' })
+    expect(result[0]?.attachedDirectories).toEqual(['C:/local-only'])
+  })
+
+  test('Given 高 revision 完整快照 When 应用 Then 显式 null 清除旧安全字段并保留本地附件', () => {
+    const local = makeSession('a', 1, {
+      revision: 1,
+      channelId: 'old-channel',
+      modelId: 'old-model',
+      attachedFiles: ['C:/local-only.txt'],
+    })
+    const result = upsertAgentSessionProjection([local], projection(2))
+
+    expect(result[0]).toMatchObject({ revision: 2, title: '标题-2', channelId: undefined, modelId: undefined })
+    expect(result[0]?.attachedFiles).toEqual(['C:/local-only.txt'])
+  })
+
+  test('Given 相同 revision 重复投递 When 应用 Then 结果幂等', () => {
+    const once = upsertAgentSessionProjection([], projection(4))
+    const twice = upsertAgentSessionProjection(once, projection(4))
+    expect(twice).toEqual(once)
+  })
+
+  test('Given 删除墓碑已到 When 旧或同 revision upsert 晚到 Then 会话不会复活', () => {
+    expect(upsertAgentSessionProjection([], projection(4), 4)).toEqual([])
+    expect(upsertAgentSessionProjection([], projection(3), 4)).toEqual([])
+    expect(upsertAgentSessionProjection([], projection(5), 4)).toHaveLength(1)
+  })
+})
+
+describe('deleteAgentSessionProjection', () => {
+  test('Given 删除墓碑先到 When 陈旧本地状态存在 Then 移除；更高 revision 不被旧墓碑删除', () => {
+    expect(deleteAgentSessionProjection([makeSession('a', 1, { revision: 2 })], 'a', 2)).toEqual([])
+    expect(deleteAgentSessionProjection([makeSession('a', 3, { revision: 3 })], 'a', 2)).toHaveLength(1)
   })
 })
 

@@ -622,11 +622,13 @@ export type ProferEvent =
   | { type: 'context_window'; contextWindow: number }
   | { type: 'permission_mode_changed'; mode: ProferPermissionMode }
   | { type: 'title_updated'; title: string }
-  | { type: 'external_run_started'; source: AgentExternalRunSource; sessionId: string; parentSessionId?: string; title?: string; workspaceId?: string; modelId?: string; startedAt: number; session?: AgentSessionMeta }
-  | { type: 'delegation_session_updated'; session: AgentSessionMeta }
-  // 跨端会话元数据同步：Pocket 远程命令修改会话后立即通知桌面与其他 Pocket 客户端。
-  | { type: 'session_updated'; session: AgentSessionMeta }
-  | { type: 'session_deleted'; sessionId: string }
+  | { type: 'external_run_started'; source: AgentExternalRunSource; sessionId: string; parentSessionId?: string; title?: string; workspaceId?: string; modelId?: string; startedAt: number; session?: AgentSessionUiProjection }
+  /** @deprecated 使用顶层 session_projection payload；仅保留旧客户端兼容。 */
+  | { type: 'delegation_session_updated'; session: AgentSessionUiProjection }
+  /** @deprecated 使用顶层 session_projection payload；仅保留旧客户端兼容。 */
+  | { type: 'session_updated'; session: AgentSessionUiProjection }
+  /** @deprecated 使用顶层 session_projection delete payload；仅保留旧客户端兼容。 */
+  | { type: 'session_deleted'; sessionId: string; revision?: number }
   | { type: 'run_resumed'; sessionId: string }
   // 会话 run 结束、active 所有权已释放（含手动压缩 /compact 等非对话 run）。
   // 协作层监听它做「父会话空闲后重查自动续跑」，修复 compaction 占位导致的续跑遗漏。
@@ -634,17 +636,54 @@ export type ProferEvent =
   // 会话 run 真正完成（平板 remote-service 在 orchestrator onComplete 时广播，携带完成元数据）。
   // 与 run_idle 的区别：run_idle 表示 active 所有权释放（可能无结果），run_completed 表示本轮有确定结束。
   // 平板靠它拿到真实 startedAt/stoppedByUser，替代用 Date.now() 伪造 startedAt 的旧路。
-  | { type: 'run_completed'; sessionId: string; stoppedByUser?: boolean; startedAt?: number; resultSubtype?: string; resultErrors?: string[]; backgroundTasksPending?: boolean }
+  | { type: 'run_completed'; sessionId: string; stoppedByUser?: boolean; startedAt?: number; resultSubtype?: string; resultErrors?: string[]; backgroundTasksPending?: boolean; endReason?: AgentEndReason; endReasonLabel?: string }
 
 /** 外部入口触发 Agent 运行的来源 */
 export type AgentExternalRunSource = 'feishu' | 'dingtalk' | 'wechat' | 'bridge' | 'delegation' | 'automation'
 
-/** IPC 传输的统一 payload（替代 AgentEvent） */
+/** UI Projection Plane：会话安全完整快照或删除墓碑。 */
+export type AgentSessionProjectionPayload =
+  | { kind: 'session_projection'; operation: 'upsert'; session: AgentSessionUiProjection }
+  | { kind: 'session_projection'; operation: 'delete'; sessionId: string; revision: number }
+
+/** 可失效并重新拉取的目录类型。 */
+export type AgentCatalogKind = 'channels' | 'presets' | 'workspace_capabilities' | 'workspaces'
+
+/** UI Projection Plane：目录只发送失效通知，不广播配置正文。 */
+export interface AgentCatalogInvalidation {
+  kind: 'catalog_invalidation'
+  catalog: AgentCatalogKind
+  workspaceSlug: string | null
+  revision: number
+  changedAt: number
+}
+
+/** IPC/WS 复用的三平面 payload。kind 是唯一分流依据。 */
 export type AgentStreamPayload =
   | { kind: 'sdk_message'; message: SDKMessage }
   | { kind: 'profer_event'; event: ProferEvent }
+  | AgentSessionProjectionPayload
+  | AgentCatalogInvalidation
 
 // ===== Agent 会话管理 =====
+
+/**
+ * Agent run 结束原因。
+ *
+ * - 持久化到会话 meta（lastInterruptReason），刷新/重启后可恢复中断说明 chip
+ * - 追加对话记录条目（interruption_record）
+ * - 透传到 STREAM_COMPLETE，驱动前端中断说明 chip 与 toast
+ *
+ * completed 表示正常完成，不算中断，不记录、不显示 chip。
+ */
+export type AgentEndReason =
+  | 'completed'        // 正常完成（不记录、不显示 chip）
+  | 'stopped_by_user'  // 用户手动停止
+  | 'max_turns'        // 达到轮次上限（Claude error_max_turns）
+  | 'max_budget'       // 达到预算上限（Claude error_max_budget_usd）
+  | 'max_tokens'       // 输出/上下文达到长度上限（Pi stopReason=length / subtype=max_tokens）
+  | 'error'            // 执行期错误 / preflight 错误 / 异常 catch
+  | 'unknown'          // 已知以外的未知 subtype
 
 /**
  * Agent 执行时使用的文件根。
@@ -656,6 +695,47 @@ export type AgentCwdMode = 'session' | 'project'
 
 /** 会话私有工作台的文件布局。缺失字段兼容旧版 `.context/` 子目录。 */
 export type SessionWorkbenchLayout = 'legacy-context' | 'root'
+
+/**
+ * UI Projection Plane：会话安全完整快照。
+ *
+ * 只包含可跨设备广播的「安全 UI 字段」，由桌面主进程逐字段白名单构建；
+ * 不含本地文件/目录等设备私有字段（这些由本地 meta 保留）。
+ */
+export interface AgentSessionUiProjection {
+  schemaVersion: 1
+  id: string
+  revision: number
+  title: string
+  createdAt: number
+  updatedAt: number
+  channelId: string | null
+  modelId: string | null
+  agentRuntime: AgentRuntime
+  permissionMode: ProferPermissionMode
+  presetId: string | null
+  presetReference: import('./agent-preset').PresetReference | null
+  openAIThinkingLevel: AgentThinkingLevel | null
+  codexFastMode: boolean
+  autoQueueSendEnabled: boolean
+  workspaceId: string | null
+  pinned: boolean
+  archived: boolean
+  draft: boolean
+  parentSessionId: string | null
+  rootSessionId: string | null
+  sourceDelegationId: string | null
+  delegationRole: string | null
+  delegationStatus: string | null
+  delegationDepth: number | null
+  sourceAutomationId: string | null
+  automationGraduated: boolean
+  completedButUnconfirmed: boolean
+  stoppedByUser: boolean
+  lastInterruptReason: AgentEndReason | null
+  lastInterruptLabel: string | null
+  lastInterruptAt: number | null
+}
 
 /**
  * Agent 会话轻量索引项
@@ -698,6 +778,8 @@ export interface AgentSessionMeta {
   workspaceId?: string
   /** 本会话绑定的 Agent 预设 ID（缺省时按工作区默认解析；预设系统两端共享） */
   presetId?: string
+  /** 本会话绑定的显式预设引用（新数据同时保存 presetId）。 */
+  presetReference?: import('./agent-preset').PresetReference
   /** 是否置顶 */
   pinned?: boolean
   /** 是否已归档 */
@@ -722,6 +804,14 @@ export interface AgentSessionMeta {
   completedButUnconfirmed?: boolean
   /** 最后一次流式执行是否被用户主动中断 */
   stoppedByUser?: boolean
+  /** 最近一次非正常结束的中断原因；正常完成时清除。 */
+  lastInterruptReason?: AgentEndReason
+  /** 最近中断的可读短文案。 */
+  lastInterruptLabel?: string
+  /** 最近中断时间戳。 */
+  lastInterruptAt?: number
+  /** 队列「自动发送」开关：轮结束是否自动发送队首消息。per-session 持久化，缺省为开。 */
+  autoQueueSendEnabled?: boolean
   /** 该会话当前的权限模式（持久化到磁盘，重启后恢复）。未设置时新会话默认 auto */
   permissionMode?: ProferPermissionMode
   /** 来源定时任务 ID（该会话由定时任务自动创建/复用时标记，用于侧栏显示钟表图标 + 跳转设置） */
@@ -748,6 +838,8 @@ export interface AgentSessionMeta {
   createdAt: number
   /** 更新时间戳 */
   updatedAt: number
+  /** 会话实体单调版本；历史数据缺失时按 0 兼容。 */
+  revision?: number
 }
 
 /** Whether an Agent session may be shown in user-facing session lists. */
