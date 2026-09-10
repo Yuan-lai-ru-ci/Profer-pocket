@@ -655,6 +655,11 @@ export class WsClient {
     return this.sendCommand({ type: 'create_session', ...payload })
   }
 
+  /** 将 Chat 对话历史迁移到指定 Agent 会话（对齐桌面 migrateChatToAgentSession）。 */
+  migrateChatToAgent(conversationId: string, agentSessionId: string): Promise<unknown> {
+    return this.sendCommand({ type: 'migrate_chat_to_agent', conversationId, agentSessionId })
+  }
+
   /** 项目草稿会话复用语义（对齐桌面 ensureProjectDraftAgentSession）：已有则复用，没有才创建 */
   ensureProjectDraftSession(payload: { workspaceId: string; channelId?: string; modelId?: string }): Promise<unknown> {
     return this.sendCommand({ type: 'ensure_project_draft_session', ...payload })

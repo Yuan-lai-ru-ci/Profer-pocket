@@ -95,10 +95,11 @@ export function ChatInput({ conversationId, streaming, pendingAttachments, onSet
   const setPendingAttachments = onSetPendingAttachments
   const [isDragOver, setIsDragOver] = React.useState(false)
   const [knowledgePickerOpen, setKnowledgePickerOpen] = React.useState(false)
+  const pocketFileInputRef = React.useRef<HTMLInputElement>(null)
 
 
   // 资料是本轮问题的结构化附件，不能脱离问题单独“发送”。
-  const canSend = content.trim().length > 0 && selectedModel !== null && !streaming
+  const canSend = (content.trim().length > 0 || pendingAttachments.length > 0) && selectedModel !== null && !streaming
 
   /**
    * 将文件列表添加为附件
@@ -153,8 +154,13 @@ export function ChatInput({ conversationId, streaming, pendingAttachments, onSet
     }
   }, [setPendingAttachments])
 
-  /** 通过 IPC 打开文件选择对话框 */
+  /** 通过文件选择器打开附件；Pocket 使用 WebView 原生选择器，桌面端继续走 IPC。 */
   const handleOpenFileDialog = React.useCallback(async (): Promise<void> => {
+    if (pocketMode) {
+      pocketFileInputRef.current?.click()
+      return
+    }
+
     try {
       const result = await window.electronAPI.openFileDialog()
       const largeFiles = result.largeFiles ?? []
@@ -202,7 +208,14 @@ export function ChatInput({ conversationId, streaming, pendingAttachments, onSet
     } catch (error) {
       console.error('[ChatInput] 文件选择对话框失败:', error)
     }
-  }, [setPendingAttachments])
+  }, [pocketMode, setPendingAttachments])
+
+  /** Pocket 原生文件选择器回调：File 对象直接复用现有 Base64 附件链路。 */
+  const handlePocketFileSelect = React.useCallback((event: React.ChangeEvent<HTMLInputElement>): void => {
+    const files = Array.from(event.target.files ?? [])
+    event.target.value = ''
+    if (files.length > 0) void addFilesAsAttachments(files)
+  }, [addFilesAsAttachments])
 
   /** 移除待发送附件 */
   const handleRemoveAttachment = React.useCallback((id: string): void => {
@@ -224,7 +237,7 @@ export function ChatInput({ conversationId, streaming, pendingAttachments, onSet
     onSend(content.trim())
     setContent('')
     // 附件清理由 ChatView 的 handleSend 负责
-  }, [canSend, content, onSend])
+  }, [canSend, content, onSend, setContent])
 
   /** 粘贴文件回调 */
   const handlePasteFiles = React.useCallback((files: File[]): void => {
@@ -402,6 +415,16 @@ export function ChatInput({ conversationId, streaming, pendingAttachments, onSet
           )}
 
           {/* TipTap 富文本编辑器 */}
+          <input
+            ref={pocketFileInputRef}
+            type="file"
+            accept="image/*,.pdf,.txt,.md,.csv,.json,.js,.jsx,.ts,.tsx,.py,.java,.go,.rs,.html,.css,.doc,.docx,.xls,.xlsx,.ppt,.pptx"
+            multiple
+            className="hidden"
+            tabIndex={-1}
+            onChange={handlePocketFileSelect}
+          />
+
           <RichTextInput
             value={content}
             onChange={setContent}

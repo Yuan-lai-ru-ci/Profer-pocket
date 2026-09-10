@@ -16,12 +16,46 @@ import * as React from 'react'
 import { useAtomValue } from 'jotai'
 import { uiScaleAtom, UI_SCALE_VALUES } from '@/atoms/ui-scale'
 
-export function UiScaleContainer({ children }: { children: React.ReactNode }): React.ReactElement {
+interface UiScaleContainerProps {
+  children: React.ReactNode
+  /** Pocket 原生 WebView 中键盘可能以 overlay 方式出现，需要用 visualViewport 高度重排布局。 */
+  pocketMode?: boolean
+}
+
+export function UiScaleContainer({ children, pocketMode = false }: UiScaleContainerProps): React.ReactElement {
   const scale = useAtomValue(uiScaleAtom)
   const s = UI_SCALE_VALUES[scale]
+  const [viewportHeight, setViewportHeight] = React.useState<number | null>(null)
+
+  React.useEffect(() => {
+    if (!pocketMode) return
+    const updateViewportHeight = (): void => {
+      const layoutHeight = window.innerHeight
+      const visualHeight = window.visualViewport?.height ?? layoutHeight
+      const imeHeight = Number.parseFloat(
+        window.getComputedStyle(document.documentElement).getPropertyValue('--pocket-ime-height'),
+      ) || 0
+      // 优先使用浏览器已经缩小的 visual viewport；Android 15 overlay IME 场景下，
+      // visual viewport 仍等于全屏高度，才用原生注入的键盘高度计算可用高度。
+      const height = visualHeight < layoutHeight - 1
+        ? visualHeight
+        : Math.max(0, layoutHeight - imeHeight)
+      if (height > 0) setViewportHeight(height)
+    }
+    updateViewportHeight()
+    window.addEventListener('resize', updateViewportHeight)
+    window.visualViewport?.addEventListener('resize', updateViewportHeight)
+    return () => {
+      window.removeEventListener('resize', updateViewportHeight)
+      window.visualViewport?.removeEventListener('resize', updateViewportHeight)
+    }
+  }, [pocketMode])
 
   return (
-    <div className="h-[100dvh] w-full overflow-hidden">
+    <div
+      className="w-full overflow-hidden"
+      style={pocketMode && viewportHeight ? { height: `${viewportHeight}px` } : { height: '100dvh' }}
+    >
       <div
         className="h-full w-full"
         style={
@@ -31,7 +65,7 @@ export function UiScaleContainer({ children }: { children: React.ReactNode }): R
                 transform: `scale(${s})`,
                 transformOrigin: 'top left',
                 width: `${100 / s}%`,
-                height: `${100 / s}dvh`,
+                height: `${100 / s}%`,
               }
         }
       >

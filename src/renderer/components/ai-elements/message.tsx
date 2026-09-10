@@ -640,6 +640,29 @@ const MarkdownPre = React.memo(function MarkdownPre({
   return <CodeBlock>{preChildren}</CodeBlock>
 })
 
+/** Markdown 表格：窄屏保留完整列，通过容器横向滑动查看。 */
+const MarkdownTable = React.memo(function MarkdownTable({
+  className,
+  children: tableChildren,
+  ...tableProps
+}: React.TableHTMLAttributes<HTMLTableElement>): React.ReactElement {
+  return (
+    <div
+      className="markdown-table-scroll my-4 max-w-full touch-pan-x overflow-x-auto overscroll-x-contain rounded-md"
+      tabIndex={0}
+      role="region"
+      aria-label="Markdown 表格，可左右滑动"
+    >
+      <table
+        {...tableProps}
+        className={cn('m-0 w-max min-w-full whitespace-nowrap', className)}
+      >
+        {tableChildren}
+      </table>
+    </div>
+  )
+})
+
 /** 行内代码 / 文件路径渲染器 */
 const MarkdownInlineCode = React.memo(function MarkdownInlineCode({
   children: codeChildren,
@@ -713,6 +736,17 @@ export const MessageResponse = React.memo(
     const components = React.useMemo(() => ({
       a: MarkdownLink,
       pre: MarkdownPre,
+      table: MarkdownTable,
+      img: ({ className, ...props }: React.ImgHTMLAttributes<HTMLImageElement>) => (
+        <img
+          {...props}
+          className={cn(
+            'block w-auto h-auto max-w-full max-h-[min(360px,35vh)] rounded-lg object-contain',
+            'md:max-h-[min(500px,50vh)]',
+            className,
+          )}
+        />
+      ),
       code: (props: React.HTMLAttributes<HTMLElement>) => (
         <MarkdownInlineCode {...props} basePath={basePath} basePaths={basePaths} />
       ),
@@ -942,7 +976,7 @@ function MessageAttachmentImage({ attachment, isSingle = false }: MessageAttachm
     <img
       src={imageSrc}
       alt={attachment.filename}
-      className="max-w-[500px] max-h-[min(500px,50vh)] rounded-lg object-contain cursor-pointer"
+      className="block w-auto h-auto max-w-full max-h-[min(360px,35vh)] rounded-lg object-contain cursor-pointer md:max-h-[min(500px,50vh)]"
       onClick={() => setLightboxOpen(true)}
     />
   ) : (
@@ -955,7 +989,7 @@ function MessageAttachmentImage({ attachment, isSingle = false }: MessageAttachm
   )
 
   return (
-    <div className="relative group inline-block">
+    <div className="relative group inline-block max-w-full overflow-hidden">
       {imgElement}
       <button
         type="button"
