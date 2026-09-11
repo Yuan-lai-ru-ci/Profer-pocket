@@ -1036,8 +1036,14 @@ export interface ElectronAPI {
   /** 获取拖拽文件的本地路径（替代已废弃的 File.path） */
   getPathForFile: (file: File) => string
 
-  /** 搜索工作区文件（用于 @ 引用，支持附加目录） */
-  searchWorkspaceFiles: (rootPath: string, query: string, limit?: number, additionalPaths?: string[], sessionPaths?: string[]) => Promise<FileSearchResult>
+  /** 搜索工作区文件（用于 @ 引用，支持附加目录）
+   *
+   *  首参语义按端而异：桌面端承载工作区根路径（`rootPath`）；pocket（平板远端）无本地
+   *  文件系统，首参承载 **sessionId**，搜索 roots 由服务端按会话授权推导
+   *  （见 `src/renderer/pocket/electronapi-stub.ts` 的 `searchWorkspaceFiles`）。
+   *  故此处取中性形参名。形参名不参与 TS 类型兼容判断，两端实现可各自命名。
+   */
+  searchWorkspaceFiles: (rootPathOrSessionId: string, query: string, limit?: number, additionalPaths?: string[], sessionPaths?: string[]) => Promise<FileSearchResult>
 
   // ===== 系统提示词管理 =====
 

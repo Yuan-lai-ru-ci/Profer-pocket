@@ -574,6 +574,23 @@ export class WsClient {
     return this.sendCommand({ type: 'session_detail', sessionId })
   }
 
+  /** Pi 推理档位能力（对齐桌面 IPC getPiReasoningCapability）：
+   *  档位由服务端 resolvePiReasoningCapability 计算（renderer 无 pi-ai 目录，无法本地推导）。 */
+  getPiReasoningCapability(provider: string, modelId: string): Promise<unknown> {
+    return this.sendCommand({ type: 'get_pi_reasoning_capability', provider, modelId })
+  }
+
+  /** 搜索会话可引用的工作区文件（@ 引用）：roots 由服务端按会话授权推导，
+   *  客户端不提交 rootPath / candidateBasePaths（与 resolve_and_read_file 同一授权策略）。 */
+  searchWorkspaceFiles(sessionId: string, query: string, limit?: number): Promise<unknown> {
+    return this.sendCommand({
+      type: 'search_workspace_files',
+      sessionId,
+      query,
+      ...(typeof limit === 'number' ? { limit } : {}),
+    })
+  }
+
   getSdkMessages(
     sessionId: string,
     opts?: { before?: number; targetMessages?: number },
@@ -669,7 +686,7 @@ export class WsClient {
     return this.sendCommand({ type: 'ensure_project_draft_session', ...payload })
   }
 
-  sendMessage(payload: { sessionId: string; userMessage: string; channelId: string; modelId?: string; workspaceId?: string; permissionMode?: 'auto' | 'plan' | 'bypassPermissions' }): Promise<unknown> {
+  sendMessage(payload: { sessionId: string; userMessage: string; channelId: string; modelId?: string; workspaceId?: string; permissionMode?: 'auto' | 'plan' | 'bypassPermissions'; uuid?: string; startedAt?: number }): Promise<unknown> {
     // 幂等去重键既要覆盖同一 WebView 的 WS 重连，也要覆盖“服务端已接收但 WebView
     // 被系统杀掉、未收到 accepted”的跨进程恢复窗口。
     const clientMessageId = claimPendingSendId(payload, WsClient.newClientMessageId)

@@ -888,7 +888,8 @@ export function AgentMessages({ sessionId, sessionModelId, messagesLoaded, persi
       </ConversationContent>
       <ScrollMinimap key={sessionId} items={minimapItems} pocketMode={pocketMode} sessionKey={sessionId} />
       <ConversationScrollButton />
-      {!pocketMode && allUserMessagesData.length > 0 && (
+      {allUserMessagesData.length > 0 && (
+        // PB-4：放开 pocket 侧守卫（StickyUserMessage 组件本身无移动端分支），修复滚动时用户气泡“丢失”的观感
         <StickyUserMessage userMessages={allUserMessagesData} />
       )}
     </Conversation>

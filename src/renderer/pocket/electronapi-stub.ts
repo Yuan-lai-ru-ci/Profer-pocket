@@ -14,6 +14,7 @@
 import type { AgentStreamEvent, AgentStreamCompletePayload, StreamChunkEvent, StreamReasoningEvent, StreamCompleteEvent, StreamErrorEvent, StreamToolActivityEvent, GenerateTitleInput } from '@profer/shared'
 import { CHAT_IPC_CHANNELS, BUILTIN_DEFAULT_ID, BUILTIN_DEFAULT_PROMPT } from '@profer/shared'
 import { debugLog } from '@/lib/debug-hud'
+import { getFileBaseName } from '@/lib/file-utils'
 
 interface HeatmapDailyEntry {
   date: string
@@ -132,7 +133,11 @@ interface PocketRemoteClient extends HeatmapRemoteClient {
     sessionId: string,
     opts?: { before?: number; targetMessages?: number },
   ): Promise<unknown>
-  sendMessage(payload: { sessionId: string; userMessage: string; channelId: string; modelId?: string; workspaceId?: string; permissionMode?: 'auto' | 'plan' | 'bypassPermissions' }): Promise<unknown>
+  sendMessage(payload: { sessionId: string; userMessage: string; channelId: string; modelId?: string; workspaceId?: string; permissionMode?: 'auto' | 'plan' | 'bypassPermissions'; uuid?: string; startedAt?: number }): Promise<unknown>
+  /** Pi 推理档位能力（服务端 resolvePiReasoningCapability） */
+  getPiReasoningCapability(provider: string, modelId: string): Promise<unknown>
+  /** 远程搜索会话可引用的工作区文件（roots 由服务端按会话授权推导） */
+  searchWorkspaceFiles(sessionId: string, query: string, limit?: number): Promise<unknown>
   /** 向正在运行的 Agent 注入消息（对齐桌面 queueAgentMessage：interrupt 软打断 / uuid 幂等） */
   queueMessage(payload: {
     sessionId: string
@@ -252,6 +257,24 @@ function setCachedPage(sessionId: string, state: SdkMessagesPageState): void {
 /** 返回当前会话已累计的消息数组（无则返回空数组，由调用方触发迁移）。 */
 function getCachedSdkMessages(sessionId: string): unknown[] {
   return sdkMessagesPageCache.get(sessionId)?.messages ?? []
+}
+
+/**
+ * PB-5（G1-d）：把刚发出、尚未被服务端分页确认的用户消息补进传输层分页缓存。
+ *
+ * 背景：渲染层（AgentView.pendingOptimisticMessagesRef）有自己的乐观副本，而 stub 侧
+ * `sdkMessagesPageCache` 只会在 `getAgentSessionSDKMessages` 时写入——两者是双真源。
+ * 若发送后立即下拉刷新/切会话回读，而服务端分页窗口尚未包含该条时，消息列表会短暂缺这一条。
+ *
+ * 边界：① 仅在会话已有分页缓存时追加（不无中生有创建只有 1 条消息的缓存页）；
+ * ② 用 `sdkMessageKey` 去重——服务端持久化后的消息 uuid 与乐观副本一致，不会重复。
+ */
+function appendOptimisticMessageToPageCache(sessionId: string, message: unknown): void {
+  const prev = sdkMessagesPageCache.get(sessionId)
+  if (!prev) return
+  const key = sdkMessageKey(message)
+  if (prev.messages.some((m) => sdkMessageKey(m) === key)) return
+  setCachedPage(sessionId, { ...prev, messages: [...prev.messages, message] })
 }
 
 // ===== 分页合并辅助 =====
@@ -463,6 +486,12 @@ export function installElectronApiStub(): void {
     // ---- 命令映射：Agent 核心动作 → WS 远程命令 ----
     sendAgentMessage: (input: Record<string, unknown>) => {
       if (!remoteClient) return Promise.reject(new Error('移动端连接未就绪'))
+      // G1-a：渲染进程预生成的 uuid / startedAt 透传给服务端。
+      // uuid 让服务端把持久化消息与乐观气泡按同一身份对齐（回传后气泡让位、不重复）；
+      // startedAt 让 STREAM_COMPLETE 的竞态保护比较同源于本机时钟，避免跨机绝对时钟偏差。
+      // 旧服务端不认识这两个字段会直接忽略，不构成协议破坏。
+      const uuid = typeof input.uuid === 'string' ? input.uuid : undefined
+      const startedAt = typeof input.startedAt === 'number' ? input.startedAt : undefined
       const payload = {
         sessionId: String(input.sessionId || ''),
         userMessage: String(input.userMessage || ''),
@@ -470,9 +499,24 @@ export function installElectronApiStub(): void {
         modelId: input.modelId as string | undefined,
         workspaceId: input.workspaceId as string | undefined,
         permissionMode: input.permissionModeOverride as 'auto' | 'plan' | 'bypassPermissions' | undefined,
+        uuid,
+        startedAt,
       }
       debugLog(`[WS send] session=${payload.sessionId} chars=${payload.userMessage.length}`)
-      return remoteClient.sendMessage(payload)
+      const cacheSessionId = payload.sessionId
+      return remoteClient.sendMessage(payload).then((result) => {
+        // PB-5：服务端已接受该消息 → 同步写入传输层分页缓存（加固，见函数注释）。
+        if (typeof uuid === 'string' && uuid.length > 0) {
+          appendOptimisticMessageToPageCache(cacheSessionId, {
+            type: 'user',
+            uuid,
+            message: { content: [{ type: 'text', text: payload.userMessage }] },
+            parent_tool_use_id: null,
+            _createdAt: typeof startedAt === 'number' ? startedAt : Date.now(),
+          })
+        }
+        return result
+      })
     },
     queueAgentMessage: async (input: Record<string, unknown>) => {
       // 平板队列消息必须走主进程 queue_message 指令（注入正在运行的 Agent）：
@@ -988,9 +1032,49 @@ export function installElectronApiStub(): void {
     // 商业版开关：pocket 无主进程配置源，恒按「非商业版」处理（useCreditsLoader → clearCreditsState）。
     getCommercialMode: () => Promise.resolve(false),
     // Pi 模型推理档位能力：pocket 无该数据源 → undefined（档位菜单按「未知能力」渲染）。
-    getPiReasoningCapability: () => Promise.resolve(undefined),
+    // Pi 推理档位能力（G3）：改由 WS 命令取服务端 resolvePiReasoningCapability 的计算结果。
+    // 为何不在客户端推导：catalog 分支需要主进程加载的 pi-ai 目录（renderer 拿不到）；
+    // profile 分支虽可算，但 pocket 的 shared 快照比桌面旧，会在 glm-5.3/grok-4.6 等模型上
+    // 给出与桌面不同的档位集合 → 等于把双端漂移换个地方复现。
+    // 旧服务端不认识该命令 → sendCommand 拒绝或 ok:false → 这里返回 undefined，
+    // 与改动前「恒 undefined」的降级完全等价（调用方 AgentView:733 已带 .catch 兜底）。
+    getPiReasoningCapability: async (provider: string, modelId?: string) => {
+      if (!remoteClient || !provider) return undefined
+      try {
+        const result = (await remoteClient.getPiReasoningCapability(provider, modelId ?? '')) as
+          | { levels?: unknown }
+          | null
+          | undefined
+        // 形状校验：非 ReasoningCapability（如旧服务端的错误对象）一律视为不可用。
+        if (!result || typeof result !== 'object' || !Array.isArray(result.levels)) return undefined
+        return result
+      } catch {
+        return undefined
+      }
+    },
     // 会话本地目录：pocket 无本地文件系统，远程协议未暴露会话路径 → null（调用方走「无路径」分支）。
     getAgentSessionPath: () => Promise.resolve(null),
+    // @ 引用文件搜索（G2-c）：桌面端是主进程本地 fs 递归扫描（rootPath 由 renderer 传入），
+    // pocket 无本地文件系统 → 改走 WS `search_workspace_files`，roots 由服务端从会话
+    // （会话工作目录 + attachedDirectories + 工作区附加目录 + attachedFiles）推导并做授权校验，
+    // 客户端不提交 rootPath/candidateBasePaths（与 resolve_and_read_file 同一授权策略）。
+    // 注意：pocket 语义下第一个参数承载 **sessionId**（调用方 file-mention-suggestion 已同步）；
+    // 形参名保持与 electron-api.d.ts 一致，避免两端 API 面分裂。
+    // 旧服务端不认识该命令 → sendCommand 拒绝/ok:false → 返回 null；调用方回退到
+    // 「暂时无法引用文件」的既有降级，不报错、不白屏。
+    searchWorkspaceFiles: async (sessionId: string, query: string, limit?: number) => {
+      if (!remoteClient || !sessionId) return null
+      try {
+        const result = (await remoteClient.searchWorkspaceFiles(sessionId, query, limit)) as
+          | { entries?: unknown }
+          | null
+          | undefined
+        if (!result || typeof result !== 'object' || !Array.isArray(result.entries)) return null
+        return result
+      } catch {
+        return null
+      }
+    },
     // 清除「已完成未确认」标记：pocket 无本地会话库 → 明确拒绝；调用方带 .catch（仅记日志）。
     clearAgentCompletionState: () => unsupported('清除会话完成标记'),
     // git diff 缓存失效：pocket 无本地 git 缓存 → 安全空操作（useGlobalAgentListeners 写工具完成路径直接调用）。
@@ -1076,10 +1160,19 @@ export function installElectronApiStub(): void {
     // deep stub 返回 undefined → `undefined !== null` 判真一致），零视觉回归；图片/媒体预览拿到
     // 空 url 走「无数据」分支（与改动前 `if (undefined)` 走 else 一致）。
     resolveFilePath: () => Promise.resolve({ url: '' }),
-    // 用系统默认程序打开本地文件（systemOpenFile）：pocket 无本地文件系统 → 静默无操作。
-    // 所有 pocket 可达调用点（file-path-chip:184 / message:568,572,575 / reasoning:233 / DefaultAppOpenButton:33）
-    // 均带 `.catch`，返回 Promise 不会产生同步 TypeError；`.catch` 拦不住同步 TypeError 但能拦 Promise rejection。
-    systemOpenFile: safeNoop,
+    // 打开文件（systemOpenFile）：pocket 无本地文件系统，无法让桌面程序真打开 → 语义冻结为
+    // 「应用内只读预览」。派发既有 'profer:file-preview' 事件（与 file-path-chip.tsx:200 同一模式），
+    // 由 pocket/main.tsx 挂载的 FilePreviewContainer → FilePreviewDialog → WS read_file_as_data_url
+    // （服务端命令已存在）完成预览。旧行为 safeNoop 会让所有 pocket 可达调用点静默无反应：
+    // file-path-chip:184 / message:601,605,608 / reasoning:233 / DefaultAppOpenButton:33 /
+    // TeamWorkspaceView:1850,1857。无路径时保持静默（不抛错），兼容既有 `.catch` 调用方。
+    systemOpenFile: async (filePath: string) => {
+      if (typeof filePath === 'string' && filePath.length > 0) {
+        window.dispatchEvent(new CustomEvent('profer:file-preview', {
+          detail: { path: filePath, name: getFileBaseName(filePath) },
+        }))
+      }
+    },
     saveFilesToAgentSession: () => unsupported('保存文件到会话'),
     addAgentKnowledgeReferences: () => unsupported('知识库引用'),
     removeAgentKnowledgeReference: () => unsupported('知识库引用'),

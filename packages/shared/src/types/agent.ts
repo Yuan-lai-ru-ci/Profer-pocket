@@ -1148,6 +1148,8 @@ export interface AgentSendInput {
   mentionedSessionIds?: string[]
   /** 渲染进程生成的流式开始时间戳，主进程原样回传到 STREAM_COMPLETE，确保竞态保护比较的是同一个值 */
   startedAt?: number
+  /** 前端预生成的消息 UUID（透传到持久化消息，用于乐观气泡与消息重载按 uuid 合并去重） */
+  uuid?: string
   /** 触发来源：用户手动 vs 定时任务自动触发（用于 UI 区分标记） */
   triggeredBy?: 'user' | 'automation' | 'delegation'
   /** 定时任务执行上下文（注入到系统提示词，用户不可见） */

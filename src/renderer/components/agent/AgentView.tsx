@@ -60,7 +60,7 @@ import { ProjectGraphPanel } from './ProjectGraphPanel'
 import { cn } from '@/lib/utils'
 import { getActiveAccelerator, getAcceleratorDisplay } from '@/lib/shortcut-registry'
 import { registerShortcut } from '@/lib/shortcut-registry'
-import { previewPanelOpenMapAtom, autoPreviewEnabledAtom, quotedSelectionMapAtom, currentQuotedSelectionAtom } from '@/atoms/preview-atoms'
+import { previewPanelOpenMapAtom, autoPreviewEnabledAtom, quotedSelectionMapAtom, currentQuotedSelectionAtom, currentAgentInterruptionAtom, agentInterruptionMapAtom, getAgentInterruptionTone } from '@/atoms/preview-atoms'
 import {
   agentStreamingStatesAtom,
   agentSessionStreamingStateAtomFamily,
@@ -586,7 +586,22 @@ export function AgentView({ sessionId, pocketMode = false, hideAgentHeader = fal
       .then((sdkMsgs) => {
         const arr = Array.isArray(sdkMsgs) ? (sdkMsgs as SDKMessage[]) : []
         if (arr.length > 0) {
-          setPersistedSDKMessages(arr)
+          // 1.7.1：与首次加载/重载路径同构——触顶分页结果同样可能不含尚未被持久化确认的
+          // 乐观消息（PB-5 的分页缓存只在会话已有缓存时才追加，首次发送成功前为空），
+          // 故这里也按 uuid 合并保留，避免乐观气泡被这次整体覆盖静默吞掉。
+          const persistedUuids = new Set(
+            arr.filter((m) => typeof (m as Record<string, unknown>).uuid === 'string')
+              .map((m) => (m as Record<string, unknown>).uuid as string),
+          )
+          const preserved: SDKMessage[] = []
+          for (const [uuid, optimistic] of pendingOptimisticMessagesRef.current) {
+            if (persistedUuids.has(uuid)) {
+              pendingOptimisticMessagesRef.current.delete(uuid)   // 已持久化，乐观副本让位
+            } else {
+              preserved.push(optimistic)
+            }
+          }
+          setPersistedSDKMessages(preserved.length > 0 ? [...arr, ...preserved] : arr)
         }
         const more = api.getSdkMessagesHasMore?.(sessionId)
         const nextHasMore = typeof more === 'boolean' ? more : pocketHistoryHasMoreRef.current
@@ -774,6 +789,7 @@ export function AgentView({ sessionId, pocketMode = false, hideAgentHeader = fal
   const store = useStore()
   const currentQuotedSelection = useAtomValue(currentQuotedSelectionAtom)
   const setQuotedSelectionMap = useSetAtom(quotedSelectionMapAtom)
+  const currentAgentInterruption = useAtomValue(currentAgentInterruptionAtom)
   const openPreview = useOpenPreview()
 
   /** 移除当前引用选中文本 */
@@ -784,6 +800,17 @@ export function AgentView({ sessionId, pocketMode = false, hideAgentHeader = fal
       return m
     })
   }, [sessionId, setQuotedSelectionMap])
+
+  /** 移除中断说明 chip（用户不想告知 Agent 时）：清会话级 atom。
+   *  与桌面的有意差异：pocket 无 updateAgentInterruptionState IPC（PB-14 chip 持久化本批不做），
+   *  因此不做会话 meta 同步清除；本批 chip 只存活于当前 renderer 会话生命周期内。 */
+  const handleRemoveInterruption = React.useCallback(() => {
+    store.set(agentInterruptionMapAtom, (prev) => {
+      const map = new Map(prev)
+      map.delete(sessionId)
+      return map
+    })
+  }, [sessionId, store])
 
   const suggestionsMap = useAtomValue(agentPromptSuggestionsAtom)
   const suggestion = suggestionsMap.get(sessionId) ?? null
@@ -1033,6 +1060,9 @@ export function AgentView({ sessionId, pocketMode = false, hideAgentHeader = fal
 
   // 持久化消息缓存 setter — 仅写入，读取时用 store.get 同步取值避免订阅触发重渲染
   const setMessagesCache = useSetAtom(agentSDKMessagesCacheAtom)
+  // 1.7.1：登记尚未被持久化重载确认的乐观消息（按 uuid），消息重载时合并保留，
+  // 避免队列自动发送的用户气泡被「主进程尚未持久化该用户消息」的整体重载覆盖。
+  const pendingOptimisticMessagesRef = React.useRef<Map<string, SDKMessage>>(new Map())
   const appendOptimisticPersistedMessage = React.useCallback((message: SDKMessage) => {
     // 切会话时优先命中内存缓存，因此乐观插入的用户消息也要同步写入缓存，
     // 否则“发送后立刻切走再切回”会短暂回退到旧消息数组。
@@ -1040,6 +1070,11 @@ export function AgentView({ sessionId, pocketMode = false, hideAgentHeader = fal
     persistedSDKMessagesRef.current = next
     setPersistedSDKMessages(next)
     setMessagesCache((prev) => setSessionMessagesCache(prev, sessionId, next))
+    // 1.7.1：有 uuid 的乐观消息登记到待合并表（重载返回且持久化确认后会让位）
+    const optimisticUuid = (message as Record<string, unknown>).uuid
+    if (typeof optimisticUuid === 'string') {
+      pendingOptimisticMessagesRef.current.set(optimisticUuid, message)
+    }
   }, [sessionId, setMessagesCache])
 
   // 消息是否已完成首次加载（用于 auto-send 等待）
@@ -1053,6 +1088,8 @@ export function AgentView({ sessionId, pocketMode = false, hideAgentHeader = fal
     const isSessionSwitch = loadingSessionIdRef.current !== sessionId
     if (isSessionSwitch) {
       loadingSessionIdRef.current = sessionId
+      // 1.7.1：乐观消息只属于当前会话，切会话时清空待合并登记，避免拼进新会话消息流
+      pendingOptimisticMessagesRef.current.clear()
       // 移动端：切会话时重置触顶加载状态（首次默认假设还有更多，待首帧返回后校正）。
       pocketHistoryHasMoreRef.current = true
       setPocketHistoryHasMore(true)
@@ -1085,10 +1122,27 @@ export function AgentView({ sessionId, pocketMode = false, hideAgentHeader = fal
       .then((sdkMsgs) => {
         if (cancelled) return
         const normalized: SDKMessage[] = Array.isArray(sdkMsgs) ? (sdkMsgs as SDKMessage[]) : []
-        // 写入缓存（含 LRU 淘汰，防止会话数增长导致内存无限膨胀）
-        setMessagesCache((prev) => setSessionMessagesCache(prev, sessionId, normalized))
+        // 1.7.1：合并尚未持久化的乐观消息（按 uuid），避免队列/自动发送的用户气泡被重载覆盖。
+        // 与桌面的差异（有意保留）：pocket 没有 normalizeAgentHistoryResult，这里直接用
+        // Array.isArray 归一化，因此本段不依赖 historyResult.messages；其余（让位/保留策略）逐字对齐。
+        const persistedUuids = new Set(
+          normalized.filter((m) => typeof (m as Record<string, unknown>).uuid === 'string')
+            .map((m) => (m as Record<string, unknown>).uuid as string),
+        )
+        const preserved: SDKMessage[] = []
+        for (const [uuid, optimistic] of pendingOptimisticMessagesRef.current) {
+          if (persistedUuids.has(uuid)) {
+            pendingOptimisticMessagesRef.current.delete(uuid)   // 已持久化，乐观副本让位
+          } else {
+            preserved.push(optimistic)
+          }
+        }
+        const merged = preserved.length > 0 ? [...normalized, ...preserved] : normalized
+        // 写入缓存（含 LRU 淘汰，防止会话数增长导致内存无限膨胀）；
+        // pocket 无 AGENT_CACHE_WINDOW 尾部截断，沿用既有 setSessionMessagesCache 形态。
+        setMessagesCache((prev) => setSessionMessagesCache(prev, sessionId, merged))
         unstable_batchedUpdates(() => {
-          setPersistedSDKMessages(normalized)
+          setPersistedSDKMessages(merged)
           setMessagesLoaded(true)
 
           // 移动端：首帧加载后同步服务端 hasMore，驱动触顶加载可用性。
@@ -1240,20 +1294,17 @@ export function AgentView({ sessionId, pocketMode = false, hideAgentHeader = fal
       })
 
       // 乐观更新：SDKMessage 格式（Phase 4）
-      const tempUserSDKMsg: SDKMessage = {
-        type: 'user',
-        message: {
-          content: [{ type: 'text', text: snapshot.message }],
-        },
-        parent_tool_use_id: null,
-        _createdAt: Date.now(),
-      } as unknown as SDKMessage
-      appendOptimisticPersistedMessage(tempUserSDKMsg)
+      // G1-a：先生成 uuid 作为这条用户消息的身份，随 sendAgentMessage 一并下发；
+      // 服务端持久化后回传同 uuid → pendingOptimisticMessagesRef 让位，气泡不重复。
+      const optimisticUuid = crypto.randomUUID()
+      appendOptimisticPersistedMessage(createUserSDKMessage(snapshot.message, optimisticUuid, streamStartedAt))
 
       // 发送消息
       const input: AgentSendInput = {
         sessionId,
         userMessage: snapshot.message,
+        // G1-a：复用乐观气泡 uuid，服务端持久化时按同 uuid 让位
+        uuid: optimisticUuid,
         channelId: snapshot.channelId,
         modelId: snapshot.modelId,
         workspaceId: snapshot.workspaceId,
@@ -2153,19 +2204,16 @@ export function AgentView({ sessionId, pocketMode = false, hideAgentHeader = fal
     })
 
     // 乐观更新：SDKMessage 格式的用户消息（Phase 4）
-    const tempUserSDKMsg: SDKMessage = {
-      type: 'user',
-      message: {
-        content: [{ type: 'text', text: finalMessage }],
-      },
-      parent_tool_use_id: null,
-      _createdAt: Date.now(),
-    } as unknown as SDKMessage
-    appendOptimisticPersistedMessage(tempUserSDKMsg)
+    // G1-a：先生成 uuid 作为这条用户消息的身份，随 sendAgentMessage 一并下发；
+    // 服务端持久化后回传同 uuid → pendingOptimisticMessagesRef 让位，气泡不重复。
+    const optimisticUuid = crypto.randomUUID()
+    appendOptimisticPersistedMessage(createUserSDKMessage(finalMessage, optimisticUuid, streamStartedAt))
 
     const input: AgentSendInput = {
       sessionId,
       userMessage: finalMessage,
+      // G1-a：复用乐观气泡 uuid，服务端持久化时按同 uuid 让位
+      uuid: optimisticUuid,
       channelId: agentChannelId,
       modelId: agentModelId || undefined,
       workspaceId: currentWorkspaceId || undefined,
@@ -2988,8 +3036,8 @@ export function AgentView({ sessionId, pocketMode = false, hideAgentHeader = fal
               </div>
             )}
 
-            {/* 附件 + 引用选中文本 Chip（同排并排） */}
-            {(pendingFiles.length > 0 || currentQuotedSelection) && (
+            {/* 附件 + 引用选中文本 / 中断说明 Chip（同排并排） */}
+            {(pendingFiles.length > 0 || currentQuotedSelection || (currentAgentInterruption && !streaming && !streamState?.stopping)) && (
               <div className="flex flex-wrap gap-2 px-3 pt-2.5 pb-1.5">
                 {pendingFiles.map((file) => (
                   <AttachmentPreviewItem
@@ -3006,6 +3054,18 @@ export function AgentView({ sessionId, pocketMode = false, hideAgentHeader = fal
                     text={currentQuotedSelection.text}
                     filePath={currentQuotedSelection.filePath}
                     onRemove={handleRemoveQuotedSelection}
+                  />
+                )}
+                {/* 中断说明 chip：流未在跑且未处于 stopping 过渡态时才展示（避免与运行指示器抢位） */}
+                {currentAgentInterruption && !streaming && !streamState?.stopping && (
+                  <QuotedSelectionChip
+                    variant="interruption"
+                    interruptionTone={getAgentInterruptionTone(currentAgentInterruption.reason)}
+                    tooltip="中断原因"
+                    description="中断原因"
+                    text={currentAgentInterruption.label}
+                    filePath={currentAgentInterruption.label}
+                    onRemove={handleRemoveInterruption}
                   />
                 )}
               </div>
