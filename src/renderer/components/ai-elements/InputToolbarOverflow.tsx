@@ -24,6 +24,7 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
+import { calculateVisibleCount } from './input-toolbar-overflow-utils'
 
 export interface ToolbarItem {
   /** 唯一标识 */
@@ -61,27 +62,6 @@ export function InputToolbarOverflow({
   const [itemWidths, setItemWidths] = React.useState<Record<string, number>>({})
   const [popoverOpen, setPopoverOpen] = React.useState(false)
 
-  // 容器宽度监听
-  React.useLayoutEffect(() => {
-    const el = containerRef.current
-    if (!el) return
-    setContainerWidth(el.getBoundingClientRect().width)
-
-    let raf = 0
-    const observer = new ResizeObserver((entries) => {
-      cancelAnimationFrame(raf)
-      raf = requestAnimationFrame(() => {
-        const entry = entries[0]
-        if (entry) setContainerWidth(entry.contentRect.width)
-      })
-    })
-    observer.observe(el)
-    return () => {
-      cancelAnimationFrame(raf)
-      observer.disconnect()
-    }
-  }, [])
-
   // 监听主行内每个 item 的实际宽度（覆盖 ModelSelector 等动态宽度场景）
   // 注意：依赖列表为空——每次 render 后由下方的 ref 注册 + 这里读取实现自动测量
   const readWidths = React.useCallback((): void => {
@@ -100,10 +80,51 @@ export function InputToolbarOverflow({
     })
   }, [])
 
+  // 容器宽度监听。首次挂载时父布局可能仍在完成（尤其是 pocket WebView
+  // 首次进入会话时），因此除了 ResizeObserver 外还在后续两帧重新读取一次。
+  // 这样不会把初次的 0px 测量永久保留为“所有 item 都可见”。
+  const readContainerWidth = React.useCallback((): void => {
+    const el = containerRef.current
+    if (!el) return
+    const width = el.getBoundingClientRect().width
+    setContainerWidth((previous) => Math.abs(previous - width) > 0.5 ? width : previous)
+  }, [])
+
+  React.useLayoutEffect(() => {
+    const el = containerRef.current
+    if (!el) return
+    let raf = 0
+    let settleRaf = 0
+    const measure = (): void => {
+      readContainerWidth()
+      readWidths()
+    }
+    const observer = new ResizeObserver(() => {
+      cancelAnimationFrame(raf)
+      raf = requestAnimationFrame(measure)
+    })
+    observer.observe(el)
+    measure()
+    // The first pass can occur before a hidden/mobile route has been laid out.
+    raf = requestAnimationFrame(() => {
+      measure()
+      settleRaf = requestAnimationFrame(measure)
+    })
+    return () => {
+      cancelAnimationFrame(raf)
+      cancelAnimationFrame(settleRaf)
+      observer.disconnect()
+    }
+  }, [readContainerWidth, readWidths])
+
   // 仅在 items 列表（key 集合）变化时重新注册 observer；
   // 宽度变化由 ResizeObserver 推送给 readWidths，不需要每次 render 都重订阅。
   // 之前缺依赖数组导致每次 render 都重跑 → setItemWidths → re-render → 死循环（React #185）。
   const itemKeysSignature = items.map((it) => it.key).join('|')
+  const itemWidthEntries = React.useMemo(
+    () => items.map((item) => ({ key: item.key, width: itemWidths[item.key] ?? 0 })),
+    [items, itemWidths],
+  )
   React.useLayoutEffect(() => {
     readWidths()
     let raf = 0
@@ -126,28 +147,11 @@ export function InputToolbarOverflow({
    * 缺失测量数据时返回 items.length，让所有 item 先显示再测量。
    */
   const visibleCount = React.useMemo(() => {
-    if (containerWidth === 0) return items.length
-    if (!items.every((it) => itemWidths[it.key] !== undefined)) return items.length
-
-    let total = 0
-    for (let i = 0; i < items.length; i++) {
-      const w = itemWidths[items[i]!.key]!
-      const next = total + w + (i > 0 ? gapPx : 0)
-      if (next > containerWidth) {
-        const reserved = moreButtonPx + gapPx
-        let fit = i
-        let acc = total
-        while (fit > 0 && acc + reserved > containerWidth) {
-          fit -= 1
-          const fitW = itemWidths[items[fit]!.key]!
-          acc -= fitW + (fit > 0 ? gapPx : 0)
-        }
-        return Math.max(0, fit)
-      }
-      total = next
-    }
-    return items.length
-  }, [containerWidth, itemWidths, items, gapPx, moreButtonPx])
+    const calculated = calculateVisibleCount(itemWidthEntries, containerWidth, gapPx, moreButtonPx)
+    // Keep the initial all-items render until every item has a real width.
+    // The scheduled layout reads above guarantee this converges after first layout.
+    return calculated ?? items.length
+  }, [containerWidth, gapPx, itemWidthEntries, items.length, moreButtonPx])
 
   const visibleItems = items.slice(0, visibleCount)
   const overflowItems = items.slice(visibleCount)

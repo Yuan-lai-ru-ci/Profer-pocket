@@ -3176,7 +3176,7 @@ export function AgentView({ sessionId, pocketMode = false, hideAgentHeader = fal
                   ? '正在压缩上下文，完成后可继续对话...'
                   : agentChannelId && hasAvailableModel
                     ? pocketMode
-                      ? '输入消息... (输入@引用文件，/调用Skill，#调用MCP，&引用会话)'
+                      ? '输入消息…'
                       : sendWithCmdEnter
                         ? '输入消息... (⌘/Ctrl+Enter 发送，Enter 换行，@ 引用文件，/ 调用 Skill，# 调用 MCP，& 引用会话)'
                         : '输入消息... (Enter 发送，Shift+Enter 换行，@ 引用文件，/ 调用 Skill，# 调用 MCP，& 引用会话)'
