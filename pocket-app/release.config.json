@@ -1,6 +1,6 @@
 {
-  "versionName": "0.1.13",
-  "versionCode": 12,
-  "releaseNotes": "",
+  "versionName": "0.1.14",
+  "versionCode": 13,
+  "releaseNotes": "pocket 双端能力对齐：用户消息切走切回不重复、@ 工作区文件引用、中断原因端到端、渠道变更实时刷新、Pi 推理档位、引用选区 chip。已知问题：部分中断场景未显示中断标记（已登记待修）。",
   "mandatory": false
 }
