@@ -20,7 +20,7 @@ import { ImageLightbox } from '@/components/ui/image-lightbox'
 import { ContentBlock } from './ContentBlock'
 import { TaskProgressCard } from './TaskProgressCard'
 import { TurnFileChangesSummary, buildTurnFileNameMap } from './TurnFileChangesSummary'
-import { ProcessBlockGroup, buildAssistantTurnRenderItems, buildCompletedToolResultIds } from './ProcessBlockGroup'
+import { ProcessBlockGroup, buildAssistantTurnRenderItems, buildCompletedToolResultIds, shouldDefaultExpandProcessGroup } from './ProcessBlockGroup'
 import { extractToolResultText, isTaskProgressTool, parseTaskCreateResult } from './task-progress'
 import { normalizeThinkTagsInContentBlocks } from './thinking-tag-parser'
 import { extractReadKnowledgeItems } from './knowledge-read-indicator'
@@ -537,9 +537,15 @@ export interface AssistantTurnRendererProps {
   stoppedByUser?: boolean
   /** 用户在前端选择的模型 ID（优先用于显示名称） */
   sessionModelId?: string
+  /**
+   * R10（仅 pocket 强制刷新后的最后一个可见 turn）：若本轮内容全部被归入同一个
+   * 「执行过程」分组（无外置最终回复块），该分组默认展开，保证刷新后能看到最终输出。
+   * 桌面端不传 ⇒ undefined，行为不变。
+   */
+  expandTrailingProcessGroup?: boolean
 }
 
-export function AssistantTurnRenderer({ turn, allMessages, historicalTaskSubjects, basePath, onFork, onRewind, onRetry, onRetryInNewSession, onCompact, isStreaming, stoppedByUser, sessionModelId }: AssistantTurnRendererProps): React.ReactElement | null {
+export function AssistantTurnRenderer({ turn, allMessages, historicalTaskSubjects, basePath, onFork, onRewind, onRetry, onRetryInNewSession, onCompact, isStreaming, stoppedByUser, sessionModelId, expandTrailingProcessGroup }: AssistantTurnRendererProps): React.ReactElement | null {
   const channels = useAtomValue(channelsAtom)
   const processGroupsKeepExpanded = useAtomValue(agentProcessGroupsKeepExpandedAtom)
   // 收集所有 assistant 消息的内容块，保留 parent_tool_use_id 关联
@@ -717,6 +723,9 @@ export function AssistantTurnRenderer({ turn, allMessages, historicalTaskSubject
                   isStreaming={isStreaming}
                   keepExpandedAfterComplete={processGroupsKeepExpanded}
                   isMessageTail={itemIndex === renderItems.length - 1}
+                  // R10：整轮都被折叠进执行过程时（无外置最终回复），强制刷新后默认展开，
+                  // 避免用户只看到一个「执行过程：N 次工具调用」标题、看不到最终输出。
+                  defaultExpanded={shouldDefaultExpandProcessGroup(renderItems, itemIndex, { forceReload: !!expandTrailingProcessGroup })}
                 >
                   {item.items.map((groupItem) => renderProcessGroupBlock(groupItem.block, groupItem.index))}
                 </ProcessBlockGroup>
@@ -1354,6 +1363,8 @@ export interface MessageGroupRendererProps {
   stoppedByUser?: boolean
   /** 用户在前端选择的模型 ID（优先用于显示名称） */
   sessionModelId?: string
+  /** R10：强制刷新后让「整轮都在执行过程里」的尾部过程分组默认展开（桌面不传）。 */
+  expandTrailingProcessGroup?: boolean
 }
 
 /**
@@ -1430,7 +1441,7 @@ export function getGroupPreview(group: MessageGroup): string {
   return texts.join(' ').slice(0, 200)
 }
 
-export function MessageGroupRenderer({ group, allMessages, historicalTaskSubjects, basePath, onFork, onRewind, onRetry, onRetryInNewSession, onCompact, isStreaming, stoppedByUser, sessionModelId }: MessageGroupRendererProps): React.ReactElement | null {
+export function MessageGroupRenderer({ group, allMessages, historicalTaskSubjects, basePath, onFork, onRewind, onRetry, onRetryInNewSession, onCompact, isStreaming, stoppedByUser, sessionModelId, expandTrailingProcessGroup }: MessageGroupRendererProps): React.ReactElement | null {
   const groupId = getGroupId(group)
 
   if (group.type === 'user') {
@@ -1467,6 +1478,7 @@ export function MessageGroupRenderer({ group, allMessages, historicalTaskSubject
         isStreaming={isStreaming}
         stoppedByUser={stoppedByUser}
         sessionModelId={sessionModelId}
+        expandTrailingProcessGroup={expandTrailingProcessGroup}
       />
     </div>
   )

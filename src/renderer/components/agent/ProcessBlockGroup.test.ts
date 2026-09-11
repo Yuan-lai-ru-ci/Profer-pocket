@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { buildAssistantTurnRenderItems, buildProcessGroupToolNames } from './ProcessBlockGroup'
+import { buildAssistantTurnRenderItems, buildProcessGroupToolNames, shouldDefaultExpandProcessGroup } from './ProcessBlockGroup'
 import type { SDKContentBlock } from '@profer/shared'
 
 const tool = (id: string, name = 'Read'): SDKContentBlock => ({
@@ -175,5 +175,49 @@ describe('Agent 过程块折叠分组', () => {
     ])
 
     expect(toolNames).toEqual(['Grep', 'Read', 'Bash'])
+  })
+})
+
+describe('R10 强制刷新后的过程分组默认展开判定', () => {
+  const allInGroup = buildAssistantTurnRenderItems([
+    thinking(),
+    tool('tool-1'),
+    tool('tool-2'),
+  ])
+
+  test('given 整轮都在过程分组（无外置回复）when forceReload then 默认展开', () => {
+    expect(allInGroup).toHaveLength(1)
+    expect(shouldDefaultExpandProcessGroup(allInGroup, 0, { forceReload: true })).toBe(true)
+  })
+
+  test('given 无 forceReload then 一律不默认展开（桌面/普通路径行为不变）', () => {
+    expect(shouldDefaultExpandProcessGroup(allInGroup, 0, {})).toBe(false)
+    expect(shouldDefaultExpandProcessGroup(allInGroup, 0, { forceReload: false })).toBe(false)
+  })
+
+  test('given 末尾已有外置最终回复 when forceReload then 不展开过程分组', () => {
+    const withFinalText = buildAssistantTurnRenderItems([thinking(), tool('tool-1'), text('最终输出')])
+
+    expect(withFinalText.map((item) => item.type)).toEqual(['process-group', 'block'])
+    // 过程分组不是末项，且本轮存在外置 block ⇒ 不默认展开
+    expect(shouldDefaultExpandProcessGroup(withFinalText, 0, { forceReload: true })).toBe(false)
+    expect(shouldDefaultExpandProcessGroup(withFinalText, 1, { forceReload: true })).toBe(false)
+  })
+
+  test('given 末项不是过程分组或下标越界 then 不展开', () => {
+    const items = buildAssistantTurnRenderItems([tool('tool-1'), text('最终输出')])
+    expect(shouldDefaultExpandProcessGroup(items, 0, { forceReload: true })).toBe(false)
+    expect(shouldDefaultExpandProcessGroup(items, 99, { forceReload: true })).toBe(false)
+  })
+
+  test('given 流式中尚未拆分 when forceReload then 整组展开（能看到流式内容）', () => {
+    const streamingItems = buildAssistantTurnRenderItems([
+      tool('tool-1'),
+      tool('tool-2'),
+      text('可能的中间说明'),
+    ], { isStreaming: true, completedToolResultIds: new Set(['tool-2']) })
+
+    expect(streamingItems).toHaveLength(1)
+    expect(shouldDefaultExpandProcessGroup(streamingItems, 0, { forceReload: true })).toBe(true)
   })
 })

@@ -15,6 +15,7 @@ import type { AgentStreamEvent, AgentStreamCompletePayload, StreamChunkEvent, St
 import { CHAT_IPC_CHANNELS, BUILTIN_DEFAULT_ID, BUILTIN_DEFAULT_PROMPT } from '@profer/shared'
 import { debugLog } from '@/lib/debug-hud'
 import { getFileBaseName } from '@/lib/file-utils'
+import { resolvePocketInteractionVerdict, type InteractionVerdictQuery } from './pending-interaction-guard'
 
 interface HeatmapDailyEntry {
   date: string
@@ -124,6 +125,9 @@ interface PocketRemoteClient extends HeatmapRemoteClient {
   updateSessionThinkingLevel(sessionId: string, level: string | null): Promise<unknown>
   getUserProfile(): Promise<unknown>
   getPendingInteractions(sessionId?: string): Promise<unknown>
+  /** 活跃 Agent 会话的运行时上下文窗口快照（对齐桌面 remote-service `get_agent_runtime_contexts`）。
+   *  旧版桌面端不识别该命令时返回 ok:false，调用方静默降级。 */
+  getAgentRuntimeContexts(sessionIds?: string[]): Promise<unknown>
   listChannels(): Promise<unknown>
   createSession(payload: { title?: string; channelId?: string; workspaceId?: string; modelId?: string; permissionMode?: 'auto' | 'plan' | 'bypassPermissions' }): Promise<unknown>
   migrateChatToAgent(conversationId: string, agentSessionId: string): Promise<unknown>
@@ -212,6 +216,16 @@ export function setPocketRemoteClient(client: PocketRemoteClient | null): void {
 }
 
 /**
+ * 读取当前注入的远程客户端。
+ *
+ * pocket 侧的非 IPC 通道（如权威上下文窗口水合）需要直接发起只读 WS 命令；
+ * 未连接/已解绑时为 null，调用方据此静默降级。
+ */
+export function getPocketRemoteClient(): PocketRemoteClient | null {
+  return remoteClient
+}
+
+/**
  * 最后成功获取的渠道列表快照。
  *
  * listChannels 在 WS 未就绪 / 获取失败 / 桌面端返回空列表时返回快照而不是空数组：
@@ -257,6 +271,25 @@ function setCachedPage(sessionId: string, state: SdkMessagesPageState): void {
 /** 返回当前会话已累计的消息数组（无则返回空数组，由调用方触发迁移）。 */
 function getCachedSdkMessages(sessionId: string): unknown[] {
   return sdkMessagesPageCache.get(sessionId)?.messages ?? []
+}
+
+/**
+ * R10（强制刷新）：丢弃某个会话的传输层分页窗口。
+ *
+ * 分页缓存保存的是「已累计」消息数组 + 起点游标，是**增量**语义：若它曾因事件丢失/
+ * 早期截断而带缺口，后面的 `paginateFirst` 刷新只会用去重键做前缀合并，缺口永远补不回来
+ * （用户看到的就是「桌面已显示、移动端输出缩在执行过程里」）。强制刷新必须先丢缓存，
+ * 再走无参全量拉取（`getAgentSessionSDKMessages(sessionId)` 会重建为 startIndex=0/hasMore=false）。
+ *
+ * 注意：只动传输层缓存，渲染层 atom（agentSDKMessagesCacheAtom）保持不动——全量拉取
+ * 失败时界面继续用旧数据展示，不会白屏。
+ */
+export function invalidatePocketSdkMessagesPageCache(sessionId?: string): void {
+  if (typeof sessionId === 'string' && sessionId.length > 0) {
+    sdkMessagesPageCache.delete(sessionId)
+    return
+  }
+  sdkMessagesPageCache.clear()
 }
 
 /**
@@ -738,6 +771,10 @@ export function installElectronApiStub(): void {
       if (!remoteClient) return Promise.reject(new Error('移动端连接未就绪'))
       return remoteClient.respondExitPlanMode(requestId, action as 'approve_auto' | 'approve_edit' | 'deny' | 'feedback', feedback)
     },
+    // 交互请求过期判定（R8-P0）：三个横幅在关闭/提交前用主端 pending 快照确认该 requestId
+    // 是否仍待处理。连接未建立 / 旧服务端不支持该命令时返回 'unknown'，调用方按原有行为处理。
+    getPendingInteractionVerdict: (query: InteractionVerdictQuery) =>
+      resolvePocketInteractionVerdict(remoteClient, query),
     stopAgent: (sessionId: string) => {
       // 记录用户主动停止标记：run_idle 桥接 STREAM_COMPLETE 时用（stoppedByUser 展示“已停止”）
       if (sessionId) pocketStoppedByUser.add(String(sessionId))

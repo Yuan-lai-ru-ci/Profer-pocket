@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- Light navigation/status bar icons in day mode; values-night overrides this. -->
-    <bool name="profer_light_system_bars">true</bool>
+    <!-- 系统栏底色固定为 Profer 深色 ⇒ 图标必须始终为浅色，故固定 false。
+         values-night 保持同值（系统深浅色不再影响系统栏）。 -->
+    <bool name="profer_light_system_bars">false</bool>
 </resources>

@@ -78,6 +78,7 @@ import { getAgentCompletionMarkers } from '@/lib/agent-completion-presence'
 import { getPlanModeChangeFromToolName, updatePlanModeSessionSet } from '@/lib/agent-plan-mode'
 import { getSessionFileChangeKind, upsertSessionFileChange } from '@/lib/session-file-changes'
 import { isAbsoluteFilePath, resolveRelativeToAbsolute } from '@/lib/file-utils'
+import { clearAuthoritativeContextWindow, getAuthoritativeContextWindow, hydrateAgentRuntimeContexts } from '@/pocket/agent-runtime-context'
 
 /** 触发右侧文件浏览器自动定位的写入类工具集合 */
 const WRITE_TOOLS = new Set(['Write', 'Edit', 'MultiEdit', 'NotebookEdit', 'Update'])
@@ -156,7 +157,7 @@ function uniqueTruthyPaths(paths: Array<string | null | undefined>): string[] {
 // Phase 2 将移除此转换，直接使用 SDKMessage 渲染
 // ============================================================================
 
-function payloadToLegacyEvents(payload: AgentStreamPayload): AgentEvent[] {
+function payloadToLegacyEvents(payload: AgentStreamPayload, sessionId?: string): AgentEvent[] {
   if (payload.kind === 'profer_event') {
     const evt = payload.event
     switch (evt.type) {
@@ -179,7 +180,9 @@ function payloadToLegacyEvents(payload: AgentStreamPayload): AgentEvent[] {
       case 'model_resolved':
         return [{ type: 'model_resolved', model: evt.model }]
       case 'context_window':
-        // main 进程从 SDK result 拿到的真实 contextWindow，转成 usage_update 让 atom 合并到 streamState
+        // main 进程从 SDK result 拿到的真实 contextWindow，转成 usage_update 让 atom 合并到 streamState。
+        // 注意：usage_update 只在 contextWindow 为空时填补，因此真正的覆盖由调用方
+        // 先一步的 hydrateAgentRuntimeContexts 完成（见下方 context_window 预处理）。
         return [{ type: 'usage_update', usage: { contextWindow: evt.contextWindow } }]
       case 'permission_mode_changed':
         return [{ type: 'permission_mode_changed', mode: evt.mode }]
@@ -294,7 +297,10 @@ function payloadToLegacyEvents(payload: AgentStreamPayload): AgentEvent[] {
 
     case 'result': {
       const rMsg = msg as SDKResultMessage
-      const contextWindow = resolveContextWindowFromModelUsage(rMsg.modelUsage, rMsg._channelModelId)
+      // 主端/SDK 确认的权威窗口优先于 modelUsage 推断：部分渠道（如智谱）不返回实测 contextWindow，
+      // resolveContextWindowFromModelUsage 会退化为按模型名推断的 200K，不得把权威值改回去。
+      const authoritativeWindow = sessionId ? getAuthoritativeContextWindow(sessionId) : undefined
+      const contextWindow = authoritativeWindow ?? resolveContextWindowFromModelUsage(rMsg.modelUsage, rMsg._channelModelId)
       // result.usage 是整个 query 内所有模型调用的累计求和，不能当成当前上下文占用，
       // 否则进度环会虚高、冲破 100%（PR #821 修的正是这个问题）。
       //
@@ -814,8 +820,22 @@ export function useGlobalAgentListeners(): void {
           }
         }
 
+        // 主端/SDK 确认的上下文窗口是权威值：必须直接写进流状态。
+        // 只发 usage_update 是不够的 —— 该分支仅在 contextWindow 为空时填补，无法覆盖
+        // 此前按模型名推断出的 fallback（R2 根因）。这里同时登记权威值（run 结束前有效）。
+        if (payload.kind === 'profer_event' && payload.event.type === 'context_window') {
+          const authoritativeWindow = payload.event.contextWindow
+          if (typeof authoritativeWindow === 'number' && Number.isFinite(authoritativeWindow) && authoritativeWindow > 0) {
+            store.set(agentStreamingStatesAtom, (prev) => hydrateAgentRuntimeContexts(prev, [{
+              sessionId,
+              contextWindow: authoritativeWindow,
+              updatedAt: Date.now(),
+            }]))
+          }
+        }
+
         // Phase 1 兼容：将新 AgentStreamPayload 转换为旧 AgentEvent[]
-        const legacyEvents = payloadToLegacyEvents(payload)
+        const legacyEvents = payloadToLegacyEvents(payload, sessionId)
 
         for (const event of legacyEvents) {
           // 会话首次进入 running 时，清除旧的完成提醒状态
@@ -1356,6 +1376,11 @@ export function useGlobalAgentListeners(): void {
           // 后台任务等待态：保留后台任务列表（面板继续显示在跑任务），不做收尾清理，
           // 等任务完成 Agent 自动唤醒续轮后再走真正的完成路径。
           if (backgroundTasksPending) return
+
+          // run 已真正结束：清除权威窗口登记。
+          // 否则下次切换模型（AgentView 会把 contextWindow 置空）后，旧分母会顶住新推断值，
+          // 让圆环丢失「上下文 x/y」。
+          clearAuthoritativeContextWindow(data.sessionId)
 
           // 清理后台任务
           store.set(backgroundTasksAtomFamily(data.sessionId), [])

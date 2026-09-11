@@ -6,9 +6,12 @@
         <!-- Customize your theme here. -->
         <item name="colorPrimary">@color/colorPrimary</item>
         <item name="colorPrimaryDark">@color/colorPrimaryDark</item>
-        <item name="colorAccent">@color/colorAccent</item>
+        <item name="colorAccent">@color/profer_accent</item>
     </style>
 
+    <!-- 运行期主题：BridgeActivity.onCreate 会 setTheme(AppTheme.NoActionBar)，WebView 也在该主题
+         上下文中创建，因此「系统栏三色 / 图标对比度 / 光标拖柄配色」都以本主题为准。
+         系统栏三色 = @color/profer_* 固定 #0b0d0e（values 与 values-night 同值，不再跟随系统深浅色）。 -->
     <style name="AppTheme.NoActionBar" parent="Theme.AppCompat.DayNight.NoActionBar">
         <item name="windowActionBar">false</item>
         <item name="windowNoTitle">true</item>
@@ -18,15 +21,34 @@
         <item name="android:navigationBarColor">@color/profer_navigation_bar</item>
         <item name="android:windowLightStatusBar">@bool/profer_light_system_bars</item>
         <item name="android:windowLightNavigationBar">@bool/profer_light_system_bars</item>
+        <!-- 光标拖柄（WebView 文本插入手柄）：显式指向自绘资源，形状与背景由我们决定，
+             不再依赖设备框架自带的 text_select_handle_*（鸿蒙等机型上是带杂底的绿色水滴）。 -->
+        <item name="android:textSelectHandle">@drawable/pocket_text_select_handle_middle</item>
+        <!-- 拖柄着色来源：AOSP 的 text_select_handle_*_material 就是以 colorControlActivated
+             对灰度手柄做 tint；颜色统一钉死为 Profer 品牌蓝（day/night 同值）。 -->
+        <item name="colorAccent">@color/profer_accent</item>
+        <item name="android:colorAccent">@color/profer_accent</item>
+        <item name="android:colorControlActivated">@color/profer_accent</item>
     </style>
 
 
+    <!-- 启动主题：只覆盖启动期窗口配色，保证冷启动全程没有白色区域。 -->
     <style name="AppTheme.NoActionBarLaunch" parent="Theme.SplashScreen">
-        <item name="android:background">@drawable/splash</item>
+        <!-- 原先是指向白底 splash.png；窗口实际取 windowBackground，该 drawable 并不会绘制，
+             这里统一改为深色，彻底移除启动路径上的白色资源引用。 -->
+        <item name="android:background">@color/profer_window_background</item>
         <item name="android:windowBackground">@color/profer_window_background</item>
         <item name="android:statusBarColor">@color/profer_status_bar</item>
         <item name="android:navigationBarColor">@color/profer_navigation_bar</item>
         <item name="android:windowLightStatusBar">@bool/profer_light_system_bars</item>
         <item name="android:windowLightNavigationBar">@bool/profer_light_system_bars</item>
+        <!-- Android 12+ 的系统启动画面背景：Theme.SplashScreen 默认取 ?android:colorBackground
+             （系统亮色下为白色），会在冷启动瞬间闪白，这里改为 Profer 深色。 -->
+        <item name="android:windowSplashScreenBackground">@color/profer_window_background</item>
+        <!-- 与运行期主题保持一致（主题切换时序差异下也不回退到设备默认色）。 -->
+        <item name="android:textSelectHandle">@drawable/pocket_text_select_handle_middle</item>
+        <item name="colorAccent">@color/profer_accent</item>
+        <item name="android:colorAccent">@color/profer_accent</item>
+        <item name="android:colorControlActivated">@color/profer_accent</item>
     </style>
 </resources>

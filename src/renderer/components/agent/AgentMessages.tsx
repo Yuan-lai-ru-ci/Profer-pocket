@@ -25,6 +25,7 @@ import { useStickToBottomContext } from 'use-stick-to-bottom'
 import { ScrollMinimap } from '@/components/ai-elements/scroll-minimap'
 import type { MinimapItem } from '@/components/ai-elements/scroll-minimap'
 import { StickyUserMessage } from '@/components/ai-elements/sticky-user-message'
+import { shouldRenderStickyUserMessage } from './pocket-ui-switches'
 import { useSmoothStream } from '@profer/ui'
 import { formatMessageTime } from '@/components/chat/ChatMessageItem'
 import { getModelLogo, resolveModelDisplayName, resolveModelProvider } from '@/lib/model-logo'
@@ -164,6 +165,13 @@ interface AgentMessagesProps {
   historyMoreAvailable?: boolean
   /** 移动端：正在补拉更早消息（防抖 + 顶部状态）。 */
   historyLoadingEarlier?: boolean
+  /**
+   * R10：强制刷新（重新加载会话）后，若最后一轮 assistant 的内容**全部**被归入一个
+   * 「执行过程」分组（没有外置的最终回复块），让该分组默认展开——保证刷新后用户
+   * 立刻能看到最终输出，而不是只看到一个可展开的标题行。
+   * 仅在 pocket 强制刷新后的消息子树实例里为 true；桌面端不传（undefined），行为不变。
+   */
+  forceExpandTrailingProcessGroup?: boolean
 }
 
 /** 空状态引导 — 使用 WelcomeEmptyState */
@@ -539,7 +547,7 @@ function AgentRunningIndicator({ startedAt, backgroundWaiting = false }: { start
   )
 }
 
-export function AgentMessages({ sessionId, sessionModelId, messagesLoaded, persistedSDKMessages, streaming, streamState, liveMessages, sessionPath, attachedDirs, stoppedByUser, onRetry, onRetryInNewSession, onFork, onRewind, onCompact, pocketMode = false, onLoadEarlierHistory, historyMoreAvailable, historyLoadingEarlier }: AgentMessagesProps): React.ReactElement {
+export function AgentMessages({ sessionId, sessionModelId, messagesLoaded, persistedSDKMessages, streaming, streamState, liveMessages, sessionPath, attachedDirs, stoppedByUser, onRetry, onRetryInNewSession, onFork, onRewind, onCompact, pocketMode = false, onLoadEarlierHistory, historyMoreAvailable, historyLoadingEarlier, forceExpandTrailingProcessGroup = false }: AgentMessagesProps): React.ReactElement {
   const userProfile = useAtomValue(userProfileAtom)
   const setMinimapCache = useSetAtom(tabMinimapCacheAtom)
   const channels = useAtomValue(channelsAtom)
@@ -795,7 +803,7 @@ export function AgentMessages({ sessionId, sessionModelId, messagesLoaded, persi
         ) : (
           <>
             {/* 统一消息渲染（持久化 + 实时合并为一个列表，确保 system 消息位置正确） */}
-            {visibleGroups.map((group) => {
+            {visibleGroups.map((group, groupIndex) => {
               const isLive = liveGroupSet.has(group)
               const isErrorGroup = group.type === 'assistant-turn'
                 && group.assistantMessages.some((m) => !!m.error)
@@ -822,6 +830,8 @@ export function AgentMessages({ sessionId, sessionModelId, messagesLoaded, persi
                   isStreaming={isLive || undefined}
                   stoppedByUser={isLastAssistantTurn || undefined}
                   sessionModelId={sessionModelId}
+                  // R10：强制刷新后只管最后一个可见 turn 的尾部过程分组（见 SDKMessageRenderer）。
+                  expandTrailingProcessGroup={forceExpandTrailingProcessGroup && groupIndex === visibleGroups.length - 1}
                 />
               )
             })}
@@ -830,7 +840,11 @@ export function AgentMessages({ sessionId, sessionModelId, messagesLoaded, persi
             {/* 不使用 mt：ConversationContent 的 gap-1(4px) 已提供间距，
                 匹配内部 MessageActions 的 gap-0.5(2px)+mt-0.5(2px)=4px 间距 */}
             {hasLiveAssistantContent && !suppressAgentRunning && (
-              <div className="pl-[56px] min-h-[28px]">
+              // R9：pl-[56px] = 消息气泡 px-2.5(10) + MessageContent pl-[46px]，与消息文字左边缘对齐。
+              // 平板竖屏下 globals.css 会把 MessageContent 的左缩进压到 6px（向左扩 40px），
+              // 该 div 是 ConversationContent 的直接子节点、拿不到那层覆盖，必须由
+              // body.pocket-mode .agent-running-indicator 同步压到 16px（=10+6）。
+              <div className="agent-running-indicator pl-[56px] min-h-[28px]">
                 {retrying && <RetryingNotice retrying={retrying} />}
                 {agentStreamActive && <AgentRunningIndicator startedAt={startedAt} backgroundWaiting={streamState?.backgroundWaiting === true} />}
               </div>
@@ -878,7 +892,7 @@ export function AgentMessages({ sessionId, sessionModelId, messagesLoaded, persi
 
             {/* 后台等待没有实时文本时仍沿用同一 Running 指示器，避免额外弱 Spinner 与它重复。 */}
             {streamState?.backgroundWaiting && !hasLiveAssistantContent && !suppressAgentRunning && (
-              <div className="pl-[56px] min-h-[28px]">
+              <div className="agent-running-indicator pl-[56px] min-h-[28px]">
                 <AgentRunningIndicator startedAt={startedAt} backgroundWaiting />
               </div>
             )}
@@ -888,8 +902,10 @@ export function AgentMessages({ sessionId, sessionModelId, messagesLoaded, persi
       </ConversationContent>
       <ScrollMinimap key={sessionId} items={minimapItems} pocketMode={pocketMode} sessionKey={sessionId} />
       <ConversationScrollButton />
-      {allUserMessagesData.length > 0 && (
-        // PB-4：放开 pocket 侧守卫（StickyUserMessage 组件本身无移动端分支），修复滚动时用户气泡“丢失”的观感
+      {shouldRenderStickyUserMessage(pocketMode, allUserMessagesData.length) && (
+        // 0.1.15：pocket 侧不再渲染顶部「上一条用户消息」悬浮条（用户反馈移动端不需要，
+        // 且会遮挡对话区顶部）。渲染点按 pocketMode 关闭，桌面端行为不变
+        // （仍受「悬浮置顶条」设置项控制）。
         <StickyUserMessage userMessages={allUserMessagesData} />
       )}
     </Conversation>

@@ -81,6 +81,7 @@ import {
   agentSessionDraftHtmlAtomFamily,
   agentPromptSuggestionsAtom,
   agentMessageRefreshAtom,
+  pocketSessionReloadAtom,
   agentSDKMessagesCacheAtom,
   setSessionMessagesCache,
   agentDiffRefreshVersionAtom,
@@ -136,6 +137,8 @@ import {
   shouldRestoreQueuedMessageAfterFailure,
 } from '@/lib/agent-message-queue'
 import type { AgentQueuedMessage, QueueDropPlacement } from '@/lib/agent-message-queue'
+import type { InteractionGuard } from '@/lib/interaction-guard'
+import { consumePocketReloadNonce, getReloadNonce, buildReloadKey } from '@/pocket/session-reload'
 import type { QuotedSelection } from '@/atoms/preview-atoms'
 import { longTextPasteAsAttachmentEnabledAtom } from '@/atoms/ui-preferences'
 
@@ -1058,6 +1061,13 @@ export function AgentView({ sessionId, pocketMode = false, hideAgentHeader = fal
   const refreshMap = useAtomValue(agentMessageRefreshAtom)
   const refreshVersion = refreshMap.get(sessionId) ?? 0
 
+  // R10 强制刷新：nonce 变化 ⇒ ① 本次加载改走全量水合；② 消息子树换 key 重挂载。
+  // 桌面端不写该 atom ⇒ nonce 恒为 0，键与旧实现（仅 sessionId）等价，行为不变。
+  const pocketReloadNonce = getReloadNonce(useAtomValue(pocketSessionReloadAtom), sessionId)
+  // 已消费到的 nonce（按本组件实例记录）：只在全量拉取**成功之后**推进，
+  // 失败不推进 ⇒ 下一次尾部刷新仍会尝试全量，不会把用户点的那次降级成增量。
+  const consumedReloadNonceRef = React.useRef(0)
+
   // 持久化消息缓存 setter — 仅写入，读取时用 store.get 同步取值避免订阅触发重渲染
   const setMessagesCache = useSetAtom(agentSDKMessagesCacheAtom)
   // 1.7.1：登记尚未被持久化重载确认的乐观消息（按 uuid），消息重载时合并保留，
@@ -1110,18 +1120,31 @@ export function AgentView({ sessionId, pocketMode = false, hideAgentHeader = fal
     let cancelled = false
     // 普通历史会话仍走首帧分页；运行中或存在待交互快照的当前会话必须全量水合。
     // 这使 pending 横幅与其所属 user turn / Agent 执行记录在同一次状态收敛后共同出现。
+    // R10：用户点了「重新加载会话」（pocketSessionReloadAtom nonce 推进）时，本次加载强制走
+    // 全量水合——等价于重新进入会话，从服务端权威 JSONL 重建完整消息序列，
+    // 不再依赖可能带缺口/滞后的分页窗口（那是「桌面已显示、移动端输出缩在执行过程里」的温床）。
+    const { shouldFullHydrate: forceReload } = consumePocketReloadNonce(pocketReloadNonce, consumedReloadNonceRef.current)
     const pocketApi = window.electronAPI as unknown as {
       getAgentSessionSDKMessages?: (id: string, opts?: unknown) => Promise<unknown>
     }
     const loadPromise = pocketMode
-      ? (shouldHydrateCompleteHistory
+      ? ((shouldHydrateCompleteHistory || forceReload)
           ? pocketApi.getAgentSessionSDKMessages?.(sessionId)
           : pocketApi.getAgentSessionSDKMessages?.(sessionId, { paginateFirst: 4 })) ?? Promise.resolve([])
       : window.electronAPI.getAgentSessionSDKMessages(sessionId)
     loadPromise
       .then((sdkMsgs) => {
+        // 全量拉取成功才推进游标：失败时保留游标，下一次尾部刷新仍会尝试全量（不会被降级成增量）。
+        if (forceReload) consumedReloadNonceRef.current = pocketReloadNonce
         if (cancelled) return
         const normalized: SDKMessage[] = Array.isArray(sdkMsgs) ? (sdkMsgs as SDKMessage[]) : []
+        // R10：强制刷新（全量水合）拿到空结果但本地已有消息——服务端忙/文件重写中/旧端兼容的
+        // 极端情况。此时必须保留现有消息，不能把界面清空（弱网兑底不允许“刷新一下变空白”）。
+        if (forceReload && pocketMode && normalized.length === 0 && persistedSDKMessagesRef.current.length > 0) {
+          console.warn('[Pocket] 强制刷新拿到空消息，保留当前内容（不清空界面）')
+          setMessagesLoaded(true)
+          return
+        }
         // 1.7.1：合并尚未持久化的乐观消息（按 uuid），避免队列/自动发送的用户气泡被重载覆盖。
         // 与桌面的差异（有意保留）：pocket 没有 normalizeAgentHistoryResult，这里直接用
         // Array.isArray 归一化，因此本段不依赖 historyResult.messages；其余（让位/保留策略）逐字对齐。
@@ -1146,7 +1169,9 @@ export function AgentView({ sessionId, pocketMode = false, hideAgentHeader = fal
           setMessagesLoaded(true)
 
           // 移动端：首帧加载后同步服务端 hasMore，驱动触顶加载可用性。
-          if (isSessionSwitch) {
+          // 强制刷新（全量水合）等同首帧：分页缓存已被重建为 startIndex=0/hasMore=false，
+          // 这里必须同步，否则顶部会残留「还在加载更早消息」的假状态。
+          if (isSessionSwitch || forceReload) {
             const api = window.electronAPI as unknown as { getSdkMessagesHasMore?: (id: string) => boolean }
             const more = api.getSdkMessagesHasMore?.(sessionId)
             if (typeof more === 'boolean') {
@@ -1220,10 +1245,15 @@ export function AgentView({ sessionId, pocketMode = false, hideAgentHeader = fal
       .catch((error) => {
         if (cancelled) return
         console.error(error)
+        // R10：强制刷新失败要给明确反馈（弱网/断线/超时），且不清空界面（消息缓存保留，
+        // 消息数组不被修改），用户可稍后重试；普通后台尾部刷新仍保持静默（避免骚扰）。
+        if (forceReload && pocketMode) {
+          toast.error('重新加载会话消息失败；当前内容保持原样，可稍后重试', { duration: 4000 })
+        }
         setMessagesLoaded(true)
       })
     return () => { cancelled = true }
-  }, [sessionId, refreshVersion, pocketMode, shouldHydrateCompleteHistory, setStreamingStates, setLiveMessagesMap, setMessagesCache, store])
+  }, [sessionId, refreshVersion, pocketMode, pocketReloadNonce, shouldHydrateCompleteHistory, setStreamingStates, setLiveMessagesMap, setMessagesCache, store])
 
   // 从会话元数据初始化附加目录（仅冷启动水合，后续由 handleAttachFolder/handleDetachDirectory 实时写入）
   React.useEffect(() => {
@@ -2672,6 +2702,17 @@ export function AgentView({ sessionId, pocketMode = false, hideAgentHeader = fal
     (allAskUserRequests.get(sessionId)?.length ?? 0) > 0 ||
     (allExitPlanRequests.get(sessionId)?.length ?? 0) > 0
 
+  // R8-P0：移动端（pocket stub）注入交互守卫 —— 三个横幅在「X 关闭 / 提交」前先用主端快照
+  // 确认该请求是否仍待处理，避免误点「另一端已作答」的过期横幅把正在运行的会话中止。
+  // 桌面端 electronAPI 无 getPendingInteractionVerdict → 守卫为 undefined → 行为与改动前一致。
+  const interactionGuard = React.useMemo<InteractionGuard | undefined>(() => {
+    return (kind, requestId) => {
+      const api = window.electronAPI
+      if (typeof api.getPendingInteractionVerdict !== 'function') return Promise.resolve('unknown' as const)
+      return api.getPendingInteractionVerdict({ kind, requestId, sessionId })
+    }
+  }, [sessionId])
+
   // ===== 预览面板状态（toggle 快捷键 + auto-preview 设置，分屏布局在 MainArea） =====
   const setPreviewOpenMap = useSetAtom(previewPanelOpenMapAtom)
   const [autoPreviewEnabled, setAutoPreviewEnabled] = useAtom(autoPreviewEnabledAtom)
@@ -2743,7 +2784,7 @@ export function AgentView({ sessionId, pocketMode = false, hideAgentHeader = fal
     },
     */
     { key: 'permission-mode', node: <PermissionModeSelector sessionId={sessionId} /> },
-    { key: 'preset', node: <PresetSelector sessionId={sessionId} persistedPresetId={sessionMeta?.presetId} workspaceSlug={sessionMeta?.workspaceId ? workspaces.find((w) => w.id === sessionMeta.workspaceId)?.slug : undefined} /> },
+    { key: 'preset', node: <PresetSelector sessionId={sessionId} persistedPresetId={sessionMeta?.presetId} pocketMode={pocketMode} workspaceSlug={sessionMeta?.workspaceId ? workspaces.find((w) => w.id === sessionMeta.workspaceId)?.slug : undefined} /> },
     {
       key: 'thinking',
       node: (
@@ -2950,7 +2991,11 @@ export function AgentView({ sessionId, pocketMode = false, hideAgentHeader = fal
         {!hideAgentHeader && <AgentHeader sessionId={sessionId} />}
 
         {/* 消息区域 */}
+        {/* R10：key 带上强制刷新 nonce —— 用户点「重新加载会话」时整棵消息子树重挂载，
+            一次性归零执行过程分组的展开/收起、visibleGroupStart 分页切片、ready 淡入等本地视图态。
+            桌面端 nonce 恒为 0，key 退化为 `agent:<sessionId>#0`（同一会话内仍稳定，行为不变）。 */}
         <AgentMessages
+          key={buildReloadKey('agent', sessionId, pocketReloadNonce)}
           sessionId={sessionId}
           sessionModelId={agentModelId || undefined}
           messagesLoaded={messagesLoaded}
@@ -2961,6 +3006,7 @@ export function AgentView({ sessionId, pocketMode = false, hideAgentHeader = fal
           sessionPath={sessionPath}
           attachedDirs={allAttachedDirs}
           stoppedByUser={stoppedByUser}
+          forceExpandTrailingProcessGroup={pocketReloadNonce > 0}
           onRetry={handleRetry}
           onRetryInNewSession={handleRetryInNewSession}
           onFork={handleFork}
@@ -2973,14 +3019,14 @@ export function AgentView({ sessionId, pocketMode = false, hideAgentHeader = fal
         />
 
         {/* 权限请求横幅 */}
-        <PermissionBanner sessionId={sessionId} onRequestStop={handleStop} />
+        <PermissionBanner sessionId={sessionId} onRequestStop={handleStop} interactionGuard={interactionGuard} />
 
         {/* AskUserQuestion 交互式问答横幅 */}
-        <AskUserBanner sessionId={sessionId} onRequestStop={handleStop} />
+        <AskUserBanner sessionId={sessionId} onRequestStop={handleStop} interactionGuard={interactionGuard} />
 
 
         {/* ExitPlanMode 计划审批横幅 */}
-        <ExitPlanModeBanner sessionId={sessionId} onRequestStop={handleStop} />
+        <ExitPlanModeBanner sessionId={sessionId} onRequestStop={handleStop} interactionGuard={interactionGuard} />
 
         {/* 输入区域 — 交互横幅显示时隐藏，由横幅替代 */}
         {!hasBannerOverlay && (
@@ -3130,7 +3176,7 @@ export function AgentView({ sessionId, pocketMode = false, hideAgentHeader = fal
                   ? '正在压缩上下文，完成后可继续对话...'
                   : agentChannelId && hasAvailableModel
                     ? pocketMode
-                      ? '输入消息... (Enter 换行，点击发送；@ 引用文件，/ 调用 Skill，# 调用 MCP，& 引用会话)'
+                      ? '输入消息... (输入@引用文件，/调用Skill，#调用MCP，&引用会话)'
                       : sendWithCmdEnter
                         ? '输入消息... (⌘/Ctrl+Enter 发送，Enter 换行，@ 引用文件，/ 调用 Skill，# 调用 MCP，& 引用会话)'
                         : '输入消息... (Enter 发送，Shift+Enter 换行，@ 引用文件，/ 调用 Skill，# 调用 MCP，& 引用会话)'

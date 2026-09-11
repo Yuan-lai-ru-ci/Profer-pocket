@@ -606,6 +606,21 @@ export class WsClient {
     return this.sendCommand({ type: 'get_pending_interactions', ...(sessionId ? { sessionId } : {}) })
   }
 
+  /**
+   * 获取活跃 Agent 会话的运行时上下文窗口快照（对齐桌面 remote-service `get_agent_runtime_contexts`）。
+   *
+   * `context_window` 是 run 启动时的瞬时事件，Pocket 晚连接/重连/切回会话时会错过它，
+   * 只能按模型名推断窗口，导致上下文分母与电脑端不一致。此命令返回主端权威快照
+   * （仅覆盖活跃 run 的会话：`{ sessionId, contextWindow, updatedAt }`）。
+   * 旧服务端不识别时返回 `ok:false`，由调用方静默降级。
+   */
+  getAgentRuntimeContexts(sessionIds?: string[]): Promise<unknown> {
+    return this.sendCommand({
+      type: 'get_agent_runtime_contexts',
+      ...(sessionIds && sessionIds.length > 0 ? { sessionIds } : {}),
+    })
+  }
+
   respondPermission(requestId: string, behavior: 'allow' | 'deny', alwaysAllow = false): Promise<unknown> {
     return this.sendCommand({ type: 'respond_permission', requestId, behavior, alwaysAllow })
   }

@@ -26,8 +26,10 @@ export function PocketUpdateCard({ store }: { store: Store }): React.ReactElemen
   const cachedAfterFailure = status.status === 'error' && Boolean(status.apkPath)
   const failed = status.status === 'error'
 
+  // R5：Android WebView / 卓易通 的 env(safe-area-inset-top) 恒为 0，原生侧注入 --pocket-safe-top；
+  // 变量缺失/为 0 时与旧写法等价（max(0.5rem, env())）。
   return (
-    <aside className="fixed right-2 top-[max(0.5rem,env(safe-area-inset-top))] z-[90] w-[min(18rem,calc(100vw-1rem))] rounded-lg border border-border bg-background px-2.5 py-2 shadow-lg" aria-label="应用更新">
+    <aside className="fixed right-2 z-[90] w-[min(18rem,calc(100vw-1rem))] rounded-lg border border-border bg-background px-2.5 py-2 shadow-lg" style={{ top: 'max(0.5rem, max(env(safe-area-inset-top), var(--pocket-safe-top, 0px)))' }} aria-label="应用更新">
       <button className="absolute right-1.5 top-1.5 rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground" onClick={() => downloading ? hidePocketUpdateCard(store) : deferPocketUpdate(store)} aria-label={downloading ? '隐藏下载提示' : '稍后提醒'}><X className="size-3.5" /></button>
       <div className="pr-5 text-xs font-medium">{downloaded ? '更新已就绪' : downloading ? '正在下载更新' : failed ? '更新操作失败' : '发现新版本'}</div>
       <p className="mt-0.5 text-[11px] leading-4 text-muted-foreground">v{update.versionName}{failed ? `：${status.message}` : downloaded ? ' 已验证，可安装。' : ' 已发布。'}</p>

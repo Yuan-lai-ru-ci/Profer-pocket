@@ -1,6 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <!-- 与 values/colors.xml 保持完全一致：系统栏三色固定 Profer 深色（不跟随系统深浅色），
+         亮色系统 + App 深色时也不会出现白色窗口/导航栏区域。 -->
     <color name="profer_window_background">#0b0d0e</color>
     <color name="profer_status_bar">#0b0d0e</color>
     <color name="profer_navigation_bar">#0b0d0e</color>
+
+    <color name="profer_accent">#2563eb</color>
 </resources>

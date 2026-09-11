@@ -1,7 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- System-bar colors follow Android's day/night UI mode. -->
-    <color name="profer_window_background">#ffffff</color>
-    <color name="profer_status_bar">#ffffff</color>
-    <color name="profer_navigation_bar">#ffffff</color>
+    <!-- 系统栏 / 窗口底色固定为 Profer 深色 #0b0d0e，不再跟随系统深浅色。
+         pocket 页面主题跟随「App 内」设置（默认深色），若窗口跟随系统亮色会在
+         鸿蒙卓易通上露出白色状态栏/导航栏区域（用户实测白边）。day/night 必须一致。 -->
+    <color name="profer_window_background">#0b0d0e</color>
+    <color name="profer_status_bar">#0b0d0e</color>
+    <color name="profer_navigation_bar">#0b0d0e</color>
+
+    <!-- Profer 品牌蓝（取自 profer-gradient 标识的 blue-600），用于系统绘制的文本编辑
+         控件配色（WebView 光标拖柄等）。values-night 必须保持同值，避免深浅色下拖柄变色。 -->
+    <color name="profer_accent">#2563eb</color>
 </resources>

@@ -1005,6 +1005,17 @@ export const agentStreamErrorsAtom = atom<Map<string, string>>(new Map())
 export const agentMessageRefreshAtom = atom<Map<string, number>>(new Map())
 
 /**
+ * 平板「强制刷新」重载版本 Map — 以 sessionId 为 key（pocket-only）
+ *
+ * 与 `agentMessageRefreshAtom` 的区别：后者语义是「重拉一次消息」（增量/分页窗口），
+ * 本 atom 语义是「重新加载这个会话」：nonce 变化会
+ *  ① 让 AgentView 本次加载改走**全量水合**（等价于重新进入会话，绕过首帧分页窗口）；
+ *  ② 让消息子树换 React key 重挂载，归零执行过程折叠态 / 分页切片 / 淡入等本地视图态。
+ * 桌面端从不写入本 atom，取值恒为 0，行为与改动前完全一致。
+ */
+export const pocketSessionReloadAtom = atom<Map<string, number>>(new Map())
+
+/**
  * 持久化 SDKMessage 的内存缓存 Map — 以 sessionId 为 key
  * 用于消除「切换会话时先清空 → 等待 IPC 全量读盘」的可见空窗：
  * 命中缓存可立即填充消息区，IPC 返回后再覆盖为最新数据。

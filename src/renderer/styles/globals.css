@@ -2562,16 +2562,30 @@
   body.pocket-mode .message-item .agent-turn-actions {
     padding-left: 6px;
   }
+  /* R9：Agent 运行指示器（Spinner + Agent Running + 计时器）不在 .message-item 内部，
+   * 它是 ConversationContent 的直接子节点，拿不到上面那层 6px 覆盖，仍按桌面基准
+   * 硬编 pl-[56px]（= 气泡 px-2.5(10px) + MessageContent pl-[46px]）⇒ 竖屏下比消息文字
+   * 右移 40px。这里同步压到 16px（= 气泡 px-2.5(10px) + 竖屏 MessageContent 6px），
+   * 与「文件改动汇总 / 操作按钮栏」保持同一条左参考线；桌面（无 body.pocket-mode）不受影响。 */
+  body.pocket-mode .agent-running-indicator {
+    padding-left: 16px;
+  }
 }
 
 /* ===== 平板 App 状态栏安全区（Capacitor WebView 沉浸式） =====
  * App 内 WebView 延伸到系统状态栏后面，顶部内容会被状态栏遮挡。
- * 仅在原生 App 环境由 main.tsx 动态添加 pocket-safe-area 类（浏览器 env() 为 0，不影响）。
+ * 该 class 由 main.tsx 无条件挂在 App 根容器与侧边抽屉上（浏览器 env() 为 0，不影响）。
+ * 注意：登录页刻意不用该 class（!important 会压掉其行内 padding），改用行内 max(2.5rem, 安全区)。
+ *
+ * 取值：max(env(safe-area-inset-*), var(--pocket-safe-*, 0px))
+ *  - Android WebView / 鸿蒙卓易通 的 env(safe-area-inset-*) 恒为 0，原生侧（MainActivity）
+ *    会按 WindowInsets 把状态栏/导航栏高度注入 --pocket-safe-top / --pocket-safe-bottom（CSS px）；
+ *  - 变量缺失或为 0 时与旧写法（仅 env()）完全等价，桌面浏览器无副作用。
  * padding-top 用 max() 保证无状态栏设备（沉浸横屏）为 0；!important 覆盖 Tailwind 的 p-* 工具类。
  */
 .pocket-safe-area {
-  padding-top: max(env(safe-area-inset-top), 0px) !important;
-  padding-bottom: max(env(safe-area-inset-bottom), 0px) !important;
+  padding-top: max(env(safe-area-inset-top), var(--pocket-safe-top, 0px)) !important;
+  padding-bottom: max(env(safe-area-inset-bottom), var(--pocket-safe-bottom, 0px)) !important;
 }
 
 /* ===== 移动模式：隐藏滚动条（触控滚动，滚动条多余且占视觉空间） =====

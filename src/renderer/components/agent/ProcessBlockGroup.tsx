@@ -14,6 +14,11 @@ interface ProcessBlockGroupProps {
   blocks: SDKContentBlock[]
   isStreaming?: boolean
   keepExpandedAfterComplete: boolean
+  /**
+   * R10：强制刷新后，若整轮内容都被归入本分组（无外置最终回复块），首次挂载即展开，
+   * 保证用户刷新后立刻能看到最终输出。仅影响初始状态，用户手动收起后不再自动展开。
+   */
+  defaultExpanded?: boolean
   // 该过程组是否为整条消息的末尾项：是则流式中保留最后一段为正常显示，
   // 否则（最终答案已作为后续兄弟块外置）整组统一弱化。
   isMessageTail?: boolean
@@ -33,6 +38,25 @@ interface IndexedContentBlock {
 export type AssistantTurnRenderItem =
   | { type: 'block'; item: IndexedContentBlock }
   | { type: 'process-group'; items: IndexedContentBlock[] }
+
+/**
+ * R10：强制刷新（重新加载会话）后，某个过程分组是否应**默认展开**。
+ *
+ * 仅在「本轮内容全部被归入过程分组、没有任何外置输出块」时展开——这正是用户反馈的
+ * 「桌面已显示但移动端输出全部缩在『执行过程』里、点不出来」的形状；
+ * 若最终回复已作为兄弟块外置（常态），展开过程分组只会把工具调用噪声顶到用户眼前，
+ * 因此不展开，保持与桌面一致的默认观感。
+ */
+export function shouldDefaultExpandProcessGroup(
+  items: readonly AssistantTurnRenderItem[],
+  itemIndex: number,
+  options: { forceReload?: boolean } = {},
+): boolean {
+  if (!options.forceReload) return false
+  if (!Number.isInteger(itemIndex) || itemIndex !== items.length - 1) return false
+  if (items[itemIndex]?.type !== 'process-group') return false
+  return !items.some((item) => item.type === 'block')
+}
 
 interface BuildAssistantTurnRenderItemsOptions {
   isStreaming?: boolean
@@ -181,8 +205,8 @@ export function buildProcessGroupToolNames(blocks: SDKContentBlock[]): string[] 
   return toolNames
 }
 
-export function ProcessBlockGroup({ blocks, isStreaming, keepExpandedAfterComplete, isMessageTail = false, children }: ProcessBlockGroupProps): React.ReactElement {
-  const shouldExpandByDefault = !!isStreaming || keepExpandedAfterComplete
+export function ProcessBlockGroup({ blocks, isStreaming, keepExpandedAfterComplete, defaultExpanded = false, isMessageTail = false, children }: ProcessBlockGroupProps): React.ReactElement {
+  const shouldExpandByDefault = !!isStreaming || keepExpandedAfterComplete || defaultExpanded
   const [expanded, setExpanded] = React.useState(shouldExpandByDefault)
   const [shouldRenderContent, setShouldRenderContent] = React.useState(shouldExpandByDefault)
   const [collapseCountdown, setCollapseCountdown] = React.useState<number | null>(null)
@@ -209,6 +233,14 @@ export function ProcessBlockGroup({ blocks, isStreaming, keepExpandedAfterComple
         setExpanded(true)
       }
       wasStreamingRef.current = !!isStreaming
+      return
+    }
+
+    // R10：defaultExpanded 是**首次挂载**的默认态，不是持续约束
+    // （故意不列入下方 deps：只有挂载时的展开语义，用户手动收起后不得被重新弹开）。
+    if (defaultExpanded && !userToggledRef.current && !wasStreamingRef.current) {
+      setCollapseCountdown(null)
+      setExpanded(true)
       return
     }
 

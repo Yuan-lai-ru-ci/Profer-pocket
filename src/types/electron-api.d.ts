@@ -871,6 +871,20 @@ export interface ElectronAPI {
   /** 获取所有待处理的交互请求快照（渲染进程重载后恢复状态） */
   getPendingRequests: () => Promise<PendingRequestsSnapshot>
 
+  /**
+   * 判定某个交互请求是否仍待处理（仅移动端 stub 提供；桌面端为 undefined）。
+   *
+   * 三个交互横幅在「X 关闭 / 提交」前用它确认请求是否已被其它端处理：
+   * - 'pending'：主端仍待处理 → 沿用原行为（X = 关闭并终止 Agent）
+   * - 'resolved'：已被其它端处理 → 只本地移除 + 轻提示，绝不停止运行中的会话
+   * - 'unknown'：连接未就绪 / 旧服务端不支持 / 判定失败 → 保留原有行为
+   */
+  getPendingInteractionVerdict?: (query: {
+    kind: 'permission' | 'askUser' | 'exitPlan'
+    requestId: string
+    sessionId?: string
+  }) => Promise<'pending' | 'resolved' | 'unknown'>
+
   // ===== Project Graph =====
 
   /** 获取当前会话的 Task Graph */
