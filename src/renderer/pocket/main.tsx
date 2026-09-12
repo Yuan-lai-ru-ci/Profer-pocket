@@ -1279,7 +1279,7 @@ initDebugHud()
 debugLog('Pocket UI 已启动，调试 HUD 就绪')
 
 // 原生后台消息通道日志 → 调试 HUD：轮询拉取原生 WS 日志喂给 debugLog（仅 dev 变体/联调生效）
-if (import.meta.env.DEV || (window as unknown as { __POCKET_BUILD__?: string }).__POCKET_BUILD__ === 'dev') {
+if (import.meta.env.DEV) {
   setInterval(async () => {
     try {
       const logs = await getPocketKeepaliveLogs()

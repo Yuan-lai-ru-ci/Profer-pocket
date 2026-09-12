@@ -100,15 +100,6 @@ function applyConfig(config) {
   writeFileSync(stringsXml, strings)
 }
 
-function injectBuildTag() {
-  const indexPath = resolve(appRoot, 'web/index.html')
-  let html = readFileSync(indexPath, 'utf8')
-  const marker = "window.__POCKET_BUILD__='dev'"
-  if (html.includes(marker)) return
-  html = html.replace('</head>', `  <script>${marker}</script>\n</head>`)
-  writeFileSync(indexPath, html)
-}
-
 function patchGradleRepos() {
   const changed = []
   const walk = (directory) => {
@@ -152,7 +143,6 @@ try {
   if (!existsSync(resolve(appRoot, 'node_modules'))) run('npm', ['install'], appRoot)
   step('sync-web')
   run('node', ['scripts/sync-web.mjs'], appRoot)
-  if (variant === 'dev') injectBuildTag()
   step('cap sync android')
   run('npx', ['cap', 'sync', 'android'], appRoot)
   patchGradleRepos()
