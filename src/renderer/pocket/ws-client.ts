@@ -11,6 +11,8 @@
  * 这里统一交给对应订阅者处理。
  */
 
+import type { CreateExplorationSessionInput } from '@profer/shared'
+
 export type AgentWorkflowEvent = {
   sessionId: string
   payload: unknown
@@ -535,6 +537,16 @@ export class WsClient {
   /** 分叉会话（从指定消息处创建新会话继续；对齐桌面 forkAgentSession） */
   forkSession(payload: { sessionId: string; upToMessageUuid?: string }): Promise<unknown> {
     return this.sendCommand({ type: 'fork_session', ...payload })
+  }
+
+  /**
+   * 创建 Pi `/tree` 探索分支（对齐桌面 forkAgentSession + explorationSourceLabel 语义）。
+   *
+   * 与分叉的区别：不重建顶层会话，分支挂在主线血缘下并继承源会话模型
+   * （服务端不接受 modelId）；服务端返回完整会话对象，含探索血缘字段。
+   */
+  createExplorationSession(payload: CreateExplorationSessionInput): Promise<unknown> {
+    return this.sendCommand({ type: 'create_exploration_session', ...payload })
   }
 
   /** 快照回退（同一会话内回退到指定点，恢复文件 + 截断对话；对齐桌面 rewindSession） */

@@ -2621,6 +2621,46 @@ export function AgentView({ sessionId, pocketMode = false, hideAgentHeader = fal
     }
   }, [sessionId, openSession, setAgentSessions, agentChannelId, agentModelId, sessionMetaChannelId])
 
+  /**
+   * 从回复节点创建 Pi `/tree` 探索分支（对齐桌面 handleExplore）。
+   *
+   * 与分叉的区别：不重建顶层会话、不换模型，分支继承此前的完整上下文，
+   * 并通过血缘字段挂在主线父行下；移动端的承接方式是直接把分支作为会话打开。
+   */
+  const handleExplore = React.useCallback(async (upToMessageUuid: string): Promise<void> => {
+    if (sessionAgentRuntime !== 'pi') {
+      toast.info('探索分支目前仅支持 Pi Agent 会话')
+      return
+    }
+    try {
+      const meta = await window.electronAPI.createExplorationSession({
+        sessionId,
+        upToMessageUuid,
+        explorationSourceLabel: '这条 Agent 回复',
+      })
+      // 服务端创建后会广播 session_updated，可能已先于命令回包插入列表，故先去重。
+      setAgentSessions((prev) => prev.some((item) => item.id === meta.id) ? prev : [meta, ...prev])
+      // 分支的用途就是接着聊，直接切过去（桌面是切右侧探索 Tab，移动端以会话承接）。
+      openSession('agent', meta.id, meta.title)
+      toast.success('已创建探索分支', {
+        description: '分支继承此处之前的完整上下文。',
+      })
+    } catch (error) {
+      console.error('[AgentView] 创建探索分支失败:', error)
+      const rawMsg = error instanceof Error ? error.message : '未知错误'
+      // 服务端已返回可读中文错误；仅 patch SDK 风格的英文措辞。
+      const friendlyDesc = /not found in session/i.test(rawMsg)
+        ? '该消息无法作为探索起点（可能属于子代理执行过程或已被清理）。请选择主对话中的其他回复再试。'
+        : rawMsg
+      toast.error('创建探索分支失败', {
+        description: friendlyDesc,
+      })
+    }
+  }, [sessionId, sessionAgentRuntime, openSession, setAgentSessions])
+
+  /** 探索入口门禁：仅 Pi runtime 会话可发起（对齐桌面 resolveForkActionAvailability）。 */
+  const canExplore = sessionAgentRuntime === 'pi'
+
   /** 快照回退：同一会话内回退到指定消息点，恢复文件 + 截断对话 */
   const [rewindTargetUuid, setRewindTargetUuid] = React.useState<string | null>(null)
   const [graphDialogOpen, setGraphDialogOpen] = React.useState(false)
@@ -3010,6 +3050,7 @@ export function AgentView({ sessionId, pocketMode = false, hideAgentHeader = fal
           onRetry={handleRetry}
           onRetryInNewSession={handleRetryInNewSession}
           onFork={handleFork}
+          onExplore={canExplore ? handleExplore : undefined}
           onRewind={handleRewindRequest}
           onCompact={handleCompact}
           pocketMode={pocketMode}

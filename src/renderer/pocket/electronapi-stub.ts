@@ -11,7 +11,7 @@
  *    安全空实现或明确报错，避免复用组件崩溃或出现“可点但无效果”的伪按钮。
  */
 
-import type { AgentStreamEvent, AgentStreamCompletePayload, StreamChunkEvent, StreamReasoningEvent, StreamCompleteEvent, StreamErrorEvent, StreamToolActivityEvent, GenerateTitleInput } from '@profer/shared'
+import type { AgentStreamEvent, AgentStreamCompletePayload, StreamChunkEvent, StreamReasoningEvent, StreamCompleteEvent, StreamErrorEvent, StreamToolActivityEvent, GenerateTitleInput, CreateExplorationSessionInput } from '@profer/shared'
 import { CHAT_IPC_CHANNELS, BUILTIN_DEFAULT_ID, BUILTIN_DEFAULT_PROMPT } from '@profer/shared'
 import { debugLog } from '@/lib/debug-hud'
 import { getFileBaseName } from '@/lib/file-utils'
@@ -113,6 +113,8 @@ interface PocketRemoteClient extends HeatmapRemoteClient {
   deleteSession(sessionId: string): Promise<unknown>
   /** 分叉会话 */
   forkSession(payload: { sessionId: string; upToMessageUuid?: string }): Promise<unknown>
+  /** 创建 Pi `/tree` 探索分支（WS 命令 create_exploration_session） */
+  createExplorationSession(payload: CreateExplorationSessionInput): Promise<unknown>
   /** 快照回退 */
   rewindSession(payload: { sessionId: string; assistantMessageUuid: string }): Promise<unknown>
   /** 置顶/取消置顶 */
@@ -1137,6 +1139,13 @@ export function installElectronApiStub(): void {
       // remote 已返回桌面同构 buildSessionItem（含 createdAt/updatedAt/draft/pinned 等），
       // 直接透传，保证 fork 后 setAgentSessions 插入的元数据与桌面一致（LeftSidebar 渲染/排序依赖）。
       return remoteClient.forkSession(input) as Promise<Record<string, unknown>>
+    },
+    // 探索分支：与分叉同源但语义不同（不传 modelId，分支挂主线血缘下）。
+    // 必须显式 stub——否则 Proxy noop 会让“探索成功”是假的，且调用方读 meta.id 会拿到
+    // undefined 导致 openSession 崩溃。服务端返回的已是含探索血缘字段的完整会话对象。
+    createExplorationSession: async (input: { sessionId: string; upToMessageUuid: string; explorationSourceLabel?: string }) => {
+      if (!remoteClient) throw new Error('移动端连接未就绪')
+      return remoteClient.createExplorationSession(input) as Promise<Record<string, unknown>>
     },
     rewindSession: async (input: { sessionId: string; assistantMessageUuid: string }) => {
       if (!remoteClient) throw new Error('移动端连接未就绪')

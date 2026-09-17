@@ -50,6 +50,13 @@ export const currentMessagesAtom = atom<ChatMessage[]>([])
 
 /** 单个对话的流式状态 */
 export interface ConversationStreamState {
+  /**
+   * 当前流式运行的唯一代次。
+   *
+   * 移动端平台差异：runId 由服务端（remote-service `chat_send_message`）分配并随流式事件下发，
+   * 客户端不能在发送时预生成，因此这里由**首个到达的流式事件**绑定（见 useGlobalChatListeners）。
+   */
+  runId?: string
   streaming: boolean
   content: string
   reasoning: string

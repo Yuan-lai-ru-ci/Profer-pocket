@@ -155,6 +155,8 @@ interface AgentMessagesProps {
   onRetry?: () => void
   onRetryInNewSession?: () => void
   onFork?: (upToMessageUuid: string) => void
+  /** 探索分支回调（Pi `/tree`）；非 Pi 会话不传，入口不出现。 */
+  onExplore?: (upToMessageUuid: string) => void
   onRewind?: (assistantMessageUuid: string) => void
   onCompact?: () => void
   /** 平板远程模式不显示桌面端的用户消息悬浮置顶导航条。 */
@@ -547,7 +549,7 @@ function AgentRunningIndicator({ startedAt, backgroundWaiting = false }: { start
   )
 }
 
-export function AgentMessages({ sessionId, sessionModelId, messagesLoaded, persistedSDKMessages, streaming, streamState, liveMessages, sessionPath, attachedDirs, stoppedByUser, onRetry, onRetryInNewSession, onFork, onRewind, onCompact, pocketMode = false, onLoadEarlierHistory, historyMoreAvailable, historyLoadingEarlier, forceExpandTrailingProcessGroup = false }: AgentMessagesProps): React.ReactElement {
+export function AgentMessages({ sessionId, sessionModelId, messagesLoaded, persistedSDKMessages, streaming, streamState, liveMessages, sessionPath, attachedDirs, stoppedByUser, onRetry, onRetryInNewSession, onFork, onExplore, onRewind, onCompact, pocketMode = false, onLoadEarlierHistory, historyMoreAvailable, historyLoadingEarlier, forceExpandTrailingProcessGroup = false }: AgentMessagesProps): React.ReactElement {
   const userProfile = useAtomValue(userProfileAtom)
   const setMinimapCache = useSetAtom(tabMinimapCacheAtom)
   const channels = useAtomValue(channelsAtom)
@@ -823,6 +825,7 @@ export function AgentMessages({ sessionId, sessionModelId, messagesLoaded, persi
                   historicalTaskSubjects={historicalTaskSubjects}
                   basePath={sessionPath || undefined}
                   onFork={shouldDisableActions ? undefined : onFork}
+                  onExplore={shouldDisableActions ? undefined : onExplore}
                   onRewind={shouldDisableActions ? undefined : onRewind}
                   onRetry={shouldDisableActions ? undefined : onRetry}
                   onRetryInNewSession={shouldDisableActions ? undefined : onRetryInNewSession}

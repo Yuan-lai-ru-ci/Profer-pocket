@@ -4,7 +4,7 @@
  * 从 LeftSidebar.tsx 整体平移的 React.memo 列表项组件，逻辑保持不变：
  * - safe-tooltip / 操作按钮组（时间、置顶、归档、三点菜单）
  * - 对话行 ConversationItem
- * - Agent 会话行 AgentSessionItem / DelegatedChildSessionItem
+ * - Agent 会话行 AgentSessionItem / RelatedChildSessionItem
  * - 项目分组 AgentProjectGroupItem
  * - 折叠态 rail 的最近会话按钮 RailRecentButton
  */
@@ -12,7 +12,7 @@
 import * as React from 'react'
 import { useAtomValue } from 'jotai'
 import {
-  Pin, PinOff, Pencil, Trash2, MoreHorizontal, Clock, GitBranch, Globe, ChevronRight, Cloud, FolderOpen, GripVertical, Settings, ArrowRightLeft, Archive, ArchiveRestore, Plus,
+  Pin, PinOff, Pencil, Trash2, MoreHorizontal, Clock, GitBranch, GitFork, Globe, ChevronRight, Cloud, FolderOpen, GripVertical, Settings, ArrowRightLeft, Archive, ArchiveRestore, Plus,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { interfaceVariantAtom } from '@/atoms/theme'
@@ -46,8 +46,8 @@ import {
   ACTIVE_SESSION_STATUS_PRIORITY,
   buildAgentSessionTrees,
   collectTreeSessionIds,
-  countCompletedDelegatedChildren,
-  getDelegatedChildStatus,
+  getRelatedChildStatus,
+  getRelatedSessionSummary,
   getSessionTreeStatus,
   treeContainsSessionId,
   type AgentSessionTreeItem,
@@ -713,7 +713,11 @@ interface AgentSessionItemProps {
   leftAccent?: SessionLeftAccent
   delegationSummary?: {
     total: number
+    running: number
     completed: number
+    label: string
+    /** 是否显示 x/y 计数；探索分支为 false，只留展开箭头避免与父行其他操作抢位置。 */
+    showCount: boolean
     expanded: boolean
     onToggle: () => void
   }
@@ -917,9 +921,11 @@ export const AgentSessionItem = React.memo(function AgentSessionItem({
                 {session.sourceAutomationId && !session.sourceDelegationId && (
                   <Clock size={11} className="flex-shrink-0 text-foreground/40" />
                 )}
-                {session.sourceDelegationId && (
+                {session.explorationParentSessionId && session.explorationSourceMessageId ? (
+                  <GitFork size={11} className={cn('flex-shrink-0', DELEGATION_STATUS_ICON_CLASS[indicatorStatus])} />
+                ) : session.sourceDelegationId ? (
                   <GitBranch size={11} className={cn('flex-shrink-0', DELEGATION_STATUS_ICON_CLASS[indicatorStatus])} />
-                )}
+                ) : null}
                 {/* 该会话有活动浏览器会话/标签：在会话行上标识，便于从侧边栏识别哪个会话在用浏览器 */}
                 {hasBrowser && (
                   <Globe size={11} className="flex-shrink-0 text-foreground/40" aria-label="该会话正在使用浏览器" />
@@ -938,7 +944,7 @@ export const AgentSessionItem = React.memo(function AgentSessionItem({
                 {delegationSummary && (
                   <button
                     type="button"
-                    aria-label={`${delegationSummary.expanded ? '收起' : '展开'}子会话`}
+                    aria-label={`${delegationSummary.expanded ? '收起' : '展开'}${delegationSummary.label}`}
                     onClick={(event) => {
                       event.stopPropagation()
                       delegationSummary.onToggle()
@@ -952,7 +958,10 @@ export const AgentSessionItem = React.memo(function AgentSessionItem({
                         delegationSummary.expanded && 'rotate-90',
                       )}
                     />
-                    {delegationSummary.completed}/{delegationSummary.total}
+                    {/* 探索分支不显示 x/y：父行右侧已挤着时间/置顶/归档/菜单，只留箭头。 */}
+                    {delegationSummary.showCount && (
+                      <span>{delegationSummary.completed}/{delegationSummary.total} {delegationSummary.label}</span>
+                    )}
                   </button>
                 )}
               </div>
@@ -996,7 +1005,7 @@ export const AgentSessionItem = React.memo(function AgentSessionItem({
   )
 })
 
-interface DelegatedChildSessionItemProps {
+interface RelatedChildSessionItemProps {
   session: AgentSessionMeta
   activeSessionId: string | null
   agentIndicatorMap: Map<string, SessionIndicatorStatus>
@@ -1012,7 +1021,7 @@ interface DelegatedChildSessionItemProps {
   onToggleArchive: (id: string) => Promise<void>
 }
 
-export const DelegatedChildSessionItem = React.memo(function DelegatedChildSessionItem({
+export const RelatedChildSessionItem = React.memo(function RelatedChildSessionItem({
   session,
   activeSessionId,
   agentIndicatorMap,
@@ -1025,8 +1034,8 @@ export const DelegatedChildSessionItem = React.memo(function DelegatedChildSessi
   onRename,
   onTogglePin,
   onToggleArchive,
-}: DelegatedChildSessionItemProps): React.ReactElement {
-  const status = getDelegatedChildStatus(session, agentIndicatorMap)
+}: RelatedChildSessionItemProps): React.ReactElement {
+  const status = getRelatedChildStatus(session, agentIndicatorMap)
 
   return (
     <AgentSessionItem
@@ -1059,7 +1068,7 @@ interface AgentProjectGroupItemProps {
   agentIndicatorMap: Map<string, SessionIndicatorStatus>
   /** 输入框有内容的 Agent 会话 ID 集合（草稿标记） */
   agentDraftIds: Set<string>
-  expandedDelegationParentIds: Set<string>
+  expandedRelatedParentIds: Set<string>
   relativeTimeNow: number
   dragging: boolean
   dropPosition: 'before' | 'after' | null
@@ -1083,7 +1092,7 @@ interface AgentProjectGroupItemProps {
   onRename: (id: string, newTitle: string) => Promise<void>
   onTogglePin: (id: string) => Promise<void>
   onToggleArchive: (id: string) => Promise<void>
-  onToggleDelegationParent: (id: string) => void
+  onToggleRelatedParent: (id: string) => void
   /** 工作区最近一次切换的时间戳，用于短暂高亮 */
   workspaceSwitchTs?: number
 }
@@ -1098,7 +1107,7 @@ export const AgentProjectGroupItem = React.memo(function AgentProjectGroupItem({
   activeSessionId,
   agentIndicatorMap,
   agentDraftIds,
-  expandedDelegationParentIds,
+  expandedRelatedParentIds,
   relativeTimeNow,
   dragging,
   dropPosition,
@@ -1122,7 +1131,7 @@ export const AgentProjectGroupItem = React.memo(function AgentProjectGroupItem({
   onRename,
   onTogglePin,
   onToggleArchive,
-  onToggleDelegationParent,
+  onToggleRelatedParent,
 }: AgentProjectGroupItemProps): React.ReactElement {
   const isCurrent = group.workspace.id === currentWorkspaceId
   /** 最近 1.2 秒内切换到此工作区时，短暂高亮 */
@@ -1437,7 +1446,7 @@ export const AgentProjectGroupItem = React.memo(function AgentProjectGroupItem({
                 const rowStatus = getSessionTreeStatus(item, agentIndicatorMap)
                 const treeActive = treeContainsSessionId(item, activeSessionId)
                 const activeChildVisible = item.childSessions.some((child) => child.id === activeSessionId)
-                const expandedChildren = expandedDelegationParentIds.has(item.session.id) || activeChildVisible
+                const expandedChildren = expandedRelatedParentIds.has(item.session.id) || activeChildVisible
 
                 return (
                   <div key={item.session.id} className="flex flex-col gap-0.5">
@@ -1449,10 +1458,9 @@ export const AgentProjectGroupItem = React.memo(function AgentProjectGroupItem({
                       hasDraft={agentDraftIds.has(item.session.id)}
                       delegationSummary={childCount > 0
                         ? {
-                          total: childCount,
-                          completed: countCompletedDelegatedChildren(item.childSessions),
+                          ...getRelatedSessionSummary(item.childSessions),
                           expanded: expandedChildren,
-                          onToggle: () => onToggleDelegationParent(item.session.id),
+                          onToggle: () => onToggleRelatedParent(item.session.id),
                         }
                         : undefined}
                       leftAccent={getSessionLeftAccent(rowStatus)}
@@ -1468,7 +1476,7 @@ export const AgentProjectGroupItem = React.memo(function AgentProjectGroupItem({
                     {childCount > 0 && expandedChildren && (
                       <div className="ml-3 border-l border-foreground/10 pl-2 flex flex-col gap-0.5">
                         {item.childSessions.map((childSession) => (
-                          <DelegatedChildSessionItem
+                          <RelatedChildSessionItem
                             key={childSession.id}
                             session={childSession}
                             activeSessionId={activeSessionId}

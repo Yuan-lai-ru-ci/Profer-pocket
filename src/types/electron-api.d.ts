@@ -50,6 +50,7 @@ import type {
   ConversationMeta,
   CreateAutomationInput,
   CreateCalendarEventInput,
+  CreateExplorationSessionInput,
   CreatePlanningGroupInput,
   CreatePlanningTagInput,
   CreateTodoInput,
@@ -617,6 +618,12 @@ export interface ElectronAPI {
 
   /** 分叉 Agent 会话 */
   forkAgentSession: (input: ForkSessionInput) => Promise<AgentSessionMeta>
+
+  /**
+   * 创建 Pi `/tree` 探索分支（WS 命令 `create_exploration_session`）。
+   * 与 forkAgentSession 的区别：不重建顶层会话，而是挂在主线血缘下并继承源会话模型。
+   */
+  createExplorationSession: (input: CreateExplorationSessionInput) => Promise<AgentSessionMeta>
 
   /** 快照回退（同一会话内回退到指定点，恢复文件 + 截断对话） */
   rewindSession: (input: RewindSessionInput) => Promise<RewindSessionResult>

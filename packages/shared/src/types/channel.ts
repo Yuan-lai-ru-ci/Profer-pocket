@@ -30,6 +30,7 @@ export type ProviderType =
   | 'xiaomi-token-plan'
   | 'openai-codex'
   | 'xai'
+  | 'ollama'
   | 'custom'
 
 /**
@@ -57,6 +58,9 @@ export const PROVIDER_DEFAULT_URLS: Record<ProviderType, string> = {
   'xiaomi-token-plan': 'https://token-plan-cn.xiaomimimo.com/anthropic',
   'openai-codex': '',
   xai: '',
+  // Ollama 本地模型：对齐桌面 provider 集合，让 pocket 能正确识别桌面创建的 ollama 渠道
+  // （经 remote-service 下发的渠道列表可能含它，缺此键会让名称/URL 归一化回退到错误分支）。
+  ollama: 'http://127.0.0.1:11434',
   custom: '',
 }
 
@@ -75,6 +79,7 @@ export const PROVIDER_DEFAULT_AGENT_URLS: Partial<Record<ProviderType, string>> 
   minimax: 'https://api.minimaxi.com/anthropic',
   xiaomi: 'https://api.xiaomimimo.com/anthropic',
   'xiaomi-token-plan': 'https://token-plan-cn.xiaomimimo.com/anthropic',
+  ollama: 'http://127.0.0.1:11434',
 }
 
 /**
@@ -102,6 +107,7 @@ export const PROVIDER_LABELS: Record<ProviderType, string> = {
   'xiaomi-token-plan': '小米 MiMo Token Plan',
   'openai-codex': 'ChatGPT 订阅 (Codex)',
   xai: 'xAI 订阅 (Grok)',
+  ollama: 'Ollama 本地模型',
   custom: 'OpenAI 兼容格式',
 }
 
@@ -124,6 +130,7 @@ export const AGENT_COMPATIBLE_PROVIDERS: ReadonlySet<ProviderType> = new Set<Pro
   'xiaomi',
   'xiaomi-token-plan',
   'qwen-anthropic',
+  'ollama',
 ])
 
 /**

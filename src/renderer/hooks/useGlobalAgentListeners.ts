@@ -77,6 +77,7 @@ import { upsertLiveMessageByUuid } from '@/lib/agent-live-message-upsert'
 import { getAgentCompletionMarkers } from '@/lib/agent-completion-presence'
 import { getPlanModeChangeFromToolName, updatePlanModeSessionSet } from '@/lib/agent-plan-mode'
 import { getSessionFileChangeKind, upsertSessionFileChange } from '@/lib/session-file-changes'
+import { AgentStreamRestoreGate } from '@/lib/agent-stream-restore-gate'
 import { isAbsoluteFilePath, resolveRelativeToAbsolute } from '@/lib/file-utils'
 import { clearAuthoritativeContextWindow, getAuthoritativeContextWindow, hydrateAgentRuntimeContexts } from '@/pocket/agent-runtime-context'
 
@@ -1202,6 +1203,17 @@ export function useGlobalAgentListeners(): void {
     // 大刷新会清空 renderer Jotai，但 main 中的 Agent run 仍可能继续执行。
     // listener 已安装后再请求重连：main 会先绑定新 webContents 并按顺序回放本轮事件。
     // 若 run 尚未产出任何事件，也先写入 running 占位，保留停止和追加消息能力。
+    //
+    // 恢复窗口内的终态必须先暂存：backlog 回放先于 running 占位写入，run 若恰在这个窗口内
+    // 结束，专用 handler 的竞态保护会因「本会话还没有流式状态」判定为迟到终态并丢弃，
+    // 表现为刷新后残留 spinner。闸门负责延后到占位写入后再派发。
+    // ⚠️ 移动端平台差异：pocket 的 restoreActiveAgentStreams 是 stub（无 Electron IPC 重连，
+    // 状态由 WS 快照/resume 建立），占位窗口目前为空，因此闸门实际不拦截任何事件；
+    // 保留同样的接线是为了与桌面渲染层保持同构，后续若移动端引入真实恢复窗口即自动生效。
+    const restoreTerminalGate = new AgentStreamRestoreGate(
+      (sessionId) => store.get(agentStreamingStatesAtom).get(sessionId) !== undefined,
+    )
+
     window.electronAPI.restoreActiveAgentStreams()
       .then((sessionIds) => {
         store.set(agentStreamingStatesAtom, (prev) => {
@@ -1219,12 +1231,16 @@ export function useGlobalAgentListeners(): void {
           }
           return next ?? prev
         })
+        // 占位已写好，此时派发暂存的终态才能通过竞态保护并完成收尾副作用。
+        restoreTerminalGate.settle()
       })
-      .catch((error) => console.error('[Agent] 刷新后恢复活跃流失败:', error))
+      .catch((error) => {
+        console.error('[Agent] 刷新后恢复活跃流失败:', error)
+        restoreTerminalGate.settle()
+      })
 
     // ===== 2. 流式完成 =====
-    const cleanupComplete = window.electronAPI.onAgentStreamComplete(
-      (data: AgentStreamCompletePayload) => {
+    const handleStreamComplete = (data: AgentStreamCompletePayload): void => {
         unstable_batchedUpdates(() => {
         // 后台任务等待态：turn 主体结束但仍有后台任务在飞行，UI 进入"空闲可输入"。
         // 不发"任务已完成"通知（任务并未真正完成）、不清后台任务列表、不重载消息——
@@ -1422,12 +1438,17 @@ export function useGlobalAgentListeners(): void {
         }
         finalize()
         }) // unstable_batchedUpdates
+    }
+
+    const cleanupComplete = window.electronAPI.onAgentStreamComplete(
+      (data: AgentStreamCompletePayload) => {
+        if (restoreTerminalGate.defer(data.sessionId, () => handleStreamComplete(data))) return
+        handleStreamComplete(data)
       }
     )
 
     // ===== 3. 流式错误 =====
-    const cleanupError = window.electronAPI.onAgentStreamError(
-      (data: { sessionId: string; error: string }) => {
+    const handleStreamError = (data: { sessionId: string; error: string }): void => {
         unstable_batchedUpdates(() => {
         console.error('[GlobalAgentListeners] 流式错误:', data.error)
 
@@ -1448,6 +1469,12 @@ export function useGlobalAgentListeners(): void {
           })
         }
         }) // unstable_batchedUpdates
+    }
+
+    const cleanupError = window.electronAPI.onAgentStreamError(
+      (data: { sessionId: string; error: string }) => {
+        if (restoreTerminalGate.defer(data.sessionId, () => handleStreamError(data))) return
+        handleStreamError(data)
       }
     )
 

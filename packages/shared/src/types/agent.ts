@@ -725,6 +725,12 @@ export interface AgentSessionUiProjection {
   parentSessionId: string | null
   rootSessionId: string | null
   sourceDelegationId: string | null
+  /** Pi `/tree` 探索分支所属的主线会话；仅探索分支设置，普通 fork 保持 null */
+  explorationParentSessionId: string | null
+  /** Pi `/tree` 探索分支的 assistant 分叉锚点（SDK 消息 uuid）；仅探索分支设置 */
+  explorationSourceMessageId: string | null
+  /** 用户可读的分叉来源标签，用于重新打开探索分支时恢复上下文提示；仅探索分支设置 */
+  explorationSourceLabel: string | null
   delegationRole: string | null
   delegationStatus: string | null
   delegationDepth: number | null
@@ -794,6 +800,12 @@ export interface AgentSessionMeta {
   knowledgeReferences?: KnowledgeReference[]
   /** 分叉来源：源会话的 Profer 工作目录（SDK session 文件在此目录的项目空间中，首次 resume 后清除） */
   forkSourceDir?: string
+  /** Pi `/tree` 探索分支所属的主线会话；仅探索分支设置，普通 fork 保持 undefined。 */
+  explorationParentSessionId?: string
+  /** Pi `/tree` 探索分支的 assistant 分叉锚点。 */
+  explorationSourceMessageId?: string
+  /** 用户可读的分叉来源，用于重新打开探索分支时恢复上下文提示。 */
+  explorationSourceLabel?: string
   /** 分叉来源：源会话的 SDK session ID（用于 rewind 时读取源会话的 file-history-snapshot 和备份文件） */
   forkSourceSdkSessionId?: string
   /** 回退后的 resume 截断点：下次发消息时传给 SDK resumeSessionAt（消费后清除） */
@@ -1243,6 +1255,22 @@ export interface ForkSessionInput {
   upToMessageUuid?: string
   /** 目标模型 ID。省略时继承源会话模型；传入时必须属于源会话同一渠道且已启用 */
   modelId?: string
+}
+
+/**
+ * 创建探索分支输入（Pi `/tree` 探索分支，对应跨端 WS 命令 `create_exploration_session`）。
+ *
+ * 探索与普通 fork 是两种语义：fork 重建独立顶层会话（会话救援 / 换模型接续），
+ * 探索则挂在主线右侧血缘下，并通过 explorationSourceLabel 记录来源。
+ * 不传 modelId —— 探索必须继承源会话渠道与模型。
+ */
+export interface CreateExplorationSessionInput {
+  /** 父会话（主线）ID */
+  sessionId: string
+  /** assistant 分叉锚点消息 uuid（SDK 消息 uuid），必填 */
+  upToMessageUuid: string
+  /** 用户可读的分叉来源标签；服务端会 trim、折叠空白并截断至 120 字符 */
+  explorationSourceLabel?: string
 }
 
 /** 快照回退输入（同一会话内回退到指定点） */

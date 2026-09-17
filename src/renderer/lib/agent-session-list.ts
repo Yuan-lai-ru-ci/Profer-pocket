@@ -53,6 +53,11 @@ export function upsertAgentSessionProjection(
     parentSessionId: projection.parentSessionId ?? undefined,
     rootSessionId: projection.rootSessionId ?? undefined,
     sourceDelegationId: projection.sourceDelegationId ?? undefined,
+    // 探索血缘：实时 session_updated 事件也走这条白名单，缺了这三行会把探索分支
+    // 裁剪成「独立会话」（且不会触发全量刷新兜底，见 update 工作包 design.md §4.2）
+    explorationParentSessionId: projection.explorationParentSessionId ?? undefined,
+    explorationSourceMessageId: projection.explorationSourceMessageId ?? undefined,
+    explorationSourceLabel: projection.explorationSourceLabel ?? undefined,
     delegationRole: projection.delegationRole ?? undefined,
     delegationStatus: projection.delegationStatus ?? undefined,
     delegationDepth: projection.delegationDepth ?? undefined,

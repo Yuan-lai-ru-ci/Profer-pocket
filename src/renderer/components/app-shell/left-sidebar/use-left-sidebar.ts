@@ -105,7 +105,7 @@ import {
   getNextWorkspaceSortMode,
 } from './sidebar-utils'
 import {
-  getDirectDelegatedChildren,
+  getDirectRelatedChildren,
   getSyncableDelegatedChildren,
   hasPinnedVisibleParent,
   PROJECT_SESSION_EXPAND_STEP,
@@ -235,8 +235,8 @@ export function useLeftSidebar(pocketMode?: boolean) {
   const [expandedExtraCountMap, setExpandedExtraCountMap] = React.useState<Map<string, number>>(new Map())
   /** 记录被用户手动折叠的工作区 ID（点击当前工作区标题时折叠/展开）。刻意不持久化：折叠被视为临时查看行为，刷新/重启后恢复默认展开 */
   const [collapsedWorkspaceIds, setCollapsedWorkspaceIds] = React.useState<Set<string>>(new Set())
-  /** 记录已展开的委派母会话；默认收起，避免批量派遣后撑满侧栏 */
-  const [expandedDelegationParentIds, setExpandedDelegationParentIds] = React.useState<Set<string>>(new Set())
+  /** 记录已展开的关联会话母行（委派子会话 / 探索分支共用）；默认收起，避免批量派遣后撑满侧栏 */
+  const [expandedRelatedParentIds, setExpandedRelatedParentIds] = React.useState<Set<string>>(new Set())
   /** 项目拖拽排序状态 */
   const [dragProjectId, setDragProjectId] = React.useState<string | null>(null)
   const [projectDropIndicator, setProjectDropIndicator] = React.useState<{ id: string; position: 'before' | 'after' } | null>(null)
@@ -504,7 +504,7 @@ export function useLeftSidebar(pocketMode?: boolean) {
   const pinnedAgentSessionTrees = React.useMemo<AgentSessionTreeItem[]>(
     () => pinnedAgentSessions.map((session) => ({
       session,
-      childSessions: getDirectDelegatedChildren(agentSessions, session.id).filter((child) => (
+      childSessions: getDirectRelatedChildren(agentSessions, session.id).filter((child) => (
         !child.archived
         && !child.draft
         && !draftSessionIds.has(child.id)
@@ -744,7 +744,7 @@ export function useLeftSidebar(pocketMode?: boolean) {
 
     // 清理 per-conversation/session Map atoms 条目
     cleanupMapAtoms(pendingDeleteId)
-    setExpandedDelegationParentIds((prev) => deleteSetEntry(prev, pendingDeleteId))
+    setExpandedRelatedParentIds((prev) => deleteSetEntry(prev, pendingDeleteId))
 
     if (mode === 'agent') {
       // Agent 模式：删除 Agent 会话
@@ -953,7 +953,7 @@ export function useLeftSidebar(pocketMode?: boolean) {
       })
 
       setCollapsedWorkspaceIds((prev) => deleteSetEntry(prev, workspaceId))
-      setExpandedDelegationParentIds((prev) => {
+      setExpandedRelatedParentIds((prev) => {
         let changed = false
         const next = new Set(prev)
         for (const sessionId of deletedSessionIds) {
@@ -1323,8 +1323,8 @@ export function useLeftSidebar(pocketMode?: boolean) {
     setMoveTargetId(id)
   }, [])
 
-  const handleToggleDelegationParent = React.useCallback((sessionId: string): void => {
-    setExpandedDelegationParentIds((prev) => toggleSetEntry(prev, sessionId))
+  const handleToggleRelatedParent = React.useCallback((sessionId: string): void => {
+    setExpandedRelatedParentIds((prev) => toggleSetEntry(prev, sessionId))
   }, [])
 
   /** 迁移会话到另一个项目后的回调 */
@@ -1599,8 +1599,8 @@ export function useLeftSidebar(pocketMode?: boolean) {
     handleTogglePinAgent,
     handleToggleArchiveAgent,
     handleRequestMove,
-    handleToggleDelegationParent,
-    expandedDelegationParentIds,
+    handleToggleRelatedParent,
+    expandedRelatedParentIds,
 
     // workspaces / projects
     workspaces,

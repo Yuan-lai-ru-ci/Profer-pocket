@@ -272,6 +272,8 @@ export interface GenerateTitleInput {
 export interface StreamChunkEvent {
   /** 对话 ID */
   conversationId: string
+  /** 本次流式运行的唯一代次；由服务端分配并随事件下发。 */
+  runId: string
   /** 内容增量 */
   delta: string
 }
@@ -282,6 +284,8 @@ export interface StreamChunkEvent {
 export interface StreamReasoningEvent {
   /** 对话 ID */
   conversationId: string
+  /** 本次流式运行的唯一代次。 */
+  runId: string
   /** 推理增量 */
   delta: string
 }
@@ -292,6 +296,8 @@ export interface StreamReasoningEvent {
 export interface StreamCompleteEvent {
   /** 对话 ID */
   conversationId: string
+  /** 本次流式运行的唯一代次。 */
+  runId: string
   /** 使用的模型 */
   model: string
   /** 助手消息 ID */
@@ -304,6 +310,8 @@ export interface StreamCompleteEvent {
 export interface StreamErrorEvent {
   /** 对话 ID */
   conversationId: string
+  /** 本次流式运行的唯一代次。 */
+  runId: string
   /** 错误信息 */
   error: string
   /** 结构化错误代码（如 'insufficient_credits'），供 UI 程序化处理与引导 */
@@ -336,6 +344,8 @@ export interface ChatToolActivity {
 export interface StreamToolActivityEvent {
   /** 对话 ID */
   conversationId: string
+  /** 本次流式运行的唯一代次。 */
+  runId: string
   /** 工具活动详情 */
   activity: ChatToolActivity
 }

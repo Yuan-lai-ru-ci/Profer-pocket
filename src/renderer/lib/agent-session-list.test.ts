@@ -144,6 +144,9 @@ describe('upsertAgentSessionProjection', () => {
     parentSessionId: null,
     rootSessionId: null,
     sourceDelegationId: null,
+    explorationParentSessionId: null,
+    explorationSourceMessageId: null,
+    explorationSourceLabel: null,
     delegationRole: null,
     delegationStatus: null,
     delegationDepth: null,
@@ -193,6 +196,35 @@ describe('upsertAgentSessionProjection', () => {
     expect(upsertAgentSessionProjection([], projection(4), 4)).toEqual([])
     expect(upsertAgentSessionProjection([], projection(3), 4)).toEqual([])
     expect(upsertAgentSessionProjection([], projection(5), 4)).toHaveLength(1)
+  })
+
+  test('回归（A-3）：未知探索分支经实时投影到达时血缘字段不被白名单裁掉', () => {
+    // 桌面刚创建探索分支并广播 session_updated；pocket 列表里还没有这条会话
+    const incoming = projection(1, {
+      id: 'exploration-branch',
+      parentSessionId: 'mainline',
+      explorationParentSessionId: 'mainline',
+      explorationSourceMessageId: 'assistant-msg-1',
+      explorationSourceLabel: '这条 Agent 回复',
+    })
+
+    const result = upsertAgentSessionProjection([], incoming)
+
+    expect(result).toHaveLength(1)
+    expect(result[0]).toMatchObject({
+      id: 'exploration-branch',
+      explorationParentSessionId: 'mainline',
+      explorationSourceMessageId: 'assistant-msg-1',
+      explorationSourceLabel: '这条 Agent 回复',
+    })
+  })
+
+  test('回归（N-1）：普通 fork / 普通会话的投影不带探索血缘', () => {
+    const result = upsertAgentSessionProjection([], projection(1, { id: 'plain-fork' }))
+
+    expect(result[0]?.explorationParentSessionId).toBeUndefined()
+    expect(result[0]?.explorationSourceMessageId).toBeUndefined()
+    expect(result[0]?.explorationSourceLabel).toBeUndefined()
   })
 })
 
