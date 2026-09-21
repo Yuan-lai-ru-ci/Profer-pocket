@@ -11,6 +11,7 @@
   "scripts": {
     "dev": "vite",
     "typecheck": "tsc --noEmit",
+    "test:startup-motion": "bun test src/renderer/pocket/startup-motion.test.ts",
     "build": "vite build",
     "apk": "bun run build && node pocket-app/scripts/build-apk.mjs"
   },

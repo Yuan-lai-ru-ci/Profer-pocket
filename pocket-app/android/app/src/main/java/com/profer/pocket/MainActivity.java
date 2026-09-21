@@ -6,6 +6,7 @@ import android.os.Bundle;
 import android.view.View;
 import android.webkit.WebView;
 
+import androidx.core.splashscreen.SplashScreen;
 import androidx.core.content.ContextCompat;
 import androidx.core.graphics.Insets;
 import androidx.core.view.ViewCompat;
@@ -25,6 +26,9 @@ public class MainActivity extends BridgeActivity {
 
     @Override
     public void onCreate(Bundle savedInstanceState) {
+        // AndroidX Core SplashScreen 必须在 super.onCreate 前安装，保证 Android 12+ 与旧版本
+        // 使用同一深色首帧；WebView 动态层随后接管并在有界时长内淡出。
+        SplashScreen.installSplashScreen(this);
         // 先于 Capacitor/WebView 初始化应用 SharedPreferences 中的方向，消除启动时序窗口。
         ScreenOrientationPlugin.applyPersistedOrientation(this);
         // 注册屏幕方向控制插件；必须在 super.onCreate 之前生效（BridgeActivity 的

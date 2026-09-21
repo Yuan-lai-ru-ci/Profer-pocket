@@ -1,0 +1,10 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <!-- Source: ProferAI/apps/electron/resources/icon.svg @ 2026-09-21.
+       Kept as an independent Pocket build asset; do not load from the desktop repository. -->
+  <g transform="translate(56 63) scale(0.8)">
+    <rect x="2" y="5" width="1137" height="1116" rx="280" fill="#000000"/>
+    <rect x="226" y="196" width="689" height="689" rx="150" fill="#F2F0EC"/>
+    <rect x="579" y="376" width="336" height="509" fill="#000000"/>
+    <rect x="728" y="515" width="187" height="370" fill="#7F7F7F"/>
+  </g>
+</svg>

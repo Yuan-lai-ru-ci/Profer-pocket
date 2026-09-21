@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="128dp"
+    android:height="128dp"
+    android:viewportWidth="1024"
+    android:viewportHeight="1024">
+    <!-- Coordinates are the desktop icon.svg rects after translate(56 63) scale(.8). -->
+    <path
+        android:fillColor="#000000"
+        android:pathData="M281.6,67H743.2A224,224 0,0 1,967.2 291V735.8A224,224 0,0 1,743.2 959.8H281.6A224,224 0,0 1,57.6 735.8V291A224,224 0,0 1,281.6 67Z" />
+    <path
+        android:fillColor="#F2F0EC"
+        android:pathData="M356.8,219.8H668A120,120 0,0 1,788 339.8V650.999A120,120 0,0 1,668 770.999H356.8A120,120 0,0 1,236.8 650.999V339.8A120,120 0,0 1,356.8 219.8Z" />
+    <path android:fillColor="#000000" android:pathData="M519.2,363.8H788V771H519.2Z" />
+    <path android:fillColor="#7F7F7F" android:pathData="M638.4,475H788V771H638.4Z" />
+</vector>

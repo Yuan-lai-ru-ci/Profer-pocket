@@ -68,6 +68,7 @@ import {
 } from './session-reload'
 import { PENDING_INTERACTION_POLL_INTERVAL_MS } from '@/lib/interaction-guard'
 import { pocketBackgroundMessagingAtom, pocketConnectionStatusAtom, pocketNotifyCompleteAtom, pocketUnbindRequestAtom } from '@/atoms/pocket-settings'
+import { PocketStartupMotion } from './PocketStartupMotion'
 
 // ===== 先安装 electronAPI stub（必须在任何复用组件求值前）=====
 installElectronApiStub()
@@ -310,6 +311,9 @@ function PocketThemeInitializer(): null {
 
 // ===== 根组件 =====
 function PocketApp(): React.ReactElement {
+  const [startupReady, setStartupReady] = useState(false)
+  const markStartupReady = useCallback(() => setStartupReady(true), [])
+
   return (
     <Provider store={pocketStore}>
       <PocketThemeInitializer />
@@ -318,7 +322,7 @@ function PocketApp(): React.ReactElement {
         <Toaster theme="system" position="top-center" richColors />
         {/* 等比缩放容器：内容整体 scale(s)，容器反补偿保持视口内，区域不放大 */}
         <UiScaleContainer pocketMode>
-          <App />
+          <App onReady={markStartupReady} />
         </UiScaleContainer>
         {/* 设置入口：LeftSidebar 底部头像/设置按钮置位 settingsOpenAtom，此处渲染原版 Dialog；
             Portal 到 body，不随缩放容器变换 */}
@@ -329,11 +333,19 @@ function PocketApp(): React.ReactElement {
             预览只能以弹窗形式呈现。 */}
         <FilePreviewContainer />
       </TooltipProvider>
+      <PocketStartupMotion ready={startupReady} />
     </Provider>
   )
 }
 
-function App(): React.ReactElement {
+function App({ onReady }: { onReady: () => void }): React.ReactElement {
+  useEffect(() => {
+    // The first committed App frame is the reliable local hand-off point. The
+    // extra frame lets the browser paint the connection or restored-session UI.
+    const frame = window.requestAnimationFrame(onReady)
+    return () => window.cancelAnimationFrame(frame)
+  }, [onReady])
+
   // useGlobalAgentListeners：桌面 Agent 事件 → atoms 的完整逻辑；事件源由 WS 桥喂入
   useGlobalAgentListeners()
   // useGlobalChatListeners：桌面 Chat 流式事件（chunk/reasoning/complete/error/tool-activity）→ atoms

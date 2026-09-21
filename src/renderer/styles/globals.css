@@ -2623,3 +2623,91 @@ body.pocket-mode .overflow-x-auto {
     display: none;
   }
 }
+
+/* ===== Pocket brand startup hand-off =====
+ * Native Android SplashScreen owns the system first frame; this layer is a
+ * bounded WebView hand-off. Only opacity/transform are animated so the small
+ * centered layer stays compositor-friendly on 60 FPS devices.
+ */
+.pocket-startup-motion {
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  background: #0b0d0e;
+  color: #f2f0ec;
+  pointer-events: none;
+  opacity: 1;
+  transition: opacity var(--pocket-startup-fade-out-ms, 360ms) cubic-bezier(.16, 1, .3, 1);
+}
+.pocket-startup-motion-fading {
+  opacity: 0;
+  pointer-events: none;
+}
+.pocket-startup-brand {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  gap: 18px;
+  transform: translateY(8px) scale(.88);
+  animation: pocket-startup-logo-in var(--pocket-startup-logo-in-ms, 420ms) cubic-bezier(.16, 1, .3, 1) both;
+}
+.pocket-startup-logo {
+  width: clamp(96px, 28vw, 156px);
+  height: auto;
+  filter: drop-shadow(0 18px 28px rgb(0 0 0 / .45));
+}
+.pocket-startup-wordmark {
+  font-size: clamp(20px, 6vw, 30px);
+  font-weight: 600;
+  letter-spacing: .18em;
+  opacity: 0;
+  animation: pocket-startup-wordmark-in var(--pocket-startup-wordmark-in-ms, 560ms) var(--pocket-startup-wordmark-delay-ms, 180ms) cubic-bezier(.16, 1, .3, 1) both;
+}
+.pocket-startup-rings {
+  position: absolute;
+  width: min(88vw, 430px);
+  aspect-ratio: 1;
+  pointer-events: none;
+}
+.pocket-startup-ring {
+  position: absolute;
+  inset: 20%;
+  border: 1px solid rgb(242 240 236 / .32);
+  border-radius: 999px;
+  opacity: 0;
+  transform: scale(.35);
+  animation: pocket-startup-ring-out var(--pocket-startup-rings-ms, 980ms) cubic-bezier(.16, 1, .3, 1) calc(var(--ring-index) * var(--pocket-startup-ring-delay-ms, 160ms)) both;
+}
+@keyframes pocket-startup-logo-in {
+  from { opacity: 0; transform: translateY(8px) scale(.88); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+@keyframes pocket-startup-wordmark-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: .9; transform: translateY(0); }
+}
+@keyframes pocket-startup-ring-out {
+  0% { opacity: 0; transform: scale(.35); }
+  18% { opacity: .55; }
+  100% { opacity: 0; transform: scale(1.8); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .pocket-startup-motion {
+    transition-duration: var(--pocket-startup-fade-out-ms, 160ms);
+  }
+  .pocket-startup-brand {
+    animation-duration: var(--pocket-startup-logo-in-ms, 180ms);
+    animation-delay: 0ms;
+  }
+  .pocket-startup-wordmark {
+    animation-duration: var(--pocket-startup-wordmark-in-ms, 120ms);
+    animation-delay: var(--pocket-startup-wordmark-delay-ms, 0ms);
+  }
+  .pocket-startup-rings {
+    display: none;
+  }
+}
