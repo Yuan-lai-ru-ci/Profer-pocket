@@ -11,7 +11,7 @@
  * 这里统一交给对应订阅者处理。
  */
 
-import type { CreateExplorationSessionInput } from '@profer/shared'
+import type { CommandResult, CreateExplorationSessionInput } from '@profer/shared'
 
 export type AgentWorkflowEvent = {
   sessionId: string
@@ -98,12 +98,9 @@ function settlePendingSendId(payload: { sessionId: string; userMessage: string; 
   }
 }
 
-type CommandResultMessage = {
+type CommandResultMessage = CommandResult<unknown> & {
   kind: 'command_result'
   requestId: string | null
-  ok: boolean
-  data?: unknown
-  error?: string
 }
 
 type InboundMessage =
@@ -135,8 +132,10 @@ export interface WsClientOptions {
   onAgentEvent?: (evt: AgentWorkflowEvent) => void
   /** Chat 流式事件回调 */
   onChatEvent?: (evt: ChatWorkflowEvent) => void
-  /** 指令结果回调（按 requestId 分发） */
+  /** 指令结果回调（按 commandId 分发） */
   onCommandResult?: (result: CommandResultMessage) => void
+  /** 新命令发送前记录 pending，供 Remote Store 幂等管理。 */
+  onCommandPending?: (pending: { commandId: string; expectedRevision?: number; sessionId?: string }) => void
   /** Agent 事件恢复结果，用于触发缓存过期后的快照兜底和调试指标记录。 */
   onAgentResumeStatus?: (status: AgentResumeStatus) => void
 }
@@ -149,6 +148,8 @@ export class WsClient {
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null
   private pendingCommands = new Map<string, { resolve: (r: unknown) => void; reject: (e: Error) => void }>()
+  private completedCommands = new Set<string>()
+  private onCommandPending?: WsClientOptions['onCommandPending']
 
   /** 待发消息队列：连接断开时暂存 send_message，重连后按序重放（幂等去重依靠 clientMessageId）。
    *  只暂存「用户核心输入」类操作；stop/权限/读操作时效性强，断线后应重新发起而非重放。 */
@@ -184,6 +185,7 @@ export class WsClient {
     this.onAgentEvent = options.onAgentEvent
     this.onChatEvent = options.onChatEvent
     this.onCommandResult = options.onCommandResult
+    this.onCommandPending = options.onCommandPending
     this.onAgentResumeStatus = options.onAgentResumeStatus
     this.resumeStorageKey = `profer-remote-agent-events:${stableHash(`${this.url}|${this.token}`)}`
     this.lastEventId = this.readResumeState()?.lastEventId ?? 0
@@ -355,7 +357,8 @@ export class WsClient {
   }
 
   private resolveCommandResult(msg: CommandResultMessage): void {
-    const id = msg.requestId as string | undefined
+    const id = (msg.commandId || msg.requestId) as string | undefined
+    if (id && this.completedCommands.has(id)) return
     // 旧版服务端会把 resume_agent_events 当未知指令返回 command_result；
     // 它没有对应 pending command，不能落入 FIFO 兜底误消费其他业务请求。
     if (id && id === this.resumeCommandId) {
@@ -365,8 +368,9 @@ export class WsClient {
     if (id && this.pendingCommands.has(id)) {
       const pending = this.pendingCommands.get(id)!
       this.pendingCommands.delete(id)
+      this.completedCommands.add(id)
       if (msg.ok) pending.resolve(msg.data)
-      else pending.reject(new Error(msg.error || '指令失败'))
+      else pending.reject(new Error(msg.conflict?.code ? `${msg.conflict.code}: ${msg.error || '指令失败'}` : (msg.error || '指令失败')))
       return
     }
     // 无 requestId 时用 FIFO 兜底（兼容）
@@ -374,8 +378,9 @@ export class WsClient {
     if (fallback) {
       const [fid, pending] = fallback
       this.pendingCommands.delete(fid)
+      this.completedCommands.add(fid)
       if (msg.ok) pending.resolve(msg.data)
-      else pending.reject(new Error(msg.error || '指令失败'))
+      else pending.reject(new Error(msg.conflict?.code ? `${msg.conflict.code}: ${msg.error || '指令失败'}` : (msg.error || '指令失败')))
     }
   }
 
@@ -483,7 +488,7 @@ export class WsClient {
    * 发送一条指令并等待 command_result。
    * 若连接未就绪则立即 reject。
    */
-  sendCommand<T = unknown>(payload: Record<string, unknown>): Promise<T> {
+  sendCommand<T = unknown>(payload: Record<string, unknown>, options?: { expectedRevision?: number }): Promise<T> {
     if (!this.isOpen()) {
       return Promise.reject(new Error('连接未就绪，请稍候重试'))
     }
@@ -493,7 +498,12 @@ export class WsClient {
       //  与命令追踪 ID 重名冲突曾被展开覆盖，导致主进程收到命令 ID 去查 pending → “提问请求不存在”）。
       const cmdId = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
       this.pendingCommands.set(cmdId, { resolve: resolve as (r: unknown) => void, reject })
-      this.ws!.send(JSON.stringify({ ...payload, _cmdId: cmdId }))
+      this.onCommandPending?.({
+        commandId: cmdId,
+        expectedRevision: options?.expectedRevision,
+        sessionId: typeof payload.sessionId === 'string' ? payload.sessionId : undefined,
+      })
+      this.ws!.send(JSON.stringify({ ...payload, ...(options?.expectedRevision !== undefined ? { expectedRevision: options.expectedRevision } : {}), _cmdId: cmdId }))
       // 超时兜底
       setTimeout(() => {
         if (this.pendingCommands.has(cmdId)) {
@@ -645,16 +655,16 @@ export class WsClient {
     return this.sendCommand({ type: 'respond_exit_plan_mode', requestId, action, feedback })
   }
 
-  updateSessionModel(sessionId: string, channelId: string, modelId?: string): Promise<unknown> {
-    return this.sendCommand({ type: 'update_session_model', sessionId, channelId, modelId })
+  updateSessionModel(sessionId: string, channelId?: string, modelId?: string, expectedRevision?: number): Promise<unknown> {
+    return this.sendCommand({ type: 'update_session_model', sessionId, ...(channelId ? { channelId } : {}), ...(modelId ? { modelId } : {}) }, { expectedRevision })
   }
 
-  updateSessionRuntime(sessionId: string, runtime: 'claude' | 'pi'): Promise<unknown> {
-    return this.sendCommand({ type: 'update_session_runtime', sessionId, runtime })
+  updateSessionRuntime(sessionId: string, runtime: 'claude' | 'pi', expectedRevision?: number): Promise<unknown> {
+    return this.sendCommand({ type: 'update_session_runtime', sessionId, runtime }, { expectedRevision })
   }
 
-  updatePermissionMode(sessionId: string, mode: 'auto' | 'plan' | 'bypassPermissions'): Promise<unknown> {
-    return this.sendCommand({ type: 'update_permission_mode', sessionId, mode })
+  updatePermissionMode(sessionId: string, mode: 'auto' | 'plan' | 'bypassPermissions', expectedRevision?: number): Promise<unknown> {
+    return this.sendCommand({ type: 'update_permission_mode', sessionId, mode }, { expectedRevision })
   }
 
   // ===== Agent 预设（对齐主仓库 remote-service 预设 WS 命令，数据与电脑端共享） =====
@@ -671,8 +681,8 @@ export class WsClient {
     return this.sendCommand({ type: 'set_default_preset', workspaceSlug, presetId })
   }
 
-  updateSessionPreset(sessionId: string, presetId: string): Promise<unknown> {
-    return this.sendCommand({ type: 'update_session_preset', sessionId, presetId })
+  updateSessionPreset(sessionId: string, presetId: string, expectedRevision?: number): Promise<unknown> {
+    return this.sendCommand({ type: 'update_session_preset', sessionId, presetId }, { expectedRevision })
   }
 
   createPreset(workspaceSlug: string, input: Record<string, unknown>): Promise<unknown> {
@@ -697,6 +707,18 @@ export class WsClient {
 
   renameSession(sessionId: string, title: string): Promise<unknown> {
     return this.sendCommand({ type: 'rename_session', sessionId, title })
+  }
+
+  regenerateSessionTitle(sessionId: string, channelId?: string, modelId?: string): Promise<unknown> {
+    return this.sendCommand({ type: 'regenerate_session_title', sessionId, channelId, modelId })
+  }
+
+  markSessionUnread(sessionId: string): Promise<unknown> {
+    return this.sendCommand({ type: 'mark_session_unread', sessionId })
+  }
+
+  markSessionRead(sessionId: string): Promise<unknown> {
+    return this.sendCommand({ type: 'mark_session_read', sessionId })
   }
 
   createSession(payload: { title?: string; channelId?: string; workspaceId?: string; modelId?: string; permissionMode?: 'auto' | 'plan' | 'bypassPermissions' }): Promise<unknown> {

@@ -135,6 +135,9 @@ interface PocketRemoteClient extends HeatmapRemoteClient {
   migrateChatToAgent(conversationId: string, agentSessionId: string): Promise<unknown>
   ensureProjectDraftSession(payload: { workspaceId: string; channelId?: string; modelId?: string }): Promise<unknown>
   renameSession(sessionId: string, title: string): Promise<unknown>
+  regenerateSessionTitle(sessionId: string, channelId?: string, modelId?: string): Promise<unknown>
+  markSessionUnread(sessionId: string): Promise<unknown>
+  markSessionRead(sessionId: string): Promise<unknown>
   getSdkMessages(
     sessionId: string,
     opts?: { before?: number; targetMessages?: number },
@@ -155,9 +158,9 @@ interface PocketRemoteClient extends HeatmapRemoteClient {
     mentionedMcpServers?: string[]
     mentionedSessionIds?: string[]
   }): Promise<unknown>
-  updateSessionModel(sessionId: string, channelId: string, modelId?: string): Promise<unknown>
-  updateSessionRuntime(sessionId: string, runtime: 'claude' | 'pi'): Promise<unknown>
-  updatePermissionMode(sessionId: string, mode: 'auto' | 'plan' | 'bypassPermissions'): Promise<unknown>
+  updateSessionModel(sessionId: string, channelId?: string, modelId?: string, expectedRevision?: number): Promise<unknown>
+  updateSessionRuntime(sessionId: string, runtime: 'claude' | 'pi', expectedRevision?: number): Promise<unknown>
+  updatePermissionMode(sessionId: string, mode: 'auto' | 'plan' | 'bypassPermissions', expectedRevision?: number): Promise<unknown>
   stopAgent(sessionId: string): Promise<unknown>
   // ---- 交互式问答/审批响应（AskUserQuestion / 权限审批 / ExitPlanMode） ----
   respondPermission(requestId: string, behavior: 'allow' | 'deny', alwaysAllow?: boolean): Promise<unknown>
@@ -200,7 +203,7 @@ interface PocketRemoteClient extends HeatmapRemoteClient {
   listPresets(workspaceSlug?: string): Promise<unknown>
   getDefaultPreset(workspaceSlug?: string): Promise<unknown>
   setDefaultPreset(workspaceSlug: string, presetId: string): Promise<unknown>
-  updateSessionPreset(sessionId: string, presetId: string): Promise<unknown>
+  updateSessionPreset(sessionId: string, presetId: string, expectedRevision?: number): Promise<unknown>
   createPreset(workspaceSlug: string, input: Record<string, unknown>): Promise<unknown>
   copyPreset(workspaceSlug: string, fromId: string, name?: string): Promise<unknown>
   updatePreset(workspaceSlug: string, presetId: string, updates: Record<string, unknown>): Promise<unknown>
@@ -696,22 +699,22 @@ export function installElectronApiStub(): void {
     getSdkMessagesHasMore: (sessionId: string) => {
       return sdkMessagesPageCache.get(sessionId)?.hasMore ?? false
     },
-    updateAgentSessionModel: (sessionId: string, channelId: string, modelId?: string) => {
+    updateAgentSessionModel: (sessionId: string, channelId?: string, modelId?: string, expectedRevision?: number) => {
       if (!remoteClient) return Promise.reject(new Error('移动端连接未就绪'))
-      return remoteClient.updateSessionModel(sessionId, channelId, modelId).then((r) => {
+      return remoteClient.updateSessionModel(sessionId, channelId, modelId, expectedRevision).then((r) => {
         // 契约兜底：旧版服务端可能只返回 { channelId, modelId }，补全 id 等字段，
         // 保证桌面组件 .then((updated) => updated.id / updated.updatedAt) 拿到完整对象。
         const updated = (r ?? {}) as Record<string, unknown>
         return { ...updated, id: updated.id ?? sessionId }
       })
     },
-    updateSessionAgentRuntime: (sessionId: string, runtime: 'claude' | 'pi') => {
+    updateSessionAgentRuntime: (sessionId: string, runtime: 'claude' | 'pi', expectedRevision?: number) => {
       if (!remoteClient) return Promise.reject(new Error('移动端连接未就绪'))
-      return remoteClient.updateSessionRuntime(sessionId, runtime)
+      return remoteClient.updateSessionRuntime(sessionId, runtime, expectedRevision)
     },
-    updateSessionPermissionMode: (sessionId: string, mode: 'auto' | 'plan' | 'bypassPermissions') => {
+    updateSessionPermissionMode: (sessionId: string, mode: 'auto' | 'plan' | 'bypassPermissions', expectedRevision?: number) => {
       if (!remoteClient) return Promise.reject(new Error('移动端连接未就绪'))
-      return remoteClient.updatePermissionMode(sessionId, mode)
+      return remoteClient.updatePermissionMode(sessionId, mode, expectedRevision)
     },
     // ---- Agent 预设：全部走 WS 远程命令（预设数据在电脑端主进程持久化，两端共享） ----
     listAgentPresets: (workspaceSlug?: string) => {
@@ -722,13 +725,14 @@ export function installElectronApiStub(): void {
       if (!remoteClient) return Promise.reject(new Error('移动端连接未就绪'))
       return remoteClient.getDefaultPreset(workspaceSlug)
     },
-    updateAgentSessionPreset: (sessionId: string, presetId: string) => {
+    updateAgentSessionPreset: (sessionId: string, presetId: string, expectedRevision?: number) => {
       if (!remoteClient) return Promise.reject(new Error('移动端连接未就绪'))
-      return remoteClient.updateSessionPreset(sessionId, presetId).then((r) => {
-        // 契约兜底：旧版服务端可能未返回完整 meta，补全 id / presetId 字段，
-        // 保证桌面组件 .then((updated) => updated.presetId) 拿到持久化真源。
+      return remoteClient.updateSessionPreset(sessionId, presetId, expectedRevision).then((r) => {
         const updated = (r ?? {}) as Record<string, unknown>
-        return { ...updated, id: updated.id ?? sessionId, presetId: updated.presetId ?? presetId }
+        if (typeof updated.id !== 'string' || typeof updated.revision !== 'number') {
+          throw new Error('服务端未返回完整的权威会话投影')
+        }
+        return updated
       })
     },
     setDefaultAgentPreset: (workspaceSlug: string, presetId: string) => {
@@ -805,6 +809,21 @@ export function installElectronApiStub(): void {
     updateAgentSessionTitle: async (id: string, title: string) => {
       if (!remoteClient) throw new Error('移动端连接未就绪')
       const updated = await remoteClient.renameSession(id, title)
+      return resolveAuthoritativeAgentSession(remoteClient, id, updated)
+    },
+    regenerateAgentSessionTitle: async (id: string, channelId?: string, modelId?: string) => {
+      if (!remoteClient) throw new Error('移动端连接未就绪')
+      const updated = await remoteClient.regenerateSessionTitle(id, channelId, modelId)
+      return resolveAuthoritativeAgentSession(remoteClient, id, updated)
+    },
+    setAgentCompletionState: async (id: string) => {
+      if (!remoteClient) throw new Error('移动端连接未就绪')
+      const updated = await remoteClient.markSessionUnread(id)
+      return resolveAuthoritativeAgentSession(remoteClient, id, updated)
+    },
+    clearAgentCompletionState: async (id: string) => {
+      if (!remoteClient) throw new Error('移动端连接未就绪')
+      const updated = await remoteClient.markSessionRead(id)
       return resolveAuthoritativeAgentSession(remoteClient, id, updated)
     },
     getAgentSessionMeta: async (id: string) => {
@@ -1114,8 +1133,6 @@ export function installElectronApiStub(): void {
         return null
       }
     },
-    // 清除「已完成未确认」标记：pocket 无本地会话库 → 明确拒绝；调用方带 .catch（仅记日志）。
-    clearAgentCompletionState: () => unsupported('清除会话完成标记'),
     // git diff 缓存失效：pocket 无本地 git 缓存 → 安全空操作（useGlobalAgentListeners 写工具完成路径直接调用）。
     invalidateGitDiffCache: safeNoop,
     getAgentKnowledgeReferences: () => Promise.resolve([]),

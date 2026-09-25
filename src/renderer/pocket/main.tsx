@@ -35,6 +35,8 @@ import { userProfileAtom } from '@/atoms/user-profile'
 import { authStatusAtom } from '@/atoms/identity-atoms'
 import { channelsAtom, channelsLoadedAtom, conversationsAtom, currentConversationIdAtom, chatMessageRefreshAtom } from '@/atoms/chat-atoms'
 import { agentSessionsAtom, agentWorkspacesAtom, currentAgentSessionIdAtom, currentAgentWorkspaceIdAtom, agentChannelIdAtom, agentModelIdAtom, agentChannelIdsAtom, agentStreamingStatesAtom, agentMessageRefreshAtom, pocketSessionReloadAtom, agentDefaultPermissionModeAtom, allPendingPermissionRequestsAtom, allPendingAskUserRequestsAtom, allPendingExitPlanRequestsAtom, settleInactiveAgentStreamState, shouldClearInactiveAgentStreamState } from '@/atoms/agent-atoms'
+import { remoteStoreAtom } from '@/atoms/remote-store-atoms'
+import { reduceRemoteStore } from './remote-store'
 import { appModeAtom } from '@/atoms/app-mode'
 import {
   themeModeAtom,
@@ -55,7 +57,7 @@ import { Button } from '@/components/ui/button'
 import { AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogFooter, AlertDialogTitle, AlertDialogDescription, AlertDialogAction, AlertDialogCancel } from '@/components/ui/alert-dialog'
 import { TooltipProvider, Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip'
 import { Menu, Plus, Palette, Link, Loader2, Bell, RefreshCw, Download } from 'lucide-react'
-import { type AgentStreamPayload, type AgentEndReason } from '@profer/shared'
+import { type AgentStreamPayload, type AgentEndReason, type AgentSessionMeta } from '@profer/shared'
 import { markPocketResolvedInteraction, type PendingInteractionKind } from './pending-interaction-reconciliation'
 import { syncPendingInteractions } from './pending-interaction-sync'
 import {
@@ -133,7 +135,7 @@ function clearLastView(): void {
 }
 
 // ===== 类型 =====
-interface ChannelInfo { id: string; name: string; provider: string; models: { id: string; name: string }[] }
+interface ChannelInfo { id: string; name: string; provider: string; agentRuntimes?: ('claude' | 'pi')[]; agentExperimentalEnabled?: boolean; models: { id: string; name: string }[] }
 interface SessionInfo { id: string; title: string; channelId?: string; modelId?: string; workspaceId?: string; agentRuntime?: 'claude' | 'pi'; permissionMode?: string; active: boolean; createdAt?: number; updatedAt?: number; pinned?: boolean; archived?: boolean; draft?: boolean }
 
 const pocketStore = createStore()
@@ -427,6 +429,10 @@ function App({ onReady }: { onReady: () => void }): React.ReactElement {
       url,
       token,
       onStatusChange: (status) => {
+        pocketStore.set(remoteStoreAtom, (previous) => reduceRemoteStore(previous, {
+          type: 'connection',
+          phase: status === 'open' ? 'snapshot_loading' : status === 'connecting' ? 'connecting' : 'disconnected',
+        }))
         if (status === 'open') {
           setConnection('open'); setErrMsg(undefined)
           // 平板通过 WS 连接的是已授权（可能已登录）的电脑端，官方渠道（newapi-*）由电脑端
@@ -451,8 +457,49 @@ function App({ onReady }: { onReady: () => void }): React.ReactElement {
         } else if (status === 'error') setConnection('error')
         else setConnection('connecting')
       },
-      onAgentEvent: (evt) => handleAgentEvent(client, evt),
+      onCommandPending: (pending) => {
+        pocketStore.set(remoteStoreAtom, (previous) => reduceRemoteStore(previous, {
+          type: 'command_pending',
+          commandId: pending.commandId,
+          expectedRevision: pending.expectedRevision,
+          sessionId: pending.sessionId,
+        }))
+      },
+      onCommandResult: (result) => {
+        pocketStore.set(remoteStoreAtom, (previous) => reduceRemoteStore(previous, {
+          type: 'command_result',
+          result,
+        }))
+        if (result.ok && result.data && typeof result.data === 'object' && 'id' in result.data) {
+          const session = result.data as AgentSessionMeta
+          pocketStore.set(remoteStoreAtom, (previous) => reduceRemoteStore(previous, {
+            type: 'session_snapshot_upsert',
+            session,
+          }))
+        }
+      },
+      onAgentEvent: (evt) => {
+        const payload = evt.payload as { kind?: string; operation?: string; session?: import('@profer/shared').AgentSessionUiProjection; sessionId?: string; revision?: number } | null
+        if (payload?.kind === 'session_projection' && payload.operation === 'upsert' && payload.session) {
+          pocketStore.set(remoteStoreAtom, (previous) => reduceRemoteStore(previous, { type: 'projection_upsert', session: payload.session! }))
+        } else if (payload?.kind === 'session_projection' && payload.operation === 'delete' && payload.sessionId && typeof payload.revision === 'number') {
+          pocketStore.set(remoteStoreAtom, (previous) => reduceRemoteStore(previous, { type: 'projection_delete', sessionId: payload.sessionId!, revision: payload.revision! }))
+        }
+        handleAgentEvent(client, evt)
+      },
       onAgentResumeStatus: (status) => {
+        if (status.serverInstanceId) {
+          pocketStore.set(remoteStoreAtom, (previous) => reduceRemoteStore(previous, {
+            type: 'hello',
+            serverInstanceId: status.serverInstanceId!,
+            latestEventId: status.latestEventId,
+          }))
+        }
+        pocketStore.set(remoteStoreAtom, (previous) => reduceRemoteStore(previous, {
+          type: 'replay_completed',
+          cursor: status.toEventId,
+          requiresSnapshot: status.requiresSnapshot,
+        }))
         debugLog(`[WS resume] replayed=${status.replayed} complete=${status.complete} snapshot=${status.requiresSnapshot} duplicate=${status.duplicateEvents} reorder=${status.outOfOrderEvents}`)
         if (status.requiresSnapshot) {
           // 事件窗口过期或主端重启后，按现有权威快照恢复，不继续拼接不完整的事件流。
@@ -488,6 +535,8 @@ function App({ onReady }: { onReady: () => void }): React.ReactElement {
         // 否则 AgentView 的 hasAvailableModel 判定（channel.enabled && models[].enabled）恒为 false，
         // 会错误提示“请去设置中启用渠道”。
         enabled: true,
+        agentRuntimes: c.agentRuntimes,
+        agentExperimentalEnabled: c.agentExperimentalEnabled,
         models: (c.models || []).map((m) => ({ ...m, enabled: true })),
       }))
       setChannels(ch as never)
@@ -527,6 +576,11 @@ function App({ onReady }: { onReady: () => void }): React.ReactElement {
         archived: s.archived ?? false,
         draft: s.draft ?? false,
       }))
+      pocketStore.set(remoteStoreAtom, (previous) => reduceRemoteStore(previous, {
+        type: 'snapshot',
+        sessions: normalizedSessions as AgentSessionMeta[],
+        cursor: previous.connection.cursor,
+      }))
 
       // 平板版暂时隐藏团队版功能：先拉工作区列表识别团队工作区（type === 'team'），
       // 其工作区与会话整体排除——项目分组、置顶、最近、归档列表都不会出现团队内容。
@@ -555,7 +609,11 @@ function App({ onReady }: { onReady: () => void }): React.ReactElement {
       const personalSessions = normalizedSessions.filter((s) => !teamWorkspaceIds.has(s.workspaceId ?? ''))
       setSessions(personalSessions)
       // 原生 LeftSidebar 直接读取这些 atoms；平板只替换数据传输层。
-      setNativeSessions(personalSessions as never)
+      // Remote Store 是会话目录的事实入口；agentSessionsAtom 仅作为迁移桥供旧桌面组件消费。
+      // 先合并服务端快照，再把筛选后的投影镜像给旧桥，避免两套状态互相覆盖最终值。
+      const remoteSnapshot = pocketStore.get(remoteStoreAtom).sessions
+      const remotePersonalSessions = Object.values(remoteSnapshot).filter((s) => !teamWorkspaceIds.has(s.workspaceId ?? ''))
+      setNativeSessions((remotePersonalSessions.length > 0 ? remotePersonalSessions : personalSessions) as never)
 
       // 陈旧 streaming 兜底：主进程返回 active=false 的会话若本地仍标记 running，
       // 说明完成事件在断线/事件丢失时没送达（平板没有桌面 STREAM_COMPLETE IPC 保底）。
@@ -742,6 +800,28 @@ function App({ onReady }: { onReady: () => void }): React.ReactElement {
       }
       const kind = payload.event.type ? interactionKinds[payload.event.type] : undefined
       if (kind) markPocketResolvedInteraction({ kind, sessionId: evt.sessionId, requestId: payload.event.requestId })
+    }
+    // Remote Store 只消费运行态 ProferEvent；session_projection 在上方单独处理，
+    // 不能通过 runtime reducer，否则元数据事件会把 idle 会话误激活为 running。
+    const runtimeEvent = (evt.payload as { kind?: string; event?: { type?: string; sessionId?: string; message?: string; stoppedByUser?: boolean; resultSubtype?: string; resultErrors?: string[]; active?: boolean } } | null)?.event
+    if ((evt.payload as { kind?: string } | null)?.kind === 'profer_event' && runtimeEvent) {
+      const runtimeSessionId = runtimeEvent.sessionId ?? evt.sessionId
+      const eventType = runtimeEvent.type
+      const runtimeAction = eventType === 'run_resumed' ? { type: 'run_resumed' as const, sessionId: runtimeSessionId }
+        : eventType === 'run_idle' ? { type: 'run_idle' as const, sessionId: runtimeSessionId }
+          : eventType === 'run_completed' ? { type: 'run_completed' as const, sessionId: runtimeSessionId, stoppedByUser: runtimeEvent.stoppedByUser, resultSubtype: runtimeEvent.resultSubtype, resultErrors: runtimeEvent.resultErrors }
+            : eventType === 'error' ? { type: 'error' as const, sessionId: runtimeSessionId, message: runtimeEvent.message ?? 'Agent 执行失败' }
+              : eventType === 'permission_request' ? { type: 'permission_request' as const, sessionId: runtimeSessionId }
+                : eventType === 'permission_resolved' ? { type: 'permission_resolved' as const, sessionId: runtimeSessionId }
+                  : eventType === 'ask_user_request' ? { type: 'ask_user_request' as const, sessionId: runtimeSessionId }
+                    : eventType === 'ask_user_resolved' ? { type: 'ask_user_resolved' as const, sessionId: runtimeSessionId }
+                      : eventType === 'exit_plan_mode_request' ? { type: 'exit_plan_mode_request' as const, sessionId: runtimeSessionId }
+                        : eventType === 'exit_plan_mode_resolved' ? { type: 'exit_plan_mode_resolved' as const, sessionId: runtimeSessionId }
+                          : eventType === 'plan_mode_changed' ? { type: 'plan_mode_changed' as const, sessionId: runtimeSessionId, active: runtimeEvent.active === true }
+                            : null
+      if (runtimeAction) {
+        pocketStore.set(remoteStoreAtom, (previous) => reduceRemoteStore(previous, { type: 'runtime_event', event: runtimeAction, eventId: evt.eventId }))
+      }
     }
     emitPocketAgentStreamEvent({ sessionId: evt.sessionId, payload: evt.payload as AgentStreamPayload })
     const p = evt.payload as { kind?: string; event?: { type?: string; stoppedByUser?: boolean; startedAt?: number; resultSubtype?: string; resultErrors?: string[]; backgroundTasksPending?: boolean; endReason?: AgentEndReason; endReasonLabel?: string } } | null

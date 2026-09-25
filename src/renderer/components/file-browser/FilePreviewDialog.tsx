@@ -14,7 +14,7 @@ import { X, Loader2 } from 'lucide-react'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
-import { getPreviewCache, setPreviewCache } from '@/lib/preview-cache'
+import { clearPreviewCache, setPreviewCache } from '@/lib/preview-cache'
 
 interface FilePreviewDialogProps {
   open: boolean
@@ -71,6 +71,9 @@ export function FilePreviewDialog({ open, filePath, fileName, sessionId, onClose
   }, [open, filePath, sessionId]) // eslint-disable-line
 
   const loadPreview = async (): Promise<void> => {
+    // 远端文件可能被桌面 Agent/外部编辑器修改；打开时显式失效旧内容，
+    // 直到收到带 version 的最新响应后才重新缓存，避免静默使用过期内容。
+    clearPreviewCache()
     const e = ext(fileName)
     try {
       let localPath = filePath
@@ -90,19 +93,13 @@ export function FilePreviewDialog({ open, filePath, fileName, sessionId, onClose
       if (IMAGE_EXTS.has(e)) {
         // 图片预览：桌面走 registerPreviewPath（profer-file:// 自定义协议），
         // Pocket 端无法加载该协议，改为 readFileAsDataUrl（WS 返回 base64 data URL）。
-        // 命中内存缓存时直接渲染，不重复请求电脑端。
         const cacheKey = `img:${sessionId ?? ''}:${localPath}`
-        const cached = getPreviewCache<{ resolvedPath: string; dataUrl: string }>(cacheKey)
-        if (cached?.dataUrl) {
-          setState({ status: 'image', src: cached.dataUrl })
+        const result = await window.electronAPI.readFileAsDataUrl(localPath, access)
+        if (result?.dataUrl && result.version) {
+          setPreviewCache(cacheKey, result)
+          setState({ status: 'image', src: result.dataUrl })
         } else {
-          const result = await window.electronAPI.readFileAsDataUrl(localPath, access)
-          if (result?.dataUrl) {
-            setPreviewCache(cacheKey, result)
-            setState({ status: 'image', src: result.dataUrl })
-          } else {
-            setState({ status: 'error', message: '无法读取图片' })
-          }
+          setState({ status: 'error', message: '无法读取图片' })
         }
       } else if (e === 'pdf') {
         const result = await window.electronAPI.preparePdfPreview(localPath, access)
@@ -117,19 +114,13 @@ export function FilePreviewDialog({ open, filePath, fileName, sessionId, onClose
         if (result?.html) setState({ status: 'html', html: result.html })
         else setState({ status: 'error', message: '无法预览文档' })
       } else if (TEXT_EXTS.has(e) || !e) {
-        // 文本/代码预览：内存缓存命中直接渲染（MVP：反复查看同一文件秒开）
         const cacheKey = `text:${sessionId ?? ''}:${localPath}`
-        const cached = getPreviewCache<{ resolvedPath: string; content: string }>(cacheKey)
-        if (cached?.content !== undefined) {
-          setState({ status: 'text', content: cached.content, language: langFromExt(e) })
+        const result = await window.electronAPI.resolveAndReadFile(localPath, access)
+        if (result?.content !== undefined && result.content !== null && result.version) {
+          setPreviewCache(cacheKey, result)
+          setState({ status: 'text', content: result.content, language: langFromExt(e) })
         } else {
-          const result = await window.electronAPI.resolveAndReadFile(localPath, access)
-          if (result?.content !== undefined && result.content !== null) {
-            setPreviewCache(cacheKey, result)
-            setState({ status: 'text', content: result.content, language: langFromExt(e) })
-          } else {
-            setState({ status: 'error', message: '无法读取文件' })
-          }
+          setState({ status: 'error', message: '无法读取文件' })
         }
       } else {
         setState({ status: 'unsupported' })

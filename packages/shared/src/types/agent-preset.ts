@@ -18,6 +18,7 @@ import type { AgentEffort, ProferPermissionMode } from './agent'
 /** 预设作用域。 */
 export type AgentPresetScope = 'builtin-meta' | 'user-global' | 'workspace'
 
+
 /**
  * 会话/默认配置对某个预设的稳定引用。
  *

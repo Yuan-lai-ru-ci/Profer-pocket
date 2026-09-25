@@ -50,6 +50,9 @@ export function ExpandedSidebar({ s }: { s: SidebarModel }): React.ReactElement 
     handleSelectAgentSession,
     handleRequestMove,
     handleAgentRename,
+    handleAgentRegenerateTitle,
+    handleMarkUnread,
+    regeneratingTitleIds,
     handleTogglePinAgent,
     handleToggleArchiveAgent,
     handleToggleRelatedParent,
@@ -293,6 +296,9 @@ export function ExpandedSidebar({ s }: { s: SidebarModel }): React.ReactElement 
                             onRequestDelete={handleRequestDelete}
                             onRequestMove={handleRequestMove}
                             onRename={handleAgentRename}
+                            onRegenerateTitle={handleAgentRegenerateTitle}
+                            onMarkUnread={handleMarkUnread}
+                            regeneratingTitle={regeneratingTitleIds.has(item.session.id)}
                             onTogglePin={handleTogglePinAgent}
                             onToggleArchive={handleToggleArchiveAgent}
                           />
@@ -312,6 +318,9 @@ export function ExpandedSidebar({ s }: { s: SidebarModel }): React.ReactElement 
                                   onRequestDelete={handleRequestDelete}
                                   onRequestMove={handleRequestMove}
                                   onRename={handleAgentRename}
+                                  onRegenerateTitle={handleAgentRegenerateTitle}
+                                  onMarkUnread={handleMarkUnread}
+                                  regeneratingTitle={regeneratingTitleIds.has(childSession.id)}
                                   onTogglePin={handleTogglePinAgent}
                                   onToggleArchive={handleToggleArchiveAgent}
                                 />
@@ -438,6 +447,8 @@ export function ExpandedSidebar({ s }: { s: SidebarModel }): React.ReactElement 
                   onRequestDelete={handleRequestDelete}
                   onRequestMove={handleRequestMove}
                   onRename={handleAgentRename}
+                  onRegenerateTitle={handleAgentRegenerateTitle}
+                  onMarkUnread={handleMarkUnread}
                   onTogglePin={handleTogglePinAgent}
                   onToggleArchive={handleToggleArchiveAgent}
                   onToggleRelatedParent={handleToggleRelatedParent}
@@ -510,8 +521,11 @@ export function ExpandedSidebar({ s }: { s: SidebarModel }): React.ReactElement 
                         onRequestDelete={handleRequestDelete}
                         onRequestMove={handleRequestMove}
                         onRename={handleAgentRename}
+                        onRegenerateTitle={handleAgentRegenerateTitle}
+                        onMarkUnread={handleMarkUnread}
                         onTogglePin={handleTogglePinAgent}
                         onToggleArchive={handleToggleArchiveAgent}
+                        regeneratingTitle={regeneratingTitleIds.has(session.id)}
                       />
                     ))}
                   </div>

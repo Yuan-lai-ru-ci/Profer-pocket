@@ -1635,6 +1635,59 @@ export const PROFER_PERMISSION_MODE_CONFIG = {
 /** 权限模式定义顺序（用于循环切换） */
 export const PROFER_PERMISSION_MODE_ORDER: readonly ProferPermissionMode[] = PROFER_PERMISSION_MODES
 
+/** 解析预设上限与会话请求后的有效权限模式。 */
+export function resolveEffectivePermissionMode(
+  presetPermissionMode: ProferPermissionMode | undefined,
+  requestedOverride?: ProferPermissionMode,
+): ProferPermissionMode {
+  const presetMode = presetPermissionMode ?? PROFER_DEFAULT_PERMISSION_MODE
+  if (!requestedOverride) return presetMode
+  const strictness: Record<ProferPermissionMode, number> = {
+    plan: 0,
+    auto: 1,
+    bypassPermissions: 2,
+  }
+  return strictness[requestedOverride] < strictness[presetMode] ? requestedOverride : presetMode
+}
+
+/** 候选权限模式是否在预设上限内可持久化。 */
+export function canSelectPermissionMode(
+  presetPermissionMode: ProferPermissionMode | undefined,
+  candidate: ProferPermissionMode,
+): boolean {
+  const capMode = presetPermissionMode ?? PROFER_DEFAULT_PERMISSION_MODE
+  return resolveEffectivePermissionMode(capMode, candidate) === candidate
+}
+
+/** 统一解析会话工具栏应显示的有效权限模式。 */
+export function resolveSelectorPermissionMode(
+  presetPermissionMode: ProferPermissionMode | undefined,
+  requestedMode: ProferPermissionMode | undefined,
+): ProferPermissionMode {
+  const capMode = presetPermissionMode ?? PROFER_DEFAULT_PERMISSION_MODE
+  return requestedMode === undefined ? capMode : resolveEffectivePermissionMode(capMode, requestedMode)
+}
+
+/** 双端共享菜单顺序、标签和越权说明。 */
+export function buildPermissionModeMenu(presetPermissionMode: ProferPermissionMode | undefined): Array<{
+  mode: ProferPermissionMode
+  selectable: boolean
+  label: string
+  description: string
+}> {
+  return PROFER_PERMISSION_MODE_ORDER.map((mode) => ({
+    mode,
+    selectable: canSelectPermissionMode(presetPermissionMode, mode),
+    label: PROFER_PERMISSION_MODE_CONFIG[mode].label,
+    description: PROFER_PERMISSION_MODE_CONFIG[mode].description,
+  }))
+}
+
+export function describePermissionModeRestriction(presetPermissionMode: ProferPermissionMode | undefined): string {
+  const capMode = presetPermissionMode ?? PROFER_DEFAULT_PERMISSION_MODE
+  return `当前预设将权限限制为「${PROFER_PERMISSION_MODE_CONFIG[capMode].label}」，不能切换到更宽松的模式`
+}
+
 export function isProferPermissionMode(mode: string): mode is ProferPermissionMode {
   return (PROFER_PERMISSION_MODES as readonly string[]).includes(mode)
 }

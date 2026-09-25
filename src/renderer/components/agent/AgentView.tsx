@@ -27,7 +27,7 @@ import { AgentHeader } from './AgentHeader'
 import { ContextUsageBadge } from './ContextUsageBadge'
 import { resolvePlanQuotaChannelId } from './context-usage-badge-channel'
 import { supportsChannelPlanQuota } from '@/lib/channel-plan-quota'
-import { nextAgentChannelIdsAfterModelSelect } from '@/lib/agent-channel-selection'
+import { nextAgentChannelIdsAfterModelSelect, resolveAgentModelSelection } from '@/lib/agent-channel-selection'
 import { PermissionBanner } from './PermissionBanner'
 import { RuntimeProcessPanel } from './RuntimeProcessPanel'
 import { PermissionModeSelector } from './PermissionModeSelector'
@@ -108,6 +108,9 @@ import {
   currentAgentSessionIdAtom,
 } from '@/atoms/agent-atoms'
 import { currentGraphSummaryAtom } from '@/atoms/graph-atoms'
+import { remoteStoreAtom, remoteRuntimeAtomFamily } from '@/atoms/remote-store-atoms'
+import { selectRemoteSession, reduceRemoteStore } from '@/pocket/remote-store'
+import { mergeAuthoritativeAgentSession } from '@/lib/agent-session-settings'
 import { persistedGraphAtomFamily } from '@/atoms/graph-atoms'
 import { isTaskProgressTool } from './task-progress'
 import type { AgentContextStatus } from '@/atoms/agent-atoms'
@@ -624,7 +627,8 @@ export function AgentView({ sessionId, pocketMode = false, hideAgentHeader = fal
   // 流式期间其他 session 的高频更新（每 token 一次）通过 base map atom 传播但派生
   // atom 输出引用未变，订阅者跳过通知。
   const streamState = useAtomValue(agentSessionStreamingStateAtomFamily(sessionId))
-  const streaming = streamState?.running ?? false
+  const remoteRuntime = useAtomValue(remoteRuntimeAtomFamily(sessionId))
+  const streaming = streamState?.running ?? (remoteRuntime.status === 'running')
   const setPersistedGraph = useSetAtom(persistedGraphAtomFamily(sessionId))
   // 软空闲态：本轮主体已结束、UI 可输入，但 SDK 通道仍开着等后台任务唤醒。
   // 此时服务端 activeSessions 仍保留，新消息须走注入通道而非新建 run。
@@ -671,7 +675,11 @@ export function AgentView({ sessionId, pocketMode = false, hideAgentHeader = fal
   const [agentThinking, setAgentThinking] = useAtom(agentThinkingAtom)
   const setSettingsOpen = useSetAtom(settingsOpenAtom)
   const globalWorkspaceId = useAtomValue(currentAgentWorkspaceIdAtom)
-  const sessions = useAtomValue(agentSessionsAtom)
+  const legacySessions = useAtomValue(agentSessionsAtom)
+  const remoteStore = useAtomValue(remoteStoreAtom)
+  const remoteSession = selectRemoteSession(remoteStore, sessionId)
+  // Remote Store 是新的会话事实入口；旧 atom 仅在 projection 尚未到达时作为迁移桥。
+  const sessions = remoteStore.sessions[sessionId] ? Object.values(remoteStore.sessions) : legacySessions
   // 冷启动时 get_pending_interactions 晚于 list_sessions 返回；必须订阅这三类快照，
   // 让已挂载的 AgentView 在待交互到达后升级为完整历史，而不是只保留尾页。
   const allPermissionRequestsForQueue = useAtomValue(allPendingPermissionRequestsAtom)
@@ -787,7 +795,7 @@ export function AgentView({ sessionId, pocketMode = false, hideAgentHeader = fal
   const permissionModeMap = useAtomValue(agentPermissionModeMapAtom)
   const defaultPermissionMode = useAtomValue(agentDefaultPermissionModeAtom)
   const persistedPermissionMode = useAtomValue(sessionPersistedPermissionModeAtom(sessionId))
-  const permissionMode = permissionModeMap.get(sessionId) ?? persistedPermissionMode ?? defaultPermissionMode
+  const permissionMode = remoteSession?.permissionMode ?? permissionModeMap.get(sessionId) ?? persistedPermissionMode ?? defaultPermissionMode
   const isPermissionPlanMode = permissionMode === 'plan'
   const store = useStore()
   const currentQuotedSelection = useAtomValue(currentQuotedSelectionAtom)
@@ -926,17 +934,18 @@ export function AgentView({ sessionId, pocketMode = false, hideAgentHeader = fal
         agentModelId: firstModel.id,
       }).catch(console.error)
     }
-    window.electronAPI.updateAgentSessionModel(sessionId, agentChannelId, firstModel.id)
+    window.electronAPI.updateAgentSessionModel(sessionId, agentChannelId, firstModel.id, sessionMeta?.revision)
       .then((updated) => {
         setSessionModelMap((prev) => {
           const map = new Map(prev)
           map.set(sessionId, updated.modelId ?? firstModel.id)
           return map
         })
-        setAgentSessions((prev) => prev.map((session) => session.id === updated.id ? updated : session))
+        setAgentSessions((prev) => mergeAuthoritativeAgentSession(prev, updated))
+        store.set(remoteStoreAtom, (previous) => reduceRemoteStore(previous, { type: 'session_snapshot_upsert', session: updated }))
       })
       .catch((error) => console.error('[AgentView] 自动补全会话模型持久化失败:', error))
-  }, [agentChannelId, agentModelId, streaming, backgroundWaiting, globalChannels, sessionId, defaultModelId, setSessionModelMap, setDefaultModelId, setAgentSessions])
+  }, [agentChannelId, agentModelId, streaming, backgroundWaiting, globalChannels, sessionId, sessionMeta?.revision, defaultModelId, setSessionModelMap, setDefaultModelId, setAgentSessions, store])
 
   // 获取当前 session 的工作路径（文件浏览器需要）
   React.useEffect(() => {
@@ -1747,7 +1756,7 @@ export function AgentView({ sessionId, pocketMode = false, hideAgentHeader = fal
       agentChannelIds: updatedChannelIds,
     }).catch(console.error)
 
-    window.electronAPI.updateAgentSessionModel(sessionId, option.channelId, option.modelId)
+    window.electronAPI.updateAgentSessionModel(sessionId, option.channelId, option.modelId, sessionMeta?.revision)
       .then((updated) => {
         setSessionChannelMap((prev) => {
           const map = new Map(prev)
@@ -1761,7 +1770,8 @@ export function AgentView({ sessionId, pocketMode = false, hideAgentHeader = fal
           else map.delete(sessionId)
           return map
         })
-        setAgentSessions((prev) => prev.map((session) => session.id === updated.id ? updated : session))
+        setAgentSessions((prev) => mergeAuthoritativeAgentSession(prev, updated))
+        store.set(remoteStoreAtom, (previous) => reduceRemoteStore(previous, { type: 'session_snapshot_upsert', session: updated }))
         setStreamingStates((prev) => {
           const state = prev.get(sessionId)
           if (!state) return prev
@@ -1771,7 +1781,7 @@ export function AgentView({ sessionId, pocketMode = false, hideAgentHeader = fal
         })
       })
       .catch((error) => console.error('[AgentView] 会话模型持久化失败:', error))
-  }, [sessionId, streaming, backgroundWaiting, setSessionChannelMap, setSessionModelMap, setAgentSessions, setStreamingStates, setDefaultChannelId, setDefaultModelId, agentChannelIds, setAgentChannelIds, sessionAgentRuntime])
+  }, [sessionId, streaming, backgroundWaiting, sessionMeta?.revision, setSessionChannelMap, setSessionModelMap, setAgentSessions, setStreamingStates, setDefaultChannelId, setDefaultModelId, agentChannelIds, setAgentChannelIds, sessionAgentRuntime, store])
 
   /** 空闲会话切换 runtime：跨 runtime 的 SDK session ID 由主进程原子清除。 */
   const handleAgentRuntimeChange = React.useCallback(async (runtime: AgentRuntime): Promise<void> => {
@@ -1797,8 +1807,43 @@ export function AgentView({ sessionId, pocketMode = false, hideAgentHeader = fal
 
     try {
       // 主进程在同一 IPC turn 内持久化 session runtime 与新会话默认 runtime。
-      const updated = await window.electronAPI.updateSessionAgentRuntime(sessionId, runtime)
-      setAgentSessions((previous) => previous.map((item) => item.id === sessionId ? updated : item))
+      const updated = await window.electronAPI.updateSessionAgentRuntime(sessionId, runtime, sessionMeta?.revision)
+      let nextSession = updated
+      const nextModel = resolveAgentModelSelection(
+        globalChannels,
+        runtime,
+        agentChannelIds,
+        agentChannelId && agentModelId ? { channelId: agentChannelId, modelId: agentModelId } : null,
+      )
+      const currentModelIsCompatible = nextModel?.channelId === updated.channelId && nextModel?.modelId === updated.modelId
+      if (!currentModelIsCompatible) {
+        nextSession = await window.electronAPI.updateAgentSessionModel(
+          sessionId,
+          nextModel?.channelId,
+          nextModel?.modelId,
+          updated.revision,
+        )
+        setSessionChannelMap((previous) => {
+          const next = new Map(previous)
+          if (nextModel?.channelId) next.set(sessionId, nextModel.channelId)
+          else next.delete(sessionId)
+          return next
+        })
+        setSessionModelMap((previous) => {
+          const next = new Map(previous)
+          if (nextModel?.modelId) next.set(sessionId, nextModel.modelId)
+          else next.delete(sessionId)
+          return next
+        })
+        setDefaultChannelId(nextModel?.channelId ?? '')
+        setDefaultModelId(nextModel?.modelId ?? '')
+        window.electronAPI.updateSettings({
+          agentChannelId: nextModel?.channelId,
+          agentModelId: nextModel?.modelId,
+        }).catch(console.error)
+      }
+      setAgentSessions((previous) => mergeAuthoritativeAgentSession(previous, nextSession))
+      store.set(remoteStoreAtom, (previous) => reduceRemoteStore(previous, { type: 'session_snapshot_upsert', session: nextSession }))
     } catch (error) {
       console.error('[AgentView] 切换 Agent Runtime 失败:', error)
       setAgentRuntime(previousDefaultRuntime)
@@ -1806,14 +1851,16 @@ export function AgentView({ sessionId, pocketMode = false, hideAgentHeader = fal
         setAgentSessions((previous) => previous.map((item) => item.id === sessionId ? previousSessionMeta : item))
       }
       toast.error('Agent 内核切换失败', {
-        description: error instanceof Error ? error.message : '未知错误',
+        description: error instanceof Error && error.message.includes('兼容')
+          ? '当前内核没有可用模型，请先在桌面端启用对应渠道或模型'
+          : '请稍后重试',
       })
     } finally {
       runtimeSwitchInFlightRef.current = false
       setRuntimeSwitchInFlight(false)
       requestAnimationFrame(() => document.querySelector<HTMLElement>('[data-input-mode="agent"] .ProseMirror')?.focus())
     }
-  }, [agentRuntime, backgroundWaiting, sessionAgentRuntime, sessionId, sessionMeta, setAgentRuntime, setAgentSessions, streaming])
+  }, [agentChannelId, agentChannelIds, agentModelId, agentRuntime, backgroundWaiting, globalChannels, sessionAgentRuntime, sessionId, sessionMeta, setAgentRuntime, setAgentSessions, setDefaultChannelId, setDefaultModelId, setSessionChannelMap, setSessionModelMap, streaming, store])
 
   /** 构建 externalSelectedModel 给 ModelSelector */
   const computedSelectedModel = React.useMemo(() => {
@@ -2799,6 +2846,7 @@ export function AgentView({ sessionId, pocketMode = false, hideAgentHeader = fal
         <ModelSelector
           filterChannelIds={sessionAgentRuntime === 'pi' ? undefined : agentChannelIds}
           preferredProtocol={sessionAgentRuntime === 'pi' ? 'openai' : 'anthropic'}
+          agentRuntime={sessionAgentRuntime}
           agentProjectionDisplay
           externalSelectedModel={externalSelectedModel}
           onModelSelect={handleModelSelect}

@@ -12,7 +12,7 @@
 import * as React from 'react'
 import { useAtomValue } from 'jotai'
 import {
-  Pin, PinOff, Pencil, Trash2, MoreHorizontal, Clock, GitBranch, GitFork, Globe, ChevronRight, Cloud, FolderOpen, GripVertical, Settings, ArrowRightLeft, Archive, ArchiveRestore, Plus,
+  Pin, PinOff, Pencil, Trash2, MoreHorizontal, Clock, GitBranch, GitFork, Globe, Loader2, ChevronRight, Cloud, FolderOpen, GripVertical, Settings, ArrowRightLeft, Archive, ArchiveRestore, Plus, Mail, Sparkles,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { interfaceVariantAtom } from '@/atoms/theme'
@@ -733,6 +733,9 @@ interface AgentSessionItemProps {
   onRename: (id: string, newTitle: string) => Promise<void>
   onTogglePin: (id: string) => Promise<void>
   onToggleArchive: (id: string) => Promise<void>
+  onMarkUnread?: (id: string) => void
+  onRegenerateTitle?: (id: string) => Promise<void>
+  regeneratingTitle?: boolean
 }
 
 export const AgentSessionItem = React.memo(function AgentSessionItem({
@@ -752,6 +755,9 @@ export const AgentSessionItem = React.memo(function AgentSessionItem({
   onRename,
   onTogglePin,
   onToggleArchive,
+  onMarkUnread,
+  onRegenerateTitle,
+  regeneratingTitle,
 }: AgentSessionItemProps): React.ReactElement {
   const interfaceVariant = useAtomValue(interfaceVariantAtom)
   const isClassic = interfaceVariant === 'classic'
@@ -836,10 +842,22 @@ export const AgentSessionItem = React.memo(function AgentSessionItem({
           迁移到其他项目
         </MenuItem>
       )}
+      {onMarkUnread && (
+        <MenuItem className="text-xs py-1 [&>svg]:size-3.5" onSelect={() => onMarkUnread(session.id)}>
+          <Mail size={14} />
+          标记未读
+        </MenuItem>
+      )}
       <MenuItem className="text-xs py-1 [&>svg]:size-3.5" onSelect={() => startEdit()}>
         <Pencil size={14} />
         重命名
       </MenuItem>
+      {onRegenerateTitle && (
+        <MenuItem className="text-xs py-1 [&>svg]:size-3.5" onSelect={() => { void onRegenerateTitle(session.id) }}>
+          <Sparkles size={14} />
+          重新生成标题
+        </MenuItem>
+      )}
       <MenuItem className="text-xs py-1 [&>svg]:size-3.5" onSelect={() => onToggleArchive(session.id)}>
         {session.archived ? <ArchiveRestore size={14} /> : <Archive size={14} />}
         {session.archived ? '取消归档' : '归档'}
@@ -927,9 +945,11 @@ export const AgentSessionItem = React.memo(function AgentSessionItem({
                   <GitBranch size={11} className={cn('flex-shrink-0', DELEGATION_STATUS_ICON_CLASS[indicatorStatus])} />
                 ) : null}
                 {/* 该会话有活动浏览器会话/标签：在会话行上标识，便于从侧边栏识别哪个会话在用浏览器 */}
-                {hasBrowser && (
+                {regeneratingTitle ? (
+                  <Loader2 size={11} className="flex-shrink-0 text-foreground/40 animate-spin" aria-label="正在重新生成标题" />
+                ) : hasBrowser ? (
                   <Globe size={11} className="flex-shrink-0 text-foreground/40" aria-label="该会话正在使用浏览器" />
-                )}
+                ) : null}
                 {/* 会话名占满剩余空间（flex-1），右侧只留给子会话箭头/数字 */}
                 <span className="flex-1 min-w-0 truncate">{session.title}</span>
                 {/* 草稿标记：输入框有未发送内容 */}
@@ -1019,6 +1039,9 @@ interface RelatedChildSessionItemProps {
   onRename: (id: string, newTitle: string) => Promise<void>
   onTogglePin: (id: string) => Promise<void>
   onToggleArchive: (id: string) => Promise<void>
+  onRegenerateTitle?: (id: string) => Promise<void>
+  onMarkUnread?: (id: string) => void
+  regeneratingTitle?: boolean
 }
 
 export const RelatedChildSessionItem = React.memo(function RelatedChildSessionItem({
@@ -1034,6 +1057,8 @@ export const RelatedChildSessionItem = React.memo(function RelatedChildSessionIt
   onRename,
   onTogglePin,
   onToggleArchive,
+  onRegenerateTitle,
+  onMarkUnread,
 }: RelatedChildSessionItemProps): React.ReactElement {
   const status = getRelatedChildStatus(session, agentIndicatorMap)
 
@@ -1049,6 +1074,8 @@ export const RelatedChildSessionItem = React.memo(function RelatedChildSessionIt
       onRequestDelete={onRequestDelete}
       onRequestMove={onRequestMove}
       onRename={onRename}
+      onRegenerateTitle={onRegenerateTitle}
+      onMarkUnread={onMarkUnread}
       onTogglePin={onTogglePin}
       onToggleArchive={onToggleArchive}
     />
@@ -1090,6 +1117,8 @@ interface AgentProjectGroupItemProps {
   onRequestDelete: (id: string) => void
   onRequestMove: (id: string) => void
   onRename: (id: string, newTitle: string) => Promise<void>
+  onRegenerateTitle?: (id: string) => Promise<void>
+  onMarkUnread?: (id: string) => void
   onTogglePin: (id: string) => Promise<void>
   onToggleArchive: (id: string) => Promise<void>
   onToggleRelatedParent: (id: string) => void
@@ -1129,6 +1158,8 @@ export const AgentProjectGroupItem = React.memo(function AgentProjectGroupItem({
   onRequestDelete,
   onRequestMove,
   onRename,
+  onRegenerateTitle,
+  onMarkUnread,
   onTogglePin,
   onToggleArchive,
   onToggleRelatedParent,
@@ -1469,6 +1500,8 @@ export const AgentProjectGroupItem = React.memo(function AgentProjectGroupItem({
                       onRequestDelete={onRequestDelete}
                       onRequestMove={onRequestMove}
                       onRename={onRename}
+                      onRegenerateTitle={onRegenerateTitle}
+                      onMarkUnread={onMarkUnread}
                       onTogglePin={onTogglePin}
                       onToggleArchive={onToggleArchive}
                     />
@@ -1487,6 +1520,8 @@ export const AgentProjectGroupItem = React.memo(function AgentProjectGroupItem({
                             onRequestDelete={onRequestDelete}
                             onRequestMove={onRequestMove}
                             onRename={onRename}
+                            onRegenerateTitle={onRegenerateTitle}
+                            onMarkUnread={onMarkUnread}
                             onTogglePin={onTogglePin}
                             onToggleArchive={onToggleArchive}
                           />

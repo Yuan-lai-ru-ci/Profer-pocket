@@ -584,8 +584,17 @@ export interface ElectronAPI {
   /** 更新 Agent 会话标题 */
   updateAgentSessionTitle: (id: string, title: string) => Promise<AgentSessionMeta>
 
+  /** 手动重新生成 Agent 会话标题 */
+  regenerateAgentSessionTitle: (id: string, channelId?: string, modelId?: string) => Promise<AgentSessionMeta | null>
+
+  /** 标记 Agent 会话为未读（权威字段 completedButUnconfirmed） */
+  setAgentCompletionState: (id: string) => Promise<AgentSessionMeta>
+
+  /** 标记 Agent 会话为已读（权威字段 completedButUnconfirmed） */
+  clearAgentCompletionState: (id: string) => Promise<AgentSessionMeta>
+
   /** 更新空闲 Agent 会话的渠道与模型 */
-  updateAgentSessionModel: (id: string, channelId?: string, modelId?: string) => Promise<AgentSessionMeta>
+  updateAgentSessionModel: (id: string, channelId?: string, modelId?: string, expectedRevision?: number) => Promise<AgentSessionMeta>
 
   /** 删除 Agent 会话 */
   deleteAgentSession: (id: string) => Promise<void>
@@ -763,7 +772,7 @@ export interface ElectronAPI {
   respondPermission: (response: PermissionResponse) => Promise<void>
 
   /** 热切换指定会话的权限模式（运行中生效，仅影响该 session） */
-  updateSessionPermissionMode: (sessionId: string, mode: ProferPermissionMode) => Promise<void>
+  updateSessionPermissionMode: (sessionId: string, mode: ProferPermissionMode, expectedRevision?: number) => Promise<AgentSessionMeta>
 
   // ===== Agent 预设（工作区级，数据与电脑端共享） =====
 
@@ -774,7 +783,7 @@ export interface ElectronAPI {
   getDefaultAgentPreset: (workspaceSlug?: string) => Promise<string>
 
   /** 更新会话绑定的预设 */
-  updateAgentSessionPreset: (sessionId: string, presetId: string) => Promise<AgentSessionMeta>
+  updateAgentSessionPreset: (sessionId: string, presetId: string, expectedRevision?: number) => Promise<AgentSessionMeta>
 
   /** 设置指定工作区默认预设 */
   setDefaultAgentPreset: (workspaceSlug: string, presetId: string) => Promise<string>
@@ -810,7 +819,7 @@ export interface ElectronAPI {
   getPiReasoningCapability: (provider: ProviderType, modelId: string | undefined) => Promise<ReasoningCapability | undefined>
 
   /** 切换空闲会话的 Agent runtime；跨 runtime 时清除旧 SDK session ID。 */
-  updateSessionAgentRuntime: (sessionId: string, runtime: AgentRuntime) => Promise<AgentSessionMeta>
+  updateSessionAgentRuntime: (sessionId: string, runtime: AgentRuntime, expectedRevision?: number) => Promise<AgentSessionMeta>
 
   /** 获取工作区记忆摘要 */
   getWorkspaceMemorySummary: (workspaceSlug: string) => Promise<WorkspaceMemorySummary>
@@ -997,11 +1006,11 @@ export interface ElectronAPI {
   /** 在系统文件管理器中显示文件（无工作区限制，支持候选基础目录） */
   showItemInFolder: (filePath: string, candidateBasePaths?: string[]) => Promise<boolean>
 
-  /** 解析文件路径并读取内容（供内联预览使用） */
-  resolveAndReadFile: (filePath: string, access?: import('@profer/shared').FileAccessOptions) => Promise<{ resolvedPath: string; content: string } | null>
+  /** 解析文件路径并读取内容（供内联预览使用）；version 是桌面端内容版本，禁止缓存跨版本复用。 */
+  resolveAndReadFile: (filePath: string, access?: import('@profer/shared').FileAccessOptions) => Promise<{ resolvedPath: string; content: string; version: { revision: string; mtimeMs: number; size: number; hash: string } } | null>
 
-  /** 读取文件为 base64 data URL（Pocket 特有扩展：移动端无法加载 profer-file://，图片预览经 WS 拿 data URL） */
-  readFileAsDataUrl: (filePath: string, access?: import('@profer/shared').FileAccessOptions) => Promise<{ resolvedPath: string; dataUrl: string } | null>
+  /** 读取文件为 base64 data URL（Pocket 特有扩展：移动端无法加载 profer-file://，图片预览经 WS 拿 data URL）；同样携带内容版本。 */
+  readFileAsDataUrl: (filePath: string, access?: import('@profer/shared').FileAccessOptions) => Promise<{ resolvedPath: string; dataUrl: string; version: { revision: string; mtimeMs: number; size: number; hash: string } } | null>
 
   /** 写入文本文件（供 Markdown 内联编辑使用） */
   writeTextFile: (filePath: string, content: string, access?: import('@profer/shared').FileAccessOptions) => Promise<boolean>

@@ -4,6 +4,7 @@
  * 渠道是用户配置的 AI 供应商连接，包含 API Key、模型列表等信息。
  * API Key 使用 Electron safeStorage 加密后存储在本地配置文件中。
  */
+export type AgentRuntimeMode = 'pi' | 'claude'
 
 /**
  * 支持的 AI 供应商类型
@@ -265,9 +266,35 @@ export interface XaiOAuthDeviceCode {
   qrCodeData?: string
 }
 
-/**
- * 渠道中的模型配置
- */
+export function isChannelEnabledForRuntime(
+  channel: Pick<Channel, 'provider' | 'enabled' | 'agentRuntimes' | 'agentExperimentalEnabled'>,
+  runtime: AgentRuntimeMode,
+): boolean {
+  if (!channel.enabled) return false
+  if (channel.agentRuntimes) return channel.agentRuntimes.includes(runtime)
+  if (channel.provider === 'xai') return runtime === 'pi' && channel.agentExperimentalEnabled === true
+  if (runtime === 'claude') return new Set<ProviderType>([
+    'anthropic', 'anthropic-compatible', 'deepseek', 'kimi-api', 'kimi-coding',
+    'zhipu-coding', 'zhipu-coding-team', 'minimax', 'qwen-anthropic', 'xiaomi', 'xiaomi-token-plan',
+  ]).has(channel.provider)
+  return true
+}
+export function getAgentChannelProtocol(provider: ProviderType): 'openai' | 'anthropic' {
+  return new Set<ProviderType>([
+    'anthropic', 'anthropic-compatible', 'deepseek', 'kimi-api', 'kimi-coding',
+    'zhipu-coding', 'zhipu-coding-team', 'minimax', 'xiaomi',
+    'xiaomi-token-plan', 'qwen-anthropic',
+  ]).has(provider) ? 'anthropic' : 'openai'
+}
+
+export function isAgentChannelCompatibleWithRuntime(
+  channel: Pick<Channel, 'provider' | 'enabled' | 'agentRuntimes' | 'agentExperimentalEnabled'>,
+  runtime: AgentRuntimeMode,
+): boolean {
+  return isChannelEnabledForRuntime(channel, runtime)
+}
+
+
 export interface ChannelModel {
   /** 模型唯一标识（如 claude-sonnet-4-5-20250929） */
   id: string
@@ -297,6 +324,10 @@ export interface Channel {
   baseUrl: string
   /** Agent 模式 Anthropic 兼容端点（为空则自动推导） */
   agentBaseUrl?: string
+  /** 该渠道允许用于哪些 Agent 内核；缺失时按 provider 规则推导。 */
+  agentRuntimes?: AgentRuntimeMode[]
+  /** xAI 旧配置的 Pi 实验开关。 */
+  agentExperimentalEnabled?: boolean
   /** 加密后的 API Key（base64 编码） */
   apiKey: string
   /** 可用模型列表 */

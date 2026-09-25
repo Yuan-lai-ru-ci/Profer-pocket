@@ -23,6 +23,7 @@ export * from './chat'
 
 // Agent 相关类型
 export * from './agent'
+export * from './remote-sync'
 export * from './browser'
 
 // 推理 profile 相关类型

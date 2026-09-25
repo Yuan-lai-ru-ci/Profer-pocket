@@ -15,7 +15,11 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
 import { agentSessionPresetMapAtom, workspacePresetsAtom, presetOf } from '@/atoms/agent-preset-atoms'
+import { mergeAuthoritativeAgentSession } from '@/lib/agent-session-settings'
+import { useSessionSettingMutation } from '@/lib/use-session-setting-mutation'
 import { agentSessionsAtom, workspaceCapabilitiesVersionAtom } from '@/atoms/agent-atoms'
+import { remoteStoreAtom } from '@/atoms/remote-store-atoms'
+import { reduceRemoteStore, selectRemoteSession } from '@/pocket/remote-store'
 import { DEFAULT_PRESET_ID } from '@profer/shared'
 import type { AgentEffort, ProferPermissionMode } from '@profer/shared'
 import { cn } from '@/lib/utils'
@@ -56,6 +60,10 @@ export function PresetSelector({ sessionId, persistedPresetId, workspaceSlug, po
   const [presets, setPresets] = useAtom(workspacePresetsAtom(workspaceSlug))
   const [presetMap, setPresetMap] = useAtom(agentSessionPresetMapAtom)
   const setAgentSessions = useSetAtom(agentSessionsAtom)
+  const remoteStore = useAtomValue(remoteStoreAtom)
+  const remoteSession = selectRemoteSession(remoteStore, sessionId)
+  const setRemoteStore = useSetAtom(remoteStoreAtom)
+  const { pending, mutate } = useSessionSettingMutation()
   // 记住上次选择的「极简」紧凑显示偏好（localStorage 惰性初始化）
   const [compactMode, setCompactMode] = React.useState<boolean>(readStoredCompactMode)
   const toggleCompactMode = React.useCallback((on: boolean) => {
@@ -78,25 +86,32 @@ export function PresetSelector({ sessionId, persistedPresetId, workspaceSlug, po
   const current = presetOf(presets, effectiveId)
 
   const selectPreset = React.useCallback(async (presetId: string) => {
+    if (pending) return
     const prevId = effectiveId
-    // 乐观更新
     setPresetMap((prev: Map<string, string>) => {
       const next = new Map(prev)
       next.set(sessionId, presetId)
       return next
     })
-    try {
-      const updated = await window.electronAPI.updateAgentSessionPreset(sessionId, presetId)
-      setAgentSessions((prev) => prev.map((s) => (s.id === sessionId ? { ...s, presetId: updated.presetId } : s)))
-    } catch (error) {
-      console.error('[PresetSelector] 切换预设失败，回滚 UI:', error)
-      setPresetMap((prev: Map<string, string>) => {
-        const next = new Map(prev)
-        next.set(sessionId, prevId)
-        return next
-      })
-    }
-  }, [effectiveId, sessionId, setPresetMap, setAgentSessions])
+    void mutate({
+      session: remoteSession,
+      execute: (expectedRevision) => window.electronAPI.updateAgentSessionPreset(sessionId, presetId, expectedRevision),
+      applyAuthoritative: (updated) => {
+        if (typeof updated.revision !== 'number') throw new Error('服务端未返回完整的权威会话投影')
+        setAgentSessions((prev) => mergeAuthoritativeAgentSession(prev, updated))
+        setRemoteStore((previous) => reduceRemoteStore(previous, { type: 'session_snapshot_upsert', session: updated }))
+      },
+      rollback: () => {
+        setPresetMap((prev: Map<string, string>) => {
+          const next = new Map(prev)
+          next.set(sessionId, prevId)
+          return next
+        })
+      },
+      onError: (error) => console.error('[PresetSelector] 切换预设失败，回滚 UI:', error),
+    })
+
+  }, [effectiveId, mutate, remoteSession, sessionId, setAgentSessions, setPresetMap, setRemoteStore])
 
   // meta 真源同步（与 PermissionModeSelector 同策略）：其它设备（桌面）修改会话预设后，
   // SESSION_UPDATED → agentSessionsAtom → persistedPresetId 变化时把本地乐观缓存收敛到 meta，

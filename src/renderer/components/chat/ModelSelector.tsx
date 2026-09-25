@@ -31,7 +31,8 @@ import { getModelLogo, getChannelLogo, DefaultLogo } from '@/lib/model-logo'
 import { navigationController } from '@/lib/navigation-controller'
 import { cn } from '@/lib/utils'
 import { ChannelPlanQuotaBadge } from './ChannelPlanQuotaBadge'
-import type { Channel, ModelOption } from '@profer/shared'
+import type { AgentRuntime, Channel, ModelOption } from '@profer/shared'
+import { isAgentChannelCompatibleWithRuntime } from '@profer/shared'
 import { getChannelProtocol, getChannelSource, type ChannelProtocol } from '@/lib/channel-model-groups'
 
 /** 紧凑模式 Context — 窄面板中 ModelSelector 只显示圆形 logo */
@@ -45,11 +46,18 @@ export const CompactModelSelectorCtx = React.createContext(false)
  * 代表性 channelId，现有 Chat/Agent 会话协议无需改变；真正的上游
  * 主备选择由网关完成。
  */
-function buildModelOptions(channels: Channel[], filterChannelId?: string, filterChannelIds?: string[], preferredProtocol: ChannelProtocol = 'openai'): ModelOption[] {
+function buildModelOptions(
+  channels: Channel[],
+  filterChannelId?: string,
+  filterChannelIds?: string[],
+  preferredProtocol: ChannelProtocol = 'openai',
+  agentRuntime?: AgentRuntime,
+): ModelOption[] {
   const optionsByModel = new Map<string, ModelOption>()
 
   for (const channel of channels) {
     if (!channel.enabled) continue
+    if (agentRuntime && !isAgentChannelCompatibleWithRuntime(channel, agentRuntime)) continue
     if (filterChannelId && channel.id !== filterChannelId) continue
     if (filterChannelIds && filterChannelIds.length > 0 && !filterChannelIds.includes(channel.id)) continue
 
@@ -108,6 +116,8 @@ interface ModelSelectorProps {
   compact?: boolean
   /** 当前调用运行时需要的协议；Pi/Chat 为 OpenAI，Claude Agent 为 Anthropic。 */
   preferredProtocol?: 'openai' | 'anthropic'
+  /** 当前 Agent runtime；传入时按渠道 runtime 能力过滤候选，避免非法 Pi/Claude 组合。 */
+  agentRuntime?: AgentRuntime
   /** 打开 Dialog 时是否自动聚焦搜索框（默认 true）。触屏传 false，避免弹出软键盘遮挡选模型列表。 */
   autoFocusSearch?: boolean
   /** Agent Session Projection 专用：目录缺项时不得回退显示旧模型。 */
@@ -122,6 +132,7 @@ export function ModelSelector({
   showChannelInTrigger = false,
   compact: compactProp,
   preferredProtocol = 'openai',
+  agentRuntime,
   autoFocusSearch = true,
   agentProjectionDisplay = false,
 }: ModelSelectorProps = {}): React.ReactElement {
@@ -166,7 +177,10 @@ export function ModelSelector({
     return channels.filter((c) => !c.id.startsWith('newapi-'))
   }, [channels, authStatus.isLoggedIn])
 
-  const modelOptions = React.useMemo(() => buildModelOptions(visibleChannels, filterChannelId, filterChannelIds, preferredProtocol), [visibleChannels, filterChannelId, filterChannelIds, preferredProtocol])
+  const modelOptions = React.useMemo(
+    () => buildModelOptions(visibleChannels, filterChannelId, filterChannelIds, preferredProtocol, agentRuntime),
+    [visibleChannels, filterChannelId, filterChannelIds, preferredProtocol, agentRuntime],
+  )
   const grouped = React.useMemo(() => groupByChannel(modelOptions), [modelOptions])
 
   // 搜索过滤

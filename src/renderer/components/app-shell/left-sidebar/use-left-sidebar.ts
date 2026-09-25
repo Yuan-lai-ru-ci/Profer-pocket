@@ -112,6 +112,8 @@ import {
   type AgentSessionTreeItem,
 } from './session-tree'
 import { focusEnterableViewItem } from './navigation-items'
+import { remoteStoreAtom } from '@/atoms/remote-store-atoms'
+import { selectRemoteSessions } from '@/pocket/remote-store'
 import type { AgentProjectGroup } from './session-items'
 
 
@@ -261,7 +263,12 @@ export function useLeftSidebar(pocketMode?: boolean) {
   const isClassic = interfaceVariant === 'classic'
 
   // Agent 模式状态
-  const [agentSessions, setAgentSessions] = useAtom(agentSessionsAtom)
+  const legacyAgentSessions = useAtomValue(agentSessionsAtom)
+  const remoteStore = useAtomValue(remoteStoreAtom)
+  const remoteSessions = selectRemoteSessions(remoteStore)
+  // 新会话目录优先来自 Remote Store；旧 atom 仍作为兼容写桥，最终状态由 projection 回流。
+  const agentSessions = remoteSessions.length > 0 ? remoteSessions : legacyAgentSessions
+  const setAgentSessions = useSetAtom(agentSessionsAtom)
   const [currentAgentSessionId, setCurrentAgentSessionId] = useAtom(currentAgentSessionIdAtom)
   const agentIndicatorMap = useAtomValue(agentSessionIndicatorMapAtom)
   const unviewedCompletedSessionIds = useAtomValue(unviewedCompletedSessionIdsAtom)
@@ -1178,6 +1185,40 @@ export function useLeftSidebar(pocketMode?: boolean) {
     })
   }, [openSession, setActiveView, setUnviewedCompleted])
 
+  /** 标记 Agent 会话为「未读」并等待权威 projection 回流 */
+  const handleMarkUnread = React.useCallback(async (id: string): Promise<void> => {
+    try {
+      const updated = await window.electronAPI.setAgentCompletionState(id)
+      setAgentSessions((prev) => upsertAgentSession(prev, updated))
+      setUnviewedCompleted((prev) => new Set(prev).add(id))
+    } catch (error) {
+      console.error('[侧边栏] 标记 Agent 会话未读失败:', error)
+    }
+  }, [setAgentSessions, setUnviewedCompleted])
+
+  /** 正在重新生成标题的会话 ID，驱动会话行首图标状态 */
+  const [regeneratingTitleIds, setRegeneratingTitleIds] = React.useState<Set<string>>(new Set())
+
+  /** 手动重新生成 Agent 会话标题 */
+  const handleAgentRegenerateTitle = React.useCallback(async (id: string): Promise<void> => {
+    setRegeneratingTitleIds((prev) => new Set(prev).add(id))
+    try {
+      const updated = await window.electronAPI.regenerateAgentSessionTitle(id)
+      if (!updated) {
+        toast.error('重新生成标题失败：缺少可用模型或有效消息')
+        return
+      }
+      setAgentSessions((prev) => replaceAgentSessionInFreshnessOrder(prev, updated))
+      setTabs((prev) => updateTabTitle(prev, id, updated.title))
+      toast.success(`标题已更新：${updated.title}`)
+    } catch (error) {
+      console.error('[侧边栏] 重新生成 Agent 会话标题失败:', error)
+      toast.error('重新生成标题失败')
+    } finally {
+      setRegeneratingTitleIds((prev) => { const next = new Set(prev); next.delete(id); return next })
+    }
+  }, [setAgentSessions, setTabs])
+
   /** 重命名工作区（项目）名称 */
   const handleWorkspaceRename = React.useCallback(async (workspaceId: string, newName: string): Promise<void> => {
     try {
@@ -1596,6 +1637,9 @@ export function useLeftSidebar(pocketMode?: boolean) {
     archivedAgentSessionCount,
     handleSelectAgentSession,
     handleAgentRename,
+    handleAgentRegenerateTitle,
+    handleMarkUnread,
+    regeneratingTitleIds,
     handleTogglePinAgent,
     handleToggleArchiveAgent,
     handleRequestMove,
