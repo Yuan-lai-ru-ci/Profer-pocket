@@ -1,6 +1,6 @@
 {
-  "versionName": "0.1.17",
-  "versionCode": 16,
-  "releaseNotes": "修复 Android WebView 原生文本选择工具条主题失配：恢复输入框长按后的粘贴、复制、全选按钮文字与正常对比度，并恢复选择拖柄的正常显示；同时保留 0.1.16 的输入框提示与窄屏工具栏修复。",
+  "versionName": "0.1.18",
+  "versionCode": 17,
+  "releaseNotes": "修复 Android WebView 原生文本选择工具条主题失配，完善双端会话设置同步与运行时切换，并保留 0.1.17 的输入框提示与窄屏工具栏修复。",
   "mandatory": false
 }
