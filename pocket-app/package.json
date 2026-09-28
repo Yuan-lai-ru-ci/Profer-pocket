@@ -6,7 +6,11 @@
   "type": "module",
   "scripts": {
     "sync:web": "node scripts/sync-web.mjs",
-    "build": "node scripts/sync-web.mjs && npx cap sync android",
+    "sync:android": "node node_modules/@capacitor/cli/bin/capacitor sync android",
+    "sync:ios": "node scripts/sync-web.mjs && node node_modules/@capacitor/cli/bin/capacitor sync ios",
+    "build": "node scripts/sync-web.mjs && node node_modules/@capacitor/cli/bin/capacitor sync android",
+    "build:ios": "node scripts/sync-web.mjs && node node_modules/@capacitor/cli/bin/capacitor sync ios",
+    "open:ios": "node node_modules/@capacitor/cli/bin/capacitor open ios",
     "apk": "node scripts/build-apk.mjs",
     "release:test": "node --test scripts/release-utils.test.mjs",
     "release:prepare": "node scripts/prepare-github-release.mjs"
@@ -15,6 +19,7 @@
     "@capacitor/android": "^7.0.0",
     "@capacitor/cli": "^7.0.0",
     "@capacitor/core": "^7.0.0",
+    "@capacitor/ios": "^7.6.9",
     "@capacitor/preferences": "^7.0.0"
   }
 }
