@@ -257,7 +257,39 @@ export const chatPendingKnowledgeReferencesAtom = atom<ChatPendingKnowledgeRefer
  */
 export const chatMessageRefreshAtom = atom<Map<string, number>>(new Map())
 
+/**
+ * Chat 消息缓存：切换会话或组件重建时优先显示最近一次结果，避免每次打开都重新传输。
+ * refreshVersion 变化表示流式完成/错误等真实变更，命中旧版本时仍会重新拉取。
+ */
+export interface ChatMessagesCacheEntry {
+  messages: ChatMessage[]
+  hasMore: boolean
+  refreshVersion: number
+}
+
+export const CHAT_MSG_CACHE_MAX = 20
+export const chatMessagesCacheAtom = atom<Map<string, ChatMessagesCacheEntry>>(new Map())
+
+export function setChatMessagesCache(
+  prev: Map<string, ChatMessagesCacheEntry>,
+  conversationId: string,
+  messages: ChatMessage[],
+  hasMore: boolean,
+  refreshVersion: number,
+): Map<string, ChatMessagesCacheEntry> {
+  const next = new Map(prev)
+  next.delete(conversationId)
+  next.set(conversationId, { messages, hasMore, refreshVersion })
+  while (next.size > CHAT_MSG_CACHE_MAX) {
+    const oldest = next.keys().next().value
+    if (oldest === undefined) break
+    next.delete(oldest)
+  }
+  return next
+}
+
 // ===== Agent 模式推荐 =====
+
 
 /** Agent 模式推荐数据（由 suggest_agent_mode 工具结果写入） */
 export interface AgentRecommendation {

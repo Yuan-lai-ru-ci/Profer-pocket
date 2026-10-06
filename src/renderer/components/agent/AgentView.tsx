@@ -1048,6 +1048,8 @@ export function AgentView({ sessionId, pocketMode = false, hideAgentHeader = fal
 
   // 加载当前会话消息
   React.useEffect(() => {
+    let cancelled = false
+    let canUseCachedHistory = false
     // 只有切换会话时才进入 loading 态；同一会话在流式完成后的刷新要保留当前
     // persisted/live 消息，避免“助手气泡先消失、持久化消息再恢复”的空窗跳动。
     const isSessionSwitch = loadingSessionIdRef.current !== sessionId
@@ -1062,6 +1064,7 @@ export function AgentView({ sessionId, pocketMode = false, hideAgentHeader = fal
       // 注意：refreshVersion bump（流结束/出错/rewind）不是会话切换，
       // 走 else 分支保留当前消息，并在下方 IPC 覆盖时获得最新数据。
       const cached = store.get(agentSDKMessagesCacheAtom).get(sessionId)
+      canUseCachedHistory = Boolean(isSessionSwitch && cached && !shouldHydrateCompleteHistory)
       if (cached) {
         setPersistedSDKMessages(cached)
         setMessagesLoaded(true)
@@ -1069,8 +1072,10 @@ export function AgentView({ sessionId, pocketMode = false, hideAgentHeader = fal
         setPersistedSDKMessages([])
         setMessagesLoaded(false)
       }
+      // 普通历史会话已有首帧缓存时直接复用；完成/错误/回退会递增 refreshVersion，
+      // 这时 isSessionSwitch 为 false，下面仍会拉取最新尾页。
+      if (canUseCachedHistory) return () => { cancelled = true }
     }
-    let cancelled = false
     // 普通历史会话仍走首帧分页；运行中或存在待交互快照的当前会话必须全量水合。
     // 这使 pending 横幅与其所属 user turn / Agent 执行记录在同一次状态收敛后共同出现。
     const pocketApi = window.electronAPI as unknown as {

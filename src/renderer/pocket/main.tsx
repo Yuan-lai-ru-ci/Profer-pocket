@@ -167,6 +167,7 @@ const pendingStopTimers = new Map<string, ReturnType<typeof setTimeout>>()
 // 只保留 loadSessions（列表刷新无副作用）。旧服务端（无 run_completed）时 run_idle 仍正常成为唯一信号。
 const runCompletedProcessed = new Map<string, number>()
 const RUN_COMPLETED_DEDUP_WINDOW_MS = 3000
+const sessionRefreshTimers = new Map<string, ReturnType<typeof setTimeout>>()
 
 // list_sessions 没有可与 WS eventId 比较的服务端版本；仅记录本地观察到的 session 活动，
 // 防止请求期间收到的新 Agent event 被较早发起的 inactive 快照反向覆盖。
@@ -250,6 +251,8 @@ function App(): React.ReactElement {
   const userProfile = useAtomValue(userProfileAtom)
   const backgroundMessagingOn = useAtomValue(pocketBackgroundMessagingAtom)
   const clientRef = useRef<WsClient | null>(null)
+  const initialSnapshotLoadedRef = useRef(false)
+  const sessionSnapshotInFlightRef = useRef<Promise<void> | null>(null)
 
   // 界面状态：reconnecting = 已绑定但断线，保持主界面 + 横幅自动重连（不再回登录页“重新校验”）
   const [connection, setConnection] = useState<'idle' | 'connecting' | 'open' | 'reconnecting' | 'error' | 'unauthorized'>('idle')
@@ -292,6 +295,7 @@ function App(): React.ReactElement {
   // ===== WS 管理 =====
   const connect = useCallback((token: string, serverInput?: string) => {
     if (clientRef.current) clientRef.current.disconnect()
+    initialSnapshotLoadedRef.current = false
     const url = normalizeWsUrl(serverInput ?? getStoredServerUrl()) ?? defaultWsUrl()
     const client = new WsClient({
       url,
@@ -299,15 +303,19 @@ function App(): React.ReactElement {
       onStatusChange: (status) => {
         if (status === 'open') {
           setConnection('open'); setErrMsg(undefined)
+          const shouldLoadInitialSnapshot = !initialSnapshotLoadedRef.current
+          initialSnapshotLoadedRef.current = true
           // 平板通过 WS 连接的是已授权（可能已登录）的电脑端，官方渠道（newapi-*）由电脑端
           // 登录后从服务端同步而来。ModelSelector 的「未登录隐藏官方渠道」过滤依赖此标志；
           // 平板无登录流程，authStatusAtom 恒为 isLoggedIn:false，会误杀全部官方渠道，
           // 导致远程端看不到 GPT/Claude 官方模型。这里在连接成功后置为已登录态以放行官方渠道。
           setAuthStatus((prev) => ({ ...prev, isLoggedIn: true }))
-          void loadChannels(client)
-          void loadSessions(client)
-          void loadConversations(client)
-          void loadUserProfile(client)
+          if (shouldLoadInitialSnapshot) {
+            void loadChannels(client)
+            void loadSessions(client)
+            void loadConversations(client)
+            void loadUserProfile(client)
+          }
         } else if (status === 'unauthorized') {
           // token 无效：服务端已拒绝对话且客户端已停止自动重连，停留登录页提示用户重新输入；
           // 原生后台服务同样收到 4001 会自停，这里再显式 stop 一次保证两端一致
@@ -372,7 +380,7 @@ function App(): React.ReactElement {
     } catch (e) { console.error('拉取渠道失败', e) }
   }, [setChannels, setChannelsLoaded, setAgentChannelIds, setAgentChannelId, setAgentModelId])
 
-  const loadSessions = useCallback(async (client: WsClient) => {
+  const loadSessionsSnapshot = useCallback(async (client: WsClient) => {
     // 只比较本次快照开始时已观察到的活动；请求期间的任意新 Agent event 或乐观新 run 都会使对应 session 的清理失效。
     const snapshotActivityRevisions = new Map(sessionActivityRevisions)
     const snapshotStartedAts = new Map(
@@ -531,6 +539,19 @@ function App(): React.ReactElement {
     } catch (e) { console.error('拉取会话失败', e) }
   }, [setNativeSessions, setNativeWorkspaces, setNativeWorkspaceId])
 
+  const loadSessions = useCallback((client: WsClient): Promise<void> => {
+    const inFlight = sessionSnapshotInFlightRef.current
+    if (inFlight) return inFlight
+
+    const request = loadSessionsSnapshot(client).finally(() => {
+      if (sessionSnapshotInFlightRef.current === request) {
+        sessionSnapshotInFlightRef.current = null
+      }
+    })
+    sessionSnapshotInFlightRef.current = request
+    return request
+  }, [loadSessionsSnapshot])
+
   const loadConversations = useCallback(async (client: WsClient) => {
     try {
       const data = await client.listConversations() as Array<{ id: string; title: string }>
@@ -660,8 +681,14 @@ function App(): React.ReactElement {
       // 会话已空闲：撤销该会话的停止超时兜底定时器
       const timer = pendingStopTimers.get(evt.sessionId)
       if (timer) { clearTimeout(timer); pendingStopTimers.delete(evt.sessionId) }
-      // 会话标题/时间可能已更新，刷新左侧列表
-      void loadSessions(client)
+      // 会话标题/时间可能已更新，刷新左侧列表。run_completed 和 run_idle 常在同一时间到达，
+      // 合并为一次快照请求，避免一轮 Agent 结束触发两次 list_sessions/list_workspaces。
+      const previousRefreshTimer = sessionRefreshTimers.get(evt.sessionId)
+      if (previousRefreshTimer) clearTimeout(previousRefreshTimer)
+      sessionRefreshTimers.set(evt.sessionId, setTimeout(() => {
+        sessionRefreshTimers.delete(evt.sessionId)
+        void loadSessions(client)
+      }, 120))
     }
   }, [loadSessions])
 

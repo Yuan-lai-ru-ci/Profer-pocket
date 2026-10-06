@@ -14,7 +14,7 @@
  */
 
 import * as React from 'react'
-import { useAtomValue, useSetAtom } from 'jotai'
+import { useAtomValue, useSetAtom, useStore } from 'jotai'
 import { toast } from 'sonner'
 import { AlertCircle, X, Wallet } from 'lucide-react'
 import { ChatHeader } from './ChatHeader'
@@ -30,6 +30,8 @@ import {
   chatStreamErrorsAtom,
   chatStreamErrorCodesAtom,
   chatMessageRefreshAtom,
+  chatMessagesCacheAtom,
+  setChatMessagesCache,
   pendingAgentRecommendationAtom,
   conversationModelsAtom,
   chatPendingMessageAtom,
@@ -77,6 +79,9 @@ export function ChatView({ conversationId, pocketMode = false, hideChatHeader = 
 
 function ChatViewInner({ conversationId, pocketMode = false, hideChatHeader = false }: ChatViewProps): React.ReactElement {
   // ===== 本地状态（每个实例独立） =====
+  const store = useStore()
+  const loadedConversationIdRef = React.useRef<string | null>(null)
+  const skipCacheSyncRef = React.useRef(false)
   const [messages, setMessages] = React.useState<ChatMessage[]>([])
   const [contextDividers, setContextDividers] = React.useState<string[]>([])
   const [pendingAttachments, setPendingAttachments] = React.useState<PendingAttachment[]>([])
@@ -111,6 +116,7 @@ function ChatViewInner({ conversationId, pocketMode = false, hideChatHeader = fa
   const chatStreamErrorCodes = useAtomValue(chatStreamErrorCodesAtom)
   const setSettingsOpen = useSetAtom(settingsOpenAtom)
   const setSettingsTab = useSetAtom(settingsTabAtom)
+  const setChatMessagesCacheAtom = useSetAtom(chatMessagesCacheAtom)
   const refreshMap = useAtomValue(chatMessageRefreshAtom)
   const promptConfig = useAtomValue(promptConfigAtom)
   const userProfile = useAtomValue(userProfileAtom)
@@ -177,26 +183,77 @@ function ChatViewInner({ conversationId, pocketMode = false, hideChatHeader = fa
 
   // ===== 加载消息 + 上下文分隔线 =====
   React.useEffect(() => {
-    setMessagesLoaded(false)
+    let cancelled = false
+    skipCacheSyncRef.current = true
+    const cached = store.get(chatMessagesCacheAtom).get(conversationId)
+    const cacheFresh = cached?.refreshVersion === refreshVersion
+    loadedConversationIdRef.current = cacheFresh ? conversationId : null
+
+    // 先展示本地缓存，只有缓存不存在或已被真实变更标记失效时才传输消息。
+    if (cached) {
+      setMessages(cached.messages)
+      setHasMoreMessages(cached.hasMore)
+      setMessagesLoaded(cacheFresh)
+    } else {
+      setMessages([])
+      setHasMoreMessages(false)
+      setMessagesLoaded(false)
+    }
+
+    const clearFinishedStream = (): void => {
+      setStreamingStates((prev) => {
+        const state = prev.get(conversationId)
+        if (!state || state.streaming) return prev
+        const map = new Map(prev)
+        map.delete(conversationId)
+        return map
+      })
+    }
+
+    if (cacheFresh) {
+      clearFinishedStream()
+      return () => { cancelled = true }
+    }
+
     window.electronAPI
       .getRecentMessages(conversationId, INITIAL_MESSAGE_LIMIT)
       .then((result) => {
+        if (cancelled) return
         setMessages(result.messages)
         setHasMoreMessages(result.hasMore)
+        setChatMessagesCacheAtom((prev) => setChatMessagesCache(
+          prev,
+          conversationId,
+          result.messages,
+          result.hasMore,
+          refreshVersion,
+        ))
+        loadedConversationIdRef.current = conversationId
         setMessagesLoaded(true)
-
-        // 消息加载完成后，清除已完成的流式状态（streaming=false 的过渡气泡）
-        // 在同一个微任务中执行，确保 React 在一次渲染中同时显示持久化消息并移除流式气泡
-        setStreamingStates((prev) => {
-          const state = prev.get(conversationId)
-          if (!state || state.streaming) return prev  // 仍在流式中，不清除
-          const map = new Map(prev)
-          map.delete(conversationId)
-          return map
-        })
+        clearFinishedStream()
       })
-      .catch(console.error)
-  }, [conversationId, refreshVersion, setStreamingStates])
+      .catch((error) => {
+        if (!cancelled) console.error(error)
+      })
+
+    return () => { cancelled = true }
+  }, [conversationId, refreshVersion, setChatMessagesCacheAtom, setStreamingStates, store])
+
+  // 本地状态变化（发送、删除、加载更多）同步回缓存；组件重建时即可直接复用。
+  React.useEffect(() => {
+    if (skipCacheSyncRef.current) {
+      skipCacheSyncRef.current = false
+      return
+    }
+    if (!messagesLoaded || loadedConversationIdRef.current !== conversationId) return
+    setChatMessagesCacheAtom((prev) => setChatMessagesCache(
+      prev,
+      conversationId,
+      messages,
+      hasMoreMessages,
+      refreshVersion,
+    ))
+  }, [conversationId, hasMoreMessages, messages, messagesLoaded, refreshVersion, setChatMessagesCacheAtom])
 
   // 从对话元数据加载分隔线
   React.useEffect(() => {
