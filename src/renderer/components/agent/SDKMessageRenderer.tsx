@@ -823,7 +823,7 @@ export function AssistantTurnRenderer({ turn, allMessages, historicalTaskSubject
                   keepExpandedAfterComplete={processGroupsKeepExpanded}
                   isMessageTail={itemIndex === windowedItems.length - 1}
                   // R10：强制刷新后，窗口化列表中的末尾过程组也必须按完整 renderItems 判断是否默认展开。
-                  defaultExpanded={shouldDefaultExpandProcessGroup(renderItems, renderItems.length - 1, { forceReload: !!expandTrailingProcessGroup })}
+                  defaultExpanded={itemIndex === windowedItems.length - 1 && shouldDefaultExpandProcessGroup(renderItems, renderItems.length - 1, { forceReload: !!expandTrailingProcessGroup })}
                 >
                   {item.items.map((groupItem) => renderProcessGroupBlock(groupItem.block, groupItem.index))}
                 </ProcessBlockGroup>
