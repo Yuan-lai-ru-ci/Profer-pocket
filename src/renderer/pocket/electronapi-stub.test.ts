@@ -166,7 +166,11 @@ describe('pocket electronAPI stub 未实现能力语义', () => {
     await expect((api.getCommercialMode as () => Promise<unknown>)()).resolves.toBe(false)
     await expect((api.getPiReasoningCapability as () => Promise<unknown>)()).resolves.toBeUndefined()
     await expect((api.getAgentSessionPath as () => Promise<unknown>)()).resolves.toBeNull()
-    await expect((api.clearAgentCompletionState as () => Promise<unknown>)()).rejects.toThrow('平板暂不支持')
+    // 该方法（合并后）走「标记会话已读」的远程链路：未连接时必须显式 reject，
+    // 不能同步抛错、也不能静默 resolve（否则渲染期会拿到不一致状态）。
+    await expect(
+      (api.clearAgentCompletionState as (id: string) => Promise<unknown>)('session-1'),
+    ).rejects.toThrow('移动端连接未就绪')
   })
 
   test('已有 electronAPI（Electron 环境）时不覆盖', () => {
