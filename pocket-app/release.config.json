@@ -1,6 +1,6 @@
 {
-  "versionName": "0.1.18",
-  "versionCode": 17,
-  "releaseNotes": "修复 Android WebView 原生文本选择工具条主题失配，完善双端会话设置同步与运行时切换，并保留 0.1.17 的输入框提示与窄屏工具栏修复。",
+  "versionName": "0.1.19",
+  "versionCode": 18,
+  "releaseNotes": "新增移动端工具栏模型名与上下文用量显示、任务完成通知与 iOS Capacitor 工程；修复窄屏工具栏溢出丢失工具、本地侧栏抽屉与顶栏透明、重复内容传输等问题，并同步桌面端品牌与模型图标资源。",
   "mandatory": false
 }
