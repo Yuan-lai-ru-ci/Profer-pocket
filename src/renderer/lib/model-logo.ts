@@ -108,7 +108,7 @@ import EmbeddingLogo from '@/assets/models/embedding.png'
 
 // ===== 供应商类型 =====
 
-import type { ProviderType } from '@profer/shared'
+import type { ChannelModel, ProviderType } from '@profer/shared'
 
 // ===== 正则匹配映射 =====
 
@@ -338,15 +338,35 @@ const GENERIC_PROVIDERS: ReadonlySet<ProviderType> = new Set<ProviderType>([
 /**
  * 获取渠道（Channel）的 Logo
  *
- * 识别策略：
- * 1. 明确品牌的 provider 类型（deepseek/openai/google/...）→ 直接信任 provider Logo
- * 2. 泛化类型（anthropic/anthropic-compatible/custom）→ 先按 Base URL 域名识别真实品牌，
- *    识别不到再回退到 provider 默认 Logo
+ * 识别策略（与桌面端新版一致）：
+ * 1. 模型族虚拟渠道：先看渠道内的**具体模型**（如 kimi-k3 → Kimi），再看服务端提供的
+ *    familyId / name（如 familyId='kimi' 时别名模型 k3 也能继承 Kimi Logo）
+ * 2. 明确品牌的 provider 类型（deepseek/openai/google/...）→ 直接信任 provider Logo
+ * 3. 泛化类型（anthropic/anthropic-compatible/custom）→ 按 Base URL 域名识别真实品牌
+ * 4. 兜底 provider 默认 Logo
  *
- * 这样既能识别「用 Anthropic 协议接入第三方品牌」的渠道，又不会把第三方
- * anthropic-compatible 服务误判为 Claude。
+ * 前两步能避免「模型别名不含品牌名」时整池渠道退化成渠道默认图标（移动端表现为
+ * 一堆模型都顶着同一个渠道 Logo）。
  */
-export function getChannelLogo(channel: { provider: ProviderType; baseUrl: string }): string {
+export function getChannelLogo(channel: {
+  provider: ProviderType
+  baseUrl: string
+  name?: string
+  familyId?: string
+  models?: Array<Pick<ChannelModel, 'id'>>
+}): string {
+  // 模型族虚拟渠道的 provider 表示请求协议，不一定代表真实品牌。
+  // 先看具体模型，再看服务端提供的 familyId/name，覆盖后续新增的别名模型。
+  const modelLogo = channel.models
+    ?.map((model) => getModelLogoById(model.id))
+    .find((logo): logo is string => Boolean(logo))
+  if (modelLogo) return modelLogo
+
+  const familyLogo = [channel.familyId, channel.name]
+    .map((value) => getModelLogoById(value ?? ''))
+    .find((logo): logo is string => Boolean(logo))
+  if (familyLogo) return familyLogo
+
   if (GENERIC_PROVIDERS.has(channel.provider) && channel.baseUrl) {
     for (const [regex, logo] of URL_LOGO_MAP) {
       if (regex.test(channel.baseUrl)) {
