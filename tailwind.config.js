@@ -62,6 +62,7 @@ export default {
           muted: 'hsl(var(--tooltip-muted) / <alpha-value>)',
         },
         'content-area': 'hsl(var(--content-area) / <alpha-value>)',
+        'tabbar-surface': 'hsl(var(--tabbar-surface) / <alpha-value>)',
       },
       // ===== 字体栈：Inter Variable 优先，回退 SF Pro Text / 系统中文字体 =====
       fontFamily: {

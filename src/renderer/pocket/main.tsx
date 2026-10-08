@@ -1254,9 +1254,9 @@ function App({ onReady }: { onReady: () => void }): React.ReactElement {
             顶栏若渲染在容器内，fixed 会退化为相对容器定位，键盘弹起触发文档滚动时被顶出屏幕；
             Portal 后 fixed 相对视口 + visualViewport.offsetTop 驱动，永远锚定可视区域顶部，
             键盘弹起/滚动都不影响。 */}
-        {!landscapeWide && createPortal(
+        {!landscapeWide && !sidebarOpen && createPortal(
           <div
-            className="fixed inset-x-0 z-30 flex h-12 items-center bg-tabbar-surface/90 px-2 backdrop-blur-md"
+            className="fixed inset-x-0 z-30 flex h-12 items-center bg-tabbar-surface px-2"
             style={{ top: `calc(${visualTop}px + ${SAFE_AREA_TOP})` }}
           >
             <Button type="button" variant="ghost" size="icon" onClick={() => setSidebarOpen(true)} className="mr-1 size-10 shrink-0 rounded-[12px] text-foreground/65 hover:bg-foreground/[0.06]" aria-label="打开导航"><Menu className="size-[18px]" /></Button>
@@ -1288,42 +1288,41 @@ function App({ onReady }: { onReady: () => void }): React.ReactElement {
         )}
 
         <div className={`pocket-app-root flex h-full w-full overflow-hidden bg-background p-0 text-foreground landscape:min-[1024px]:p-2 ${SAFE_AREA_CLS}`}>
-      <NativePocketSidebar mobileOpen={sidebarOpen} onDismiss={() => setSidebarOpen(false)} />
-
-      {/* 主区（竖屏 pt-12 为浮动顶栏预留高度，滚动内容从悬浮条下方穿过；横屏无顶栏不需要） */}
-      <div className="flex-1 min-w-0 flex flex-col overflow-hidden bg-content-area pt-12 landscape:min-[1024px]:pt-0 landscape:min-[1024px]:ml-2 landscape:min-[1024px]:rounded-[24px] landscape:min-[1024px]:border landscape:min-[1024px]:border-border/70 landscape:min-[1024px]:shadow-xl">
-        {/* 对话区：完整复用桌面 AgentView / ChatView。
-            注意：必须是 flex 容器（flex flex-col）——AgentView 根是 flex-1，StickToBottom 滚动容器是
-            height:100%，依赖整条父链的高度约束；若此处是普通块级元素，滚动容器被内容撑开后溢出，
-            对话区将无法滚动（历史消息被 overflow-hidden 截断）。 */}
-        <div className="flex min-h-0 flex-1 flex-col touch-pan-y">
-          {appMode === 'chat' ? (
-            currentChatId ? (
-              <ChatView conversationId={currentChatId} pocketMode hideChatHeader={!landscapeWide} />
-            ) : (
-              <div className="flex h-full flex-col items-center justify-center px-6 text-center">
-                <div className="max-w-sm space-y-2">
-                  <div className="text-[22px] font-semibold tracking-tight text-foreground">{userProfile.userName}，早上好</div>
-                  <p className="mt-16 text-[13px] leading-5 text-muted-foreground">开始你的第一个 Chat 对话，与 Agent 共享渠道与模型</p>
-                  <Button type="button" variant="outline" size="sm" onClick={createConversation} className="mt-3 h-9 gap-1.5"><Plus className="size-3.5" />新建对话</Button>
-                </div>
-              </div>
-            )
-          ) : (
-            currentSessionId ? (
-              <AgentView sessionId={currentSessionId} pocketMode hideAgentHeader={!landscapeWide} />
-            ) : (
-              <div className="flex h-full flex-col items-center justify-center px-6 text-center">
-                <div className="max-w-sm space-y-2">
-                  <div className="text-[22px] font-semibold tracking-tight text-foreground">{userProfile.userName}，早上好</div>
-                  <p className="mt-16 text-[13px] leading-5 text-muted-foreground">开始你的第一个 Agent 会话，Token 消耗热力图将在这里显示</p>
-                  <Button type="button" variant="outline" size="sm" onClick={createSession} className="mt-3 h-9 gap-1.5"><Plus className="size-3.5" />新建会话</Button>
-                </div>
-              </div>
-            )
-          )}
-        </div>
-      </div>
+          <NativePocketSidebar
+            mobileOpen={sidebarOpen}
+            onOpen={() => setSidebarOpen(true)}
+            onDismiss={() => setSidebarOpen(false)}
+            wide={landscapeWide}
+            safeAreaClassName={SAFE_AREA_CLS}
+          >
+            <div className={`flex min-h-0 flex-1 flex-col touch-pan-y ${landscapeWide ? '' : 'pt-12'}`}>
+              {appMode === 'chat' ? (
+                currentChatId ? (
+                  <ChatView conversationId={currentChatId} pocketMode hideChatHeader={!landscapeWide} />
+                ) : (
+                  <div className="flex h-full flex-col items-center justify-center px-6 text-center">
+                    <div className="max-w-sm space-y-2">
+                      <div className="text-[22px] font-semibold tracking-tight text-foreground">{userProfile.userName}，早上好</div>
+                      <p className="mt-16 text-[13px] leading-5 text-muted-foreground">开始你的第一个 Chat 对话，与 Agent 共享渠道与模型</p>
+                      <Button type="button" variant="outline" size="sm" onClick={createConversation} className="mt-3 h-9 gap-1.5"><Plus className="size-3.5" />新建对话</Button>
+                    </div>
+                  </div>
+                )
+              ) : (
+                currentSessionId ? (
+                  <AgentView sessionId={currentSessionId} pocketMode hideAgentHeader={!landscapeWide} />
+                ) : (
+                  <div className="flex h-full flex-col items-center justify-center px-6 text-center">
+                    <div className="max-w-sm space-y-2">
+                      <div className="text-[22px] font-semibold tracking-tight text-foreground">{userProfile.userName}，早上好</div>
+                      <p className="mt-16 text-[13px] leading-5 text-muted-foreground">开始你的第一个 Agent 会话，Token 消耗热力图将在这里显示</p>
+                      <Button type="button" variant="outline" size="sm" onClick={createSession} className="mt-3 h-9 gap-1.5"><Plus className="size-3.5" />新建会话</Button>
+                    </div>
+                  </div>
+                )
+              )}
+            </div>
+          </NativePocketSidebar>
         </div>
         </>
       )}
@@ -1348,26 +1347,62 @@ function App({ onReady }: { onReady: () => void }): React.ReactElement {
 }
 
 // ===== 平板直接复用桌面 LeftSidebar；浏览器端只以 WebSocket adapter 替代 Electron IPC。 =====
-function NativePocketSidebar({ mobileOpen, onDismiss }: { mobileOpen: boolean; onDismiss: () => void }): React.ReactElement {
-  const drawerWidth = Math.max(200, Math.min(288, window.innerWidth - 24))
+function NativePocketSidebar({ mobileOpen, onOpen, onDismiss, wide, safeAreaClassName, children }: { mobileOpen: boolean; onOpen: () => void; onDismiss: () => void; wide: boolean; safeAreaClassName: string; children: React.ReactNode }): React.ReactElement {
+  const viewportWidth = window.innerWidth
+  const conversationRightDistance = 30
+  const conversationLeft = viewportWidth - conversationRightDistance
+  const panelGap = 8
+  const sidebarWidth = Math.max(120, conversationLeft - panelGap)
+  const touchStartRef = React.useRef<{ x: number; y: number } | null>(null)
+
+  const handleTouchStart = (event: React.TouchEvent<HTMLDivElement>): void => {
+    const touch = event.touches[0]
+    if (!touch) return
+    touchStartRef.current = { x: touch.clientX, y: touch.clientY }
+  }
+
+  const handleTouchEnd = (event: React.TouchEvent<HTMLDivElement>): void => {
+    const start = touchStartRef.current
+    touchStartRef.current = null
+    const touch = event.changedTouches[0]
+    if (!start || !touch || wide) return
+
+    const deltaX = touch.clientX - start.x
+    const deltaY = touch.clientY - start.y
+    if (Math.abs(deltaX) < 64 || Math.abs(deltaX) < Math.abs(deltaY) * 1.35) return
+
+    if (!mobileOpen && deltaX > 0) onOpen()
+    if (mobileOpen && deltaX < 0) onDismiss()
+  }
+
   return (
     <>
       <div className="hidden h-full shrink-0 landscape:min-[1024px]:block"><LeftSidebar width={288} pocketMode /></div>
-      <div className={`fixed inset-0 z-50 landscape:min-[1024px]:hidden ${mobileOpen ? 'pointer-events-auto' : 'pointer-events-none'}`} aria-hidden={!mobileOpen}>
-        <button type="button" className={`absolute inset-0 z-0 bg-black/40 transition-opacity duration-200 ${mobileOpen ? 'opacity-100' : 'opacity-0'}`} onClick={onDismiss} aria-label="关闭会话导航" tabIndex={mobileOpen ? 0 : -1} />
-        <div
-          className={`absolute inset-y-0 left-0 z-10 w-[min(288px,calc(100vw-24px))] max-w-[calc(100vw-24px)] touch-pan-y transition-transform duration-200 ease-out ${SAFE_AREA_CLS} ${mobileOpen ? 'translate-x-0' : '-translate-x-full'}`}
-          // 再次点击当前已选中会话：收起抽屉（冒泡阶段判断；子会话箭头/操作按钮已 stopPropagation 不会冒泡到此处）
-          onClick={(e) => {
-            if ((e.target as Element | null)?.closest?.('[data-profer-navigation-item="session"][data-profer-navigation-active="true"]')) {
-              onDismiss()
-            }
-          }}
-        >
-          {/* 搜索面板（SearchDialog）是全局 atom + Portal，只需渲染一份；由横屏固定侧栏实例承担。
-              抽屉实例设为 false，避免双 SearchDialog 叠加导致打开即被 interactOutside 关闭（“一闪即逝”）。 */}
-          <LeftSidebar width={drawerWidth} pocketMode renderSearchDialog={false} />
-        </div>
+      <div className="relative h-full min-w-0 flex-1 overflow-hidden landscape:min-[1024px]:block">
+        {wide ? (
+          <div className="flex h-full min-w-0 flex-col overflow-hidden bg-content-area pt-0 landscape:min-[1024px]:ml-2 landscape:min-[1024px]:rounded-[24px] landscape:min-[1024px]:border landscape:min-[1024px]:border-border/70 landscape:min-[1024px]:shadow-xl">{children}</div>
+        ) : (
+          <div
+            className="relative h-full w-full overflow-hidden"
+            onTouchStart={handleTouchStart}
+            onTouchEnd={handleTouchEnd}
+            onTouchCancel={() => { touchStartRef.current = null }}
+          >
+            <div
+              className="absolute left-0 top-[10px] bottom-0 overflow-hidden bg-background transition-[left,width] duration-300 sidebar-collapse-ease"
+              style={{ left: mobileOpen ? 0 : -viewportWidth, width: sidebarWidth }}
+              onClick={(event) => {
+                if ((event.target as Element | null)?.closest?.('[data-profer-navigation-item="session"][data-profer-navigation-active="true"]')) onDismiss()
+              }}
+            >
+              <LeftSidebar width={sidebarWidth} pocketMode flush onCollapse={onDismiss} renderSearchDialog={false} />
+            </div>
+            <div
+              className={`absolute inset-y-3 z-10 flex flex-col border border-border/50 bg-content-area shadow-[0_12px_32px_-20px_rgb(0_0_0_/_0.38)] transition-[left,border-radius,box-shadow] duration-300 sidebar-collapse-ease ${mobileOpen ? 'rounded-[28px]' : 'rounded-none border-transparent shadow-none'}`}
+              style={{ left: mobileOpen ? conversationLeft : 0, width: viewportWidth }}
+            >{children}</div>
+          </div>
+        )}
       </div>
     </>
   )
