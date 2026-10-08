@@ -11,7 +11,35 @@
  * 这里统一交给对应订阅者处理。
  */
 
-import type { CommandResult, CreateExplorationSessionInput } from '@profer/shared'
+import type { AgentPreset, CommandResult, CreateExplorationSessionInput } from '@profer/shared'
+
+/**
+ * 预设列表回包归一化。
+ *
+ * 上层（PresetSelector / PermissionModeSelector）把返回值直接写入 `workspacePresetsAtom`，
+ * 并在 render 中调用 `presetOf(presets, id)`（内部 `presets.find(...)`）。一旦回包不是数组
+ * （旧版桌面端包装成 `{ presets: [...] }`、异常响应体等），就会抛
+ * `presets.find is not a function` → React 整树卸载 → 移动端白屏。
+ * 因此这里统一归一：数组直接过滤，常见包装字段兼容，其余情况退回空列表并告警。
+ */
+export function normalizePresetList(payload: unknown): AgentPreset[] {
+  const pickValid = (list: unknown): AgentPreset[] => Array.isArray(list)
+    ? list.filter((item): item is AgentPreset => !!item && typeof item === 'object' && typeof (item as { id?: unknown }).id === 'string')
+    : []
+
+  if (Array.isArray(payload)) return pickValid(payload)
+  if (payload != null && typeof payload === 'object') {
+    const record = payload as Record<string, unknown>
+    for (const key of ['presets', 'items', 'list']) {
+      const nested = record[key]
+      if (Array.isArray(nested)) return pickValid(nested)
+    }
+  }
+  if (payload != null) {
+    console.warn('[Pocket] list_presets 回包不是数组，已按空列表处理:', payload)
+  }
+  return []
+}
 
 export type AgentWorkflowEvent = {
   sessionId: string
@@ -669,8 +697,8 @@ export class WsClient {
 
   // ===== Agent 预设（对齐主仓库 remote-service 预设 WS 命令，数据与电脑端共享） =====
 
-  listPresets(workspaceSlug?: string): Promise<unknown> {
-    return this.sendCommand({ type: 'list_presets', workspaceSlug })
+  listPresets(workspaceSlug?: string): Promise<AgentPreset[]> {
+    return this.sendCommand({ type: 'list_presets', workspaceSlug }).then(normalizePresetList)
   }
 
   getDefaultPreset(workspaceSlug?: string): Promise<unknown> {

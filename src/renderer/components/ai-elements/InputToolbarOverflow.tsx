@@ -69,8 +69,10 @@ export function InputToolbarOverflow({
       const next: Record<string, number> = { ...prev }
       let changed = false
       for (const [key, el] of itemRefs.current.entries()) {
+        if (!el.isConnected) continue
+        // 记录 0 宽：宽度为 0 是合法状态（该项当前渲染为空），不能当作「未测量」跳过，
+        // 否则折叠计算会永久停在 null（不生成「更多」按钮）→ 右侧按钮被裁掉、点不到。
         const w = el.getBoundingClientRect().width
-        if (w <= 0) continue
         if (next[key] === undefined || Math.abs(next[key]! - w) > 0.5) {
           next[key] = w
           changed = true
@@ -122,7 +124,13 @@ export function InputToolbarOverflow({
   // 之前缺依赖数组导致每次 render 都重跑 → setItemWidths → re-render → 死循环（React #185）。
   const itemKeysSignature = items.map((it) => it.key).join('|')
   const itemWidthEntries = React.useMemo(
-    () => items.map((item) => ({ key: item.key, width: itemWidths[item.key] ?? 0 })),
+    () => items.map((item) => ({
+      key: item.key,
+      width: itemWidths[item.key] ?? 0,
+      // 未测量（首帧）与「已测量但宽度为 0」必须区分：后者是合法状态
+      // （例如无 usage 时的上下文圆环），不能阻断折叠计算。
+      measured: itemWidths[item.key] !== undefined,
+    })),
     [items, itemWidths],
   )
   React.useLayoutEffect(() => {

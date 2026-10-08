@@ -37,6 +37,9 @@ export const workspacePresetsAtom = atomFamily((workspaceSlug: string | undefine
  * 注意：不能用 shared 的 normalizePresetId（只认内置），自定义预设 ID 必须直接匹配。
  */
 export function presetOf(presets: AgentPreset[], presetId: string | undefined): AgentPreset | undefined {
+  // 防御：预设缓存一旦被写成非数组（例如旧版桌面端回包形状不一致、异常响应体），
+  // 这里的 `.find` 会抛 "presets.find is not a function"，React 整树卸载 → 移动端白屏。
+  if (!Array.isArray(presets)) return undefined
   if (!presetId) return presets.find((p) => p.id === DEFAULT_PRESET_ID)
   return presets.find((p) => p.id === presetId) ?? presets.find((p) => p.id === DEFAULT_PRESET_ID)
 }

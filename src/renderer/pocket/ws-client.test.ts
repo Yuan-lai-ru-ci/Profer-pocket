@@ -1,5 +1,23 @@
 import { describe, expect, test } from 'bun:test'
-import { WsClient } from './ws-client'
+import { WsClient, normalizePresetList } from './ws-client'
+
+describe('normalizePresetList 归一化', () => {
+  test('Given 数组回包 Then 过滤掉无 id 的脏数据', () => {
+    expect(normalizePresetList([{ id: 'standard' }, { name: '坏数据' }, null, 'x'])).toEqual([{ id: 'standard' }])
+  })
+
+  test('Given 桌面端包装成对象 Then 取出内部数组（不再白屏）', () => {
+    expect(normalizePresetList({ presets: [{ id: 'a' }] })).toEqual([{ id: 'a' }])
+    expect(normalizePresetList({ items: [{ id: 'b' }] })).toEqual([{ id: 'b' }])
+  })
+
+  test('Given 非数组也无可取字段 Then 退回空列表', () => {
+    expect(normalizePresetList({ ok: false, error: '未知指令' })).toEqual([])
+    expect(normalizePresetList('boom')).toEqual([])
+    expect(normalizePresetList(null)).toEqual([])
+    expect(normalizePresetList(undefined)).toEqual([])
+  })
+})
 
 describe('WsClient.getWorkspaceHeatmapDaily', () => {
   test('sends the workspace heatmap command with the workspace id', async () => {
