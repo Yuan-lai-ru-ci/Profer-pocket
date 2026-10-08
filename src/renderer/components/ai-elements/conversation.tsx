@@ -42,7 +42,7 @@ export function ConversationContent({ className, ...props }: ConversationContent
   return (
     <StickToBottom.Content
       scrollClassName="profer-scroll-region"
-      className={cn('flex flex-col gap-1 py-4 px-8', className)}
+      className={cn('conversation-content flex flex-col gap-1 py-4 px-8', className)}
       {...props}
     />
   )

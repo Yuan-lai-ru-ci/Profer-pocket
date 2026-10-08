@@ -21,9 +21,11 @@ import { ContentBlock } from './ContentBlock'
 import { TaskProgressCard } from './TaskProgressCard'
 import { TurnFileChangesSummary, buildTurnFileNameMap } from './TurnFileChangesSummary'
 import { ProcessBlockGroup, buildAssistantTurnRenderItems, buildCompletedToolResultIds } from './ProcessBlockGroup'
+import type { AssistantTurnRenderItem } from './ProcessBlockGroup'
 import { extractToolResultText, isTaskProgressTool, parseTaskCreateResult } from './task-progress'
 import { normalizeThinkTagsInContentBlocks } from './thinking-tag-parser'
 import { extractReadKnowledgeItems } from './knowledge-read-indicator'
+import { applyRenderWindow, DEFAULT_RENDER_WINDOW } from './render-window'
 import { DurationBadge } from './AgentMessages'
 import {
   Message,
@@ -207,19 +209,22 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null
 }
 
-function extractStructuredToolResultText(message: SDKUserMessage): string | undefined {
-  const raw = message as unknown as Record<string, unknown>
-  const result = raw.toolUseResult ?? raw.tool_use_result
-  if (!isRecord(result)) return undefined
-  try {
-    return JSON.stringify(result)
-  } catch {
-    return undefined
+function parseTaskCreateResultFromStructuredValue(value: Record<string, unknown>): { id: string; subject?: string } | null {
+  const task = value.task
+  if (isRecord(task) && (typeof task.id === 'string' || typeof task.id === 'number')) {
+    return { id: String(task.id), subject: typeof task.subject === 'string' ? task.subject : undefined }
   }
-}
 
-function extractToolResultForTask(message: SDKUserMessage, resultBlock: SDKToolResultBlock): string | undefined {
-  return extractStructuredToolResultText(message) ?? extractToolResultText(resultBlock.content)
+  const extracted = extractToolResultText(value)
+  if (extracted) {
+    const parsed = parseTaskCreateResult(extracted)
+    if (parsed) return parsed
+  }
+  try {
+    return parseTaskCreateResult(JSON.stringify(value))
+  } catch {
+    return null
+  }
 }
 
 // ===== 辅助：判断 user 消息是否为真正的人类用户输入（非工具结果/子代理提示） =====
@@ -434,6 +439,12 @@ function buildTaskProgressData(
     }
   }
 
+  if (taskBlocks.length === 0) return { taskActivities: [], firstTaskIndex }
+
+  const wantedToolUseIds = new Set(taskBlocks.map((block) => block.id))
+  const taskCreateIds = new Set(taskBlocks
+    .filter((block) => block.name === 'TaskCreate' || block.name === 'proma_task_create' || block.name.endsWith('__proma_task_create'))
+    .map((block) => block.id))
   const toolResultMap = new Map<string, string>()
   for (const msg of turnMessages) {
     if (msg.type !== 'user') continue
@@ -443,7 +454,22 @@ function buildTaskProgressData(
     for (const b of blocks) {
       if (b.type === 'tool_result') {
         const rb = b as SDKToolResultBlock
-        const text = extractToolResultForTask(userMsg, rb)
+        if (!wantedToolUseIds.has(rb.tool_use_id)) continue
+        const raw = userMsg as unknown as Record<string, unknown>
+        const structured = raw.toolUseResult ?? raw.tool_use_result
+        let text: string | undefined
+        if (!taskCreateIds.has(rb.tool_use_id)) {
+          text = extractToolResultText(rb.content)
+        } else {
+          try {
+            const parsed = isRecord(structured)
+              ? parseTaskCreateResultFromStructuredValue(structured)
+              : parseTaskCreateResult(extractToolResultText(rb.content))
+            text = parsed ? JSON.stringify({ task: parsed }) : undefined
+          } catch {
+            text = extractToolResultText(rb.content)
+          }
+        }
         if (text) toolResultMap.set(rb.tool_use_id, text)
       }
     }
@@ -469,30 +495,45 @@ function buildTaskProgressData(
  */
 export function buildHistoricalTaskSubjects(allMessages: SDKMessage[]): Map<string, string> {
   const historicalTaskSubjects = new Map<string, string>()
-  const globalResultMap = new Map<string, string>()
+  const subjectFallbackByToolUseId = new Map<string, string>()
+  const parsedByToolUseId = new Map<string, { id: string; subject?: string }>()
   const pendingTaskCreates: SDKToolUseBlock[] = []
 
   for (const msg of allMessages) {
-    if (msg.type === 'user') {
-      const userMsg = msg as SDKUserMessage
-      const blocks = userMsg.message?.content
-      if (!Array.isArray(blocks)) continue
-      for (const b of blocks) {
-        if (b.type === 'tool_result') {
-          const rb = b as SDKToolResultBlock
-          const text = extractToolResultForTask(userMsg, rb)
-          if (text) globalResultMap.set(rb.tool_use_id, text)
-        }
-      }
-    } else if (msg.type === 'assistant') {
-      const aMsg = msg as SDKAssistantMessage
-      const blocks = aMsg.message?.content
-      if (!Array.isArray(blocks)) continue
-      for (const b of blocks) {
-        if (b.type === 'tool_use' && (b as SDKToolUseBlock).name === 'TaskCreate') {
-          pendingTaskCreates.push(b as SDKToolUseBlock)
-        }
-      }
+    if (msg.type !== 'assistant') continue
+    const blocks = (msg as SDKAssistantMessage).message?.content
+    if (!Array.isArray(blocks)) continue
+    for (const block of blocks) {
+      if (block.type !== 'tool_use' || (block as SDKToolUseBlock).name !== 'TaskCreate') continue
+      const taskBlock = block as SDKToolUseBlock
+      pendingTaskCreates.push(taskBlock)
+      const input = taskBlock.input as Record<string, unknown>
+      const subject = typeof input.subject === 'string'
+        ? input.subject
+        : typeof input.description === 'string'
+          ? input.description
+          : undefined
+      if (subject) subjectFallbackByToolUseId.set(taskBlock.id, subject)
+    }
+  }
+
+  if (subjectFallbackByToolUseId.size === 0) return historicalTaskSubjects
+
+  for (const msg of allMessages) {
+    if (msg.type !== 'user') continue
+    const userMsg = msg as SDKUserMessage
+    const blocks = userMsg.message?.content
+    if (!Array.isArray(blocks)) continue
+    for (const block of blocks) {
+      if (block.type !== 'tool_result') continue
+      const resultBlock = block as SDKToolResultBlock
+      if (!subjectFallbackByToolUseId.has(resultBlock.tool_use_id)) continue
+      const raw = userMsg as unknown as Record<string, unknown>
+      const structured = raw.toolUseResult ?? raw.tool_use_result
+      const parsed = isRecord(structured)
+        ? parseTaskCreateResultFromStructuredValue(structured)
+        : parseTaskCreateResult(extractToolResultText(resultBlock.content))
+      if (parsed) parsedByToolUseId.set(resultBlock.tool_use_id, parsed)
     }
   }
 
@@ -504,8 +545,7 @@ export function buildHistoricalTaskSubjects(allMessages: SDKMessage[]): Map<stri
         ? input.description
         : undefined
     if (!subject) continue
-    const resultText = globalResultMap.get(tb.id)
-    const parsedResult = parseTaskCreateResult(resultText)
+    const parsedResult = parsedByToolUseId.get(tb.id)
     if (parsedResult?.id) historicalTaskSubjects.set(parsedResult.id, parsedResult.subject ?? subject)
   }
 
@@ -542,6 +582,8 @@ export interface AssistantTurnRendererProps {
 export function AssistantTurnRenderer({ turn, allMessages, historicalTaskSubjects, basePath, onFork, onRewind, onRetry, onRetryInNewSession, onCompact, isStreaming, stoppedByUser, sessionModelId }: AssistantTurnRendererProps): React.ReactElement | null {
   const channels = useAtomValue(channelsAtom)
   const processGroupsKeepExpanded = useAtomValue(agentProcessGroupsKeepExpandedAtom)
+  const [showEarlierProcess, setShowEarlierProcess] = React.useState(false)
+  const [showEarlierReplies, setShowEarlierReplies] = React.useState(false)
   // 收集所有 assistant 消息的内容块，保留 parent_tool_use_id 关联
   interface EnrichedBlock {
     block: SDKContentBlock
@@ -629,6 +671,17 @@ export function AssistantTurnRenderer({ turn, allMessages, historicalTaskSubject
       completedToolResultIds,
     })
   }, [topLevelBlocks, isStreaming, completedToolResultIds])
+  const { items: windowedItems, foldedProcessItems, foldedReplyItems } = React.useMemo(
+    () => isStreaming
+      ? { items: renderItems, foldedProcessItems: [] as AssistantTurnRenderItem[], foldedReplyItems: [] as AssistantTurnRenderItem[] }
+      : applyRenderWindow(renderItems),
+    [renderItems, isStreaming],
+  )
+  const firstVisibleReplyIndex = windowedItems.findIndex((item) => item.type !== 'process-group')
+  const foldedProcessCount = foldedProcessItems.reduce(
+    (count, item) => count + (item.type === 'process-group' ? item.items.length : 1),
+    0,
+  )
   // 与本轮工具调用同源的映射，让正文内联的裸文件名可靠定位真实文件。
   const turnFileMap = React.useMemo(
     () => buildTurnFileNameMap(turn.turnMessages),
@@ -703,8 +756,52 @@ export function AssistantTurnRenderer({ turn, allMessages, historicalTaskSubject
       <MessageContent>
         <TurnFileMapProvider map={turnFileMap}>
           <div className={cn('space-y-2')}>
-            {renderItems.map((item, itemIndex) => {
+            {foldedProcessItems.length > 0 && (
+              <div>
+                <button
+                  type="button"
+                  className="w-full rounded-md py-1 text-left text-xs text-muted-foreground hover:text-foreground"
+                  aria-expanded={showEarlierProcess}
+                  onClick={() => setShowEarlierProcess((value) => !value)}
+                >
+                  {showEarlierProcess ? '收起更早的执行过程' : `更早的执行过程已折叠（${foldedProcessCount} 段），点击展开`}
+                </button>
+                {showEarlierProcess && foldedProcessItems.map((item, index) => {
+                  if (item.type !== 'process-group') return null
+                  return (
+                    <ProcessBlockGroup
+                      key={`folded-process-${index}`}
+                      blocks={item.items.map((entry) => entry.block)}
+                      keepExpandedAfterComplete
+                    >
+                      {item.items.map((entry) => renderProcessGroupBlock(entry.block, entry.index))}
+                    </ProcessBlockGroup>
+                  )
+                })}
+              </div>
+            )}
+            {windowedItems.map((item, itemIndex) => {
               if (item.type === 'block') {
+                if (itemIndex === firstVisibleReplyIndex && foldedReplyItems.length > 0) {
+                  return (
+                    <React.Fragment key={itemIndex}>
+                      <div>
+                        <button
+                          type="button"
+                          className="w-full rounded-md py-1 text-left text-xs text-muted-foreground hover:text-foreground"
+                          aria-expanded={showEarlierReplies}
+                          onClick={() => setShowEarlierReplies((value) => !value)}
+                        >
+                          {showEarlierReplies ? '收起更早的回复' : `更早的 ${foldedReplyItems.length} 段回复已折叠，点击展开`}
+                        </button>
+                        {showEarlierReplies && foldedReplyItems.map((folded, index) => folded.type === 'block'
+                          ? <React.Fragment key={`folded-reply-${index}`}>{renderTopLevelBlock(folded.item.block, folded.item.index)}</React.Fragment>
+                          : null)}
+                      </div>
+                      {renderTopLevelBlock(item.item.block, item.item.index)}
+                    </React.Fragment>
+                  )
+                }
                 return renderTopLevelBlock(item.item.block, item.item.index)
               }
 
@@ -716,7 +813,7 @@ export function AssistantTurnRenderer({ turn, allMessages, historicalTaskSubject
                   blocks={groupBlocks}
                   isStreaming={isStreaming}
                   keepExpandedAfterComplete={processGroupsKeepExpanded}
-                  isMessageTail={itemIndex === renderItems.length - 1}
+                  isMessageTail={itemIndex === windowedItems.length - 1}
                 >
                   {item.items.map((groupItem) => renderProcessGroupBlock(groupItem.block, groupItem.index))}
                 </ProcessBlockGroup>

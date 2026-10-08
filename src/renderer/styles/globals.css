@@ -2459,17 +2459,20 @@
 }
 
 
-/* ===== 平板竖屏：设置弹窗改为纵向布局（顶部横条 tab + 内容区全宽） =====
- * 平板设置只有少量 tab，竖屏下 160px 左侧导航会挤压内容区；
- * 改成顶部横向 tab 条（保留切换入口——多个 tab 时必须能切换），内容全宽。
- * body.pocket-mode 由 pocket/main.tsx 挂载时标记，覆盖 Portal 到 body 的弹窗（radix Dialog 默认 Portal）。桌面版不受影响。
+/* ===== 平板竖屏：全屏设置 + 顶部横向分类 =====
+ * 竖屏下将导航改为顶部横向 tab，设置内容占满可用窗口；状态栏/手势区由对话框内容内边距避让。
+ * body.pocket-mode 标记可定向 Portal 到 body 的设置弹窗，桌面版不受影响。
  */
 @media (orientation: portrait) {
   body.pocket-mode .pocket-settings-dialog {
-    width: 94vw;
-    max-width: 94vw;
-    height: 92vh;
-    max-height: 92vh;
+    inset: 0;
+    width: 100vw;
+    height: 100dvh;
+    max-width: none;
+    max-height: none;
+    border-radius: 0;
+    padding-top: max(env(safe-area-inset-top), 0px);
+    padding-bottom: max(env(safe-area-inset-bottom), 0px);
   }
   body.pocket-mode .settings-body {
     flex-direction: column;
@@ -2528,13 +2531,21 @@
   }
 }
 
-/* ===== 平板竖屏：消息内容区向左拓宽 40px 并对齐 =====
- * 保留头像/模型标识，但把 assistant 与 user 消息内容区左缩进从 46px 收窄到 6px
- * （相当于向左扩 40px），竖屏下获得更多文字观看空间，且两边气泡对齐。
- * 同 turn 底部附属区（文件改动汇总的虚线分隔 + 操作按钮栏）也一并对齐到 6px，
- * 避免出现“正文已左移、底下虚线与分叉按钮仍停在 46px”的错位。
+/* ===== Pocket 竖屏：收窄会话留白，避免 Markdown 层级挤压正文 =====
+ * 外层会话和消息 padding 各自只保留少量触屏阅读留白；正文、附件汇总和操作栏同轴。
+ * 列表保留原生 marker，但深层缩进更紧凑；代码/表格/公式局部滚动，不缩放正文。
  */
 @media (orientation: portrait) {
+  body.pocket-mode .conversation-content {
+    padding-left: 12px;
+    padding-right: 12px;
+  }
+
+  body.pocket-mode .message-item {
+    padding-left: 6px;
+    padding-right: 6px;
+  }
+
   /* Markdown 正文中的图片不能按原始尺寸撑高消息区；点击图片仍可查看原图。 */
   body.pocket-mode .message-item .message-content .prose img {
     display: block;
@@ -2546,13 +2557,45 @@
   }
 
   body.pocket-mode .message-item .message-content {
-    padding-left: 6px;
+    width: 100%;
+    min-width: 0;
+    padding-left: 0;
   }
-  body.pocket-mode .message-item .file-changes-summary {
-    padding-left: 6px;
+  body.pocket-mode .message-item .message-response {
+    min-width: 0;
+    max-width: 100%;
   }
-  body.pocket-mode .message-item .agent-turn-actions {
-    padding-left: 6px;
+  body.pocket-mode .message-item .message-response :is(p, li, blockquote, h1, h2, h3, h4, h5, h6, a) {
+    overflow-wrap: anywhere;
+  }
+  body.pocket-mode .message-item .message-response :is(ul, ol) {
+    padding-inline-start: 1.25rem;
+  }
+  body.pocket-mode .message-item .message-response li {
+    padding-inline-start: 0.125rem;
+  }
+  body.pocket-mode .message-item .message-response :is(ul, ol) :is(ul, ol) {
+    margin-block: 0.25rem;
+    padding-inline-start: 1rem;
+  }
+  body.pocket-mode .message-item .message-response :is(ul, ol) :is(ul, ol) :is(ul, ol) {
+    padding-inline-start: 0.75rem;
+  }
+  body.pocket-mode .message-item .message-response blockquote {
+    margin-inline: 0;
+    padding-inline-start: 0.75rem;
+  }
+  body.pocket-mode .message-item .message-response :is(.code-block-wrapper, .markdown-table-scroll) {
+    min-width: 0;
+    max-width: 100%;
+  }
+  body.pocket-mode .message-item .message-response .katex-display {
+    max-width: 100%;
+    overflow-x: auto;
+    overflow-y: hidden;
+  }
+  body.pocket-mode .message-item :is(.file-changes-summary, .message-actions) {
+    padding-left: 0;
   }
 }
 
@@ -2577,6 +2620,23 @@ body.pocket-mode *::-webkit-scrollbar {
 body.pocket-mode * {
   scrollbar-width: none;
   -ms-overflow-style: none;
+}
+body.pocket-mode .scrollbar-thin::-webkit-scrollbar,
+body.pocket-mode .scrollbar-thin > *::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+  display: none;
+}
+
+/* Pocket 侧栏会话行：增加触控间距，项目标题与顶部操作保持原密度。 */
+body.pocket-mode [data-profer-navigation-item="session"] {
+  padding-top: 6px;
+  padding-bottom: 6px;
+}
+
+/* Pocket 侧栏会话行的文字同步放大行高，避免上下留白与文字节奏不一致。 */
+body.pocket-mode [data-profer-navigation-item="session"] > div > :is(div, input) {
+  line-height: 20px;
 }
 
 /* 允许代码块、长表格和长链接在触屏上横向拖动；页面本身仍保持自然滚动。 */

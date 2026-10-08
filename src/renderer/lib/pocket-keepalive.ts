@@ -20,6 +20,7 @@ type PocketCapacitorGlobal = {
         startService?: (opts: { url: string; token: string }) => Promise<unknown>
         stopService?: () => Promise<unknown>
         setForegroundState?: (opts: { foreground: boolean }) => Promise<unknown>
+        notifyTaskCompletion?: (opts: { sessionId: string; title?: string }) => Promise<unknown>
         getPendingNotification?: () => Promise<{ sessionId?: string; type?: string }>
         requestPermissions?: () => Promise<{ granted: boolean }>
         getStatus?: () => Promise<{ diagnostic?: string }>
@@ -85,6 +86,17 @@ export async function stopPocketKeepalive(): Promise<void> {
     await cap?.Plugins?.PocketMessenger?.stopService?.()
   } catch (e) {
     console.warn('[Pocket Keepalive] 停止后台服务失败', e)
+  }
+}
+
+/** 前台收到完成事件时，投递 Android 系统任务完成通知；浏览器环境安全 no-op。 */
+export async function notifyPocketTaskCompletion(sessionId: string, sessionTitle?: string): Promise<void> {
+  if (!isNativeCapacitor()) return
+  const cap = (window as unknown as PocketCapacitorGlobal).Capacitor
+  try {
+    await cap?.Plugins?.PocketMessenger?.notifyTaskCompletion?.({ sessionId, title: sessionTitle })
+  } catch (e) {
+    console.warn('[Pocket Keepalive] 投递任务完成通知失败', e)
   }
 }
 

@@ -15,7 +15,6 @@
 
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import ReactDOM from 'react-dom/client'
-import { createPortal } from 'react-dom'
 import { Provider, createStore, useSetAtom, useAtomValue } from 'jotai'
 import { Toaster, toast } from 'sonner'
 import '@fontsource-variable/inter/index.css'
@@ -23,9 +22,6 @@ import '@/styles/globals.css'
 import { installElectronApiStub, setPocketRemoteClient, emitPocketAgentStreamEvent, emitPocketAgentStreamComplete, emitPocketChatStreamEvent, consumePocketStoppedByUser } from './electronapi-stub'
 import { defaultWsUrl, WsClient, type AgentWorkflowEvent, type ChatWorkflowEvent } from './ws-client'
 // ===== 复用桌面组件 / atom（必须位于模块顶部，确保 ESM 正常收集）=====
-import { AgentView } from '@/components/agent'
-import { ChatView } from '@/components/chat'
-import { LeftSidebar } from '@/components/app-shell/LeftSidebar'
 import { SettingsDialog, type SettingsTabItem } from '@/components/settings'
 import { useGlobalAgentListeners } from '@/hooks/useGlobalAgentListeners'
 import { useGlobalChatListeners } from '@/hooks/useGlobalChatListeners'
@@ -38,16 +34,16 @@ import { initPocketUiScale } from '@/atoms/ui-scale'
 import { initPocketScreenOrientation } from '@/lib/pocket-screen-orientation'
 import { checkPocketUpdate, initializePocketUpdater } from '@/atoms/pocket-updater'
 import { PocketUpdateCard } from '@/components/pocket/PocketUpdateCard'
-import { getPocketPendingNotification, normalizeWsUrl, setPocketKeepaliveForeground, startPocketKeepalive, stopPocketKeepalive, getPocketKeepaliveLogs } from '@/lib/pocket-keepalive'
+import { getPocketPendingNotification, normalizeWsUrl, notifyPocketTaskCompletion, setPocketKeepaliveForeground, startPocketKeepalive, stopPocketKeepalive, getPocketKeepaliveLogs } from '@/lib/pocket-keepalive'
 import { initDebugHud, debugLog } from '@/lib/debug-hud'
 import { UiScaleContainer } from '@/components/UiScaleContainer'
 import { FilePreviewContainer } from '@/components/file-browser/FilePreviewContainer'
-import { Button } from '@/components/ui/button'
-import { AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogFooter, AlertDialogTitle, AlertDialogDescription, AlertDialogAction, AlertDialogCancel } from '@/components/ui/alert-dialog'
-import { TooltipProvider, Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip'
-import { Menu, Plus, Palette, Link, Loader2, Bell, RefreshCw, Download } from 'lucide-react'
+import { TooltipProvider } from '@/components/ui/tooltip'
+import { Palette, Link, Bell, Download } from 'lucide-react'
 import { type AgentStreamPayload, type AskUserRequest, type ExitPlanModeRequest, type PermissionRequest } from '@profer/shared'
 import { pocketBackgroundMessagingAtom, pocketConnectionStatusAtom, pocketNotifyCompleteAtom, pocketUnbindRequestAtom } from '@/atoms/pocket-settings'
+import { PocketConnectionView } from './PocketConnectionView'
+import { PocketWorkspace } from './PocketWorkspace'
 
 // ===== 先安装 electronAPI stub（必须在任何复用组件求值前）=====
 installElectronApiStub()
@@ -258,6 +254,8 @@ function App(): React.ReactElement {
   const [connection, setConnection] = useState<'idle' | 'connecting' | 'open' | 'reconnecting' | 'error' | 'unauthorized'>('idle')
   const [errMsg, setErrMsg] = useState<string | undefined>(undefined)
   const [sessions, setSessions] = useState<SessionInfo[]>([])
+  const sessionsRef = useRef<SessionInfo[]>([])
+  sessionsRef.current = sessions
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null)
   const [currentChatId, setCurrentChatId] = useState<string | null>(null)
   const [currentTitle, setCurrentTitle] = useState('')
@@ -669,6 +667,11 @@ function App(): React.ReactElement {
           resultErrors: p.event.resultErrors,
           backgroundTasksPending: p.event.backgroundTasksPending,
         })
+        // Android 系统通知：前台由 WebView 主动投递；后台由原生保活服务投递，避免重复。
+        if (!stoppedByUser && p.event.backgroundTasksPending !== true && !document.hidden) {
+          const completedSession = sessionsRef.current.find((session) => session.id === evt.sessionId)
+          void notifyPocketTaskCompletion(evt.sessionId, completedSession?.title)
+        }
         // Agent 完成提醒音：仅平板前台时播放——后台由「后台消息通知」系统通知通道负责提醒。
         // WebView 在后台不冻结 JS（Capacitor keepRunning=true），必须显式判断 document.hidden，
         // 否则后台收到 run_completed 也会误响提示音。开关开启、非用户主动停止、
@@ -885,216 +888,46 @@ function App(): React.ReactElement {
   return (
     <>
       {showLogin ? (
-        // 未连接：token 页
-        <div className={`pocket-login-shell flex h-full w-full items-center justify-center bg-background text-foreground px-6 py-10 pb-[max(2.5rem,env(safe-area-inset-bottom))] ${SAFE_AREA_CLS}`}>
-        <div className="pocket-login-panel w-full max-w-sm space-y-6 rounded-3xl bg-card/80 p-6 shadow-2xl shadow-primary/5 backdrop-blur-xl sm:p-8">
-          <div className="space-y-4">
-            <div className="flex items-center gap-3">
-              <div className="flex size-11 items-center justify-center rounded-2xl bg-primary text-lg font-semibold text-primary-foreground shadow-lg shadow-primary/20" aria-hidden> P </div>
-              <div>
-                <div className="text-xl font-semibold tracking-tight">Profer <span className="text-muted-foreground">Pocket</span></div>
-                <div className="mt-0.5 text-xs text-muted-foreground">随时连接你的电脑工作台</div>
-              </div>
-            </div>
-            <div className="rounded-2xl bg-muted/45 px-3.5 py-3 text-sm leading-6 text-muted-foreground">
-              在电脑上以 <code className="rounded-md bg-background/70 px-1.5 py-0.5 font-mono text-xs text-foreground">--pocket</code> 启动 Profer，然后输入连接信息。
-            </div>
-          </div>
-          <div className="space-y-3">
-            <label className="block space-y-1.5 text-xs font-medium text-muted-foreground" htmlFor="pocket-server">
-              服务器地址 <span className="font-normal opacity-70">{isNativeApp ? '（App 端必填）' : '（可留空自动发现）'}</span>
-              <input
-                id="pocket-server"
-                value={serverInput}
-                onChange={(e) => setServerInput(e.target.value)}
-                placeholder="例如 http://192.168.1.10:7788"
-                inputMode="url"
-                autoCapitalize="none"
-                autoCorrect="off"
-                spellCheck={false}
-                className="w-full rounded-xl border border-border/70 bg-background/75 px-3.5 py-3 text-sm font-normal outline-none transition focus:border-primary/60 focus:ring-2 focus:ring-primary/20 placeholder:text-muted-foreground/55"
-              />
-            </label>
-            <label className="block space-y-1.5 text-xs font-medium text-muted-foreground" htmlFor="pocket-token">
-              访问令牌
-              <input
-                id="pocket-token"
-                type="password"
-                value={tokenInput}
-                onChange={(e) => setTokenInput(e.target.value)}
-                placeholder="粘贴电脑端启动日志中的 Token"
-                autoFocus
-                autoComplete="off"
-                autoCapitalize="none"
-                autoCorrect="off"
-                spellCheck={false}
-                className="w-full rounded-xl border border-border/70 bg-background/75 px-3.5 py-3 text-sm font-normal outline-none transition focus:border-primary/60 focus:ring-2 focus:ring-primary/20 placeholder:text-muted-foreground/55"
-              />
-            </label>
-          </div>
-          {errMsg && <div className="rounded-xl bg-destructive/10 px-3.5 py-2.5 text-sm leading-5 text-destructive" role="alert">{errMsg}</div>}
-          <button onClick={submitToken} className="w-full rounded-xl bg-primary py-3.5 text-sm font-medium text-primary-foreground shadow-lg shadow-primary/15 transition active:scale-[0.98] disabled:opacity-60" disabled={connection === 'connecting'}>
-            {connection === 'connecting' ? '正在连接…' : '连接到 Profer'}
-          </button>
-          {hasStoredBinding && (
-            <div className="space-y-2">
-              {/* 已绑定状态指示：明确当前并非“未连接”，而是已保存绑定信息 */}
-              <div className="flex items-center justify-center gap-1.5 text-[12px] text-muted-foreground">
-                <span className="size-1.5 shrink-0 rounded-full bg-emerald-500" aria-hidden />
-                <span className="truncate">
-                  已绑定{getStoredServerUrl() ? `：${getStoredServerUrl()}` : isNativeApp ? '（缺少服务器地址）' : '（自动地址）'}
-                </span>
-              </div>
-              <button
-              type="button"
-              onClick={() => setUnbindConfirmOpen(true)}
-              className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-border py-2 text-[12px] text-foreground/70 hover:text-destructive hover:border-destructive/40 transition-colors"
-            >
-              <Link className="size-3.5" />
-              解绑并重新连接
-            </button>
-            </div>
-          )}
-        </div>
-      </div>
+        <PocketConnectionView
+          tokenInput={tokenInput}
+          serverInput={serverInput}
+          errorMessage={errMsg}
+          connection={connection}
+          hasStoredBinding={hasStoredBinding}
+          storedServerUrl={getStoredServerUrl()}
+          isNativeApp={isNativeApp}
+          safeAreaClassName={SAFE_AREA_CLS}
+          onTokenChange={setTokenInput}
+          onServerChange={setServerInput}
+          onSubmit={submitToken}
+          onRequestUnbind={() => setUnbindConfirmOpen(true)}
+        />
       ) : (
         <>
-        {/* 断线重连横幅：已绑定场景切屏回来若 WS 已断，主界面不消失，顶部横幅提示自动重连；
-            连接恢复后横幅自动消失。Portal 到 body 避开 UiScaleContainer 的 transform。 */}
-        {connection !== 'open' && createPortal(
-          <div
-            className="fixed inset-x-0 z-40 flex justify-center px-4"
-            style={{ top: `calc(${visualTop}px + ${landscapeWide ? '12px' : '60px'} + env(safe-area-inset-top))` }}
-          >
-            <div className="pointer-events-auto flex items-center gap-2 rounded-full bg-amber-500/95 px-4 py-1.5 text-[12px] font-medium text-white shadow-lg">
-              <Loader2 className="size-3.5 animate-spin" />
-              <span>{reconnectBannerText}</span>
-            </div>
-          </div>,
-          document.body
-        )}
-        {/* 已连接：桌面式布局（左侧会话栏 + 主区，无右侧栏；对话区整体复用桌面 AgentView）。
-            断点约定：横屏且 ≥1024px 显示固定侧栏（iPad 横屏/桌面浏览器）；其余一律抽屉+顶栏——
-            竖屏不管宽度（含 iPad Pro 12.9" 竖屏 1024px）都走抽屉，避免固定侧栏挤压对话区。 */}
-        {/* 浮动顶栏（竖屏/窄屏；横屏固定侧栏布局由 AgentHeader 自带标题）。
-            Portal 到 body 是关键：UiScaleContainer 的 transform 是定位 containing block，
-            顶栏若渲染在容器内，fixed 会退化为相对容器定位，键盘弹起触发文档滚动时被顶出屏幕；
-            Portal 后 fixed 相对视口 + visualViewport.offsetTop 驱动，永远锚定可视区域顶部，
-            键盘弹起/滚动都不影响。 */}
-        {!landscapeWide && createPortal(
-          <div
-            className="fixed inset-x-0 z-30 flex h-12 items-center bg-tabbar-surface/90 px-2 backdrop-blur-md"
-            style={{ top: `calc(${visualTop}px + env(safe-area-inset-top))` }}
-          >
-            <Button type="button" variant="ghost" size="icon" onClick={() => setSidebarOpen(true)} className="mr-1 size-10 shrink-0 rounded-[12px] text-foreground/65 hover:bg-foreground/[0.06]" aria-label="打开导航"><Menu className="size-[18px]" /></Button>
-            <div className="flex-1 min-w-0 px-1">
-              <span className="block truncate text-sm font-medium text-foreground">{activeTitle}</span>
-            </div>
-            {/* 手动刷新入口：兼做“完成但结果未出现”的兑底——一键重拉当前会话消息 */}
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button type="button" variant="ghost" size="icon" onClick={handleRefresh} className="size-10 shrink-0 rounded-[12px] text-foreground/65 hover:bg-foreground/[0.06]" aria-label="刷新当前内容">
-                  <RefreshCw className="size-[18px]" />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent side="bottom">刷新当前内容</TooltipContent>
-            </Tooltip>
-            {/* 顶栏解绑入口：Link 图标 + 绿色状态点表示“已绑定”，避免 Unlink（断链图标）被误读为未连接 */}
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button type="button" variant="ghost" size="icon" onClick={() => setUnbindConfirmOpen(true)} className="relative size-10 shrink-0 rounded-[12px] text-foreground/65 hover:bg-foreground/[0.06]" aria-label="已绑定，点击解绑">
-                  <Link className="size-[18px]" />
-                  <span className="absolute right-1.5 top-1.5 size-1.5 rounded-full bg-emerald-500" aria-hidden />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent side="bottom">已绑定 · 点击解绑</TooltipContent>
-            </Tooltip>
-          </div>,
-          document.body
-        )}
-
-        <div className={`pocket-app-root flex h-full w-full overflow-hidden bg-background p-0 text-foreground landscape:min-[1024px]:p-2 ${SAFE_AREA_CLS}`}>
-      <NativePocketSidebar mobileOpen={sidebarOpen} onDismiss={() => setSidebarOpen(false)} />
-
-      {/* 主区（竖屏 pt-12 为浮动顶栏预留高度，滚动内容从悬浮条下方穿过；横屏无顶栏不需要） */}
-      <div className="flex-1 min-w-0 flex flex-col overflow-hidden bg-content-area pt-12 landscape:min-[1024px]:pt-0 landscape:min-[1024px]:ml-2 landscape:min-[1024px]:rounded-[24px] landscape:min-[1024px]:border landscape:min-[1024px]:border-border/70 landscape:min-[1024px]:shadow-xl">
-        {/* 对话区：完整复用桌面 AgentView / ChatView。
-            注意：必须是 flex 容器（flex flex-col）——AgentView 根是 flex-1，StickToBottom 滚动容器是
-            height:100%，依赖整条父链的高度约束；若此处是普通块级元素，滚动容器被内容撑开后溢出，
-            对话区将无法滚动（历史消息被 overflow-hidden 截断）。 */}
-        <div className="flex min-h-0 flex-1 flex-col touch-pan-y">
-          {appMode === 'chat' ? (
-            currentChatId ? (
-              <ChatView conversationId={currentChatId} pocketMode hideChatHeader={!landscapeWide} />
-            ) : (
-              <div className="flex h-full flex-col items-center justify-center px-6 text-center">
-                <div className="max-w-sm space-y-2">
-                  <div className="text-[22px] font-semibold tracking-tight text-foreground">{userProfile.userName}，早上好</div>
-                  <p className="mt-16 text-[13px] leading-5 text-muted-foreground">开始你的第一个 Chat 对话，与 Agent 共享渠道与模型</p>
-                  <Button type="button" variant="outline" size="sm" onClick={createConversation} className="mt-3 h-9 gap-1.5"><Plus className="size-3.5" />新建对话</Button>
-                </div>
-              </div>
-            )
-          ) : (
-            currentSessionId ? (
-              <AgentView sessionId={currentSessionId} pocketMode hideAgentHeader={!landscapeWide} />
-            ) : (
-              <div className="flex h-full flex-col items-center justify-center px-6 text-center">
-                <div className="max-w-sm space-y-2">
-                  <div className="text-[22px] font-semibold tracking-tight text-foreground">{userProfile.userName}，早上好</div>
-                  <p className="mt-16 text-[13px] leading-5 text-muted-foreground">开始你的第一个 Agent 会话，Token 消耗热力图将在这里显示</p>
-                  <Button type="button" variant="outline" size="sm" onClick={createSession} className="mt-3 h-9 gap-1.5"><Plus className="size-3.5" />新建会话</Button>
-                </div>
-              </div>
-            )
-          )}
-        </div>
-      </div>
-        </div>
+        <PocketWorkspace
+          connection={connection}
+          reconnectBannerText={reconnectBannerText}
+          visualTop={visualTop}
+          landscapeWide={landscapeWide}
+          sidebarOpen={sidebarOpen}
+          activeTitle={activeTitle}
+          appMode={appMode}
+          currentSessionId={currentSessionId}
+          currentChatId={currentChatId}
+          userName={userProfile.userName}
+          safeAreaClassName={SAFE_AREA_CLS}
+          onOpenSidebar={() => setSidebarOpen(true)}
+          onCloseSidebar={() => setSidebarOpen(false)}
+          onRefresh={handleRefresh}
+          onRequestUnbind={() => setUnbindConfirmOpen(true)}
+          onCreateSession={() => void createSession()}
+          onCreateConversation={() => void createConversation()}
+          unbindConfirmOpen={unbindConfirmOpen}
+          onUnbindConfirmOpenChange={setUnbindConfirmOpen}
+          onUnbind={unbind}
+        />
         </>
       )}
-
-      {/* 解绑确认弹窗（Portal 到 body，不随缩放容器变换） */}
-      <AlertDialog open={unbindConfirmOpen} onOpenChange={setUnbindConfirmOpen}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>解绑此设备？</AlertDialogTitle>
-            <AlertDialogDescription>
-              解绑后将清除本机保存的服务器地址和访问令牌，断开当前连接并回到连接页，需要重新输入才能继续使用。
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>取消</AlertDialogCancel>
-            <AlertDialogAction className="bg-destructive text-destructive-foreground hover:bg-destructive/90" onClick={unbind}>确认解绑</AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-    </>
-  )
-}
-
-// ===== 平板直接复用桌面 LeftSidebar；浏览器端只以 WebSocket adapter 替代 Electron IPC。 =====
-function NativePocketSidebar({ mobileOpen, onDismiss }: { mobileOpen: boolean; onDismiss: () => void }): React.ReactElement {
-  const drawerWidth = Math.max(200, Math.min(288, window.innerWidth - 24))
-  return (
-    <>
-      <div className="hidden h-full shrink-0 landscape:min-[1024px]:block"><LeftSidebar width={288} pocketMode /></div>
-      <div className={`fixed inset-0 z-50 landscape:min-[1024px]:hidden ${mobileOpen ? 'pointer-events-auto' : 'pointer-events-none'}`} aria-hidden={!mobileOpen}>
-        <button type="button" className={`absolute inset-0 z-0 bg-black/40 transition-opacity duration-200 ${mobileOpen ? 'opacity-100' : 'opacity-0'}`} onClick={onDismiss} aria-label="关闭会话导航" tabIndex={mobileOpen ? 0 : -1} />
-        <div
-          className={`absolute inset-y-0 left-0 z-10 w-[min(288px,calc(100vw-24px))] max-w-[calc(100vw-24px)] touch-pan-y transition-transform duration-200 ease-out ${SAFE_AREA_CLS} ${mobileOpen ? 'translate-x-0' : '-translate-x-full'}`}
-          // 再次点击当前已选中会话：收起抽屉（冒泡阶段判断；子会话箭头/操作按钮已 stopPropagation 不会冒泡到此处）
-          onClick={(e) => {
-            if ((e.target as Element | null)?.closest?.('[data-profer-navigation-item="session"][data-profer-navigation-active="true"]')) {
-              onDismiss()
-            }
-          }}
-        >
-          {/* 搜索面板（SearchDialog）是全局 atom + Portal，只需渲染一份；由横屏固定侧栏实例承担。
-              抽屉实例设为 false，避免双 SearchDialog 叠加导致打开即被 interactOutside 关闭（“一闪即逝”）。 */}
-          <LeftSidebar width={drawerWidth} pocketMode renderSearchDialog={false} />
-        </div>
-      </div>
     </>
   )
 }

@@ -33,7 +33,7 @@ public class MessageService extends Service implements MessageWebSocketClient.Li
     /** 点击通知待消费的导航信息 { sessionId, type }，读取后清空 */
     private static volatile String pendingSessionId;
     private static volatile String pendingType;
-    /** 「会话已完成」通知去重：平板发起的 run 会先到 run_completed 再到 run_idle，3s 窗口内同会话只弹一次 */
+    /** 「任务已完成」通知去重：平板发起的 run 会先到 run_completed 再到 run_idle，3s 窗口内同会话只弹一次 */
     private static final long COMPLETE_DEDUP_WINDOW_MS = 3000;
     private static final java.util.Map<String, Long> lastCompleteNotifyAt = new java.util.concurrent.ConcurrentHashMap<>();
 
@@ -213,13 +213,13 @@ public class MessageService extends Service implements MessageWebSocketClient.Li
             wsClient.addLog("事件无需提醒（未知/解析失败/用户主动停止）");
             return;
         }
-        // 「会话已完成」去重：run_completed（remote-service，平板发起的 run）与 run_idle（orchestrator，所有 run）
+        // 「任务已完成」去重：run_completed（remote-service，平板发起的 run）与 run_idle（orchestrator，所有 run）
         // 可能先后到达，3s 窗口内同会话只弹一次，避免双通知
-        if ("会话已完成".equals(info.title)) {
+        if ("run_completed".equals(info.type) || "run_idle".equals(info.type)) {
             long now = System.currentTimeMillis();
             Long last = lastCompleteNotifyAt.get(sessionId);
             if (last != null && now - last < COMPLETE_DEDUP_WINDOW_MS) {
-                wsClient.addLog("会话完成通知去重，跳过");
+                wsClient.addLog("任务完成通知去重，跳过");
                 return;
             }
             lastCompleteNotifyAt.put(sessionId, now);

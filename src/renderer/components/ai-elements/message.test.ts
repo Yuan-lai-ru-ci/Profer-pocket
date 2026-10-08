@@ -1,5 +1,23 @@
 import { describe, expect, test } from 'bun:test'
-import { localFileUrlToPath } from './message'
+import { localFileUrlToPath, Message, MessageContent, MessageResponse } from './message'
+import { createElement } from 'react'
+import { renderToStaticMarkup } from 'react-dom/server'
+
+// 窄屏样式只挂在明确的消息/Markdown 根节点，保留真正的列表语义。
+describe('Pocket Markdown layout hooks', () => {
+  test('keeps nested list semantics under the scoped message-response root', () => {
+    const html = renderToStaticMarkup(createElement(Message, { from: 'assistant' },
+      createElement(MessageContent, null,
+        createElement(MessageResponse, { children: '- 第一层\n  - 第二层\n    - 第三层' }),
+      ),
+    ))
+    expect(html).toContain('message-item')
+    expect(html).toContain('message-content')
+    expect(html).toContain('message-response')
+    expect(html.match(/<ul>/g)).toHaveLength(3)
+    expect(html).toContain('第三层')
+  })
+})
 
 describe('localFileUrlToPath', () => {
   test('normalizes a Windows file URL to an absolute Windows path', () => {

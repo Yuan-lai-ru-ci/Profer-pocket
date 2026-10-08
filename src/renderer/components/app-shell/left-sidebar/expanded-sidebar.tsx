@@ -18,7 +18,7 @@ import { getSessionTreeStatus, treeContainsSessionId, countCompletedDelegatedChi
 import { getActiveAccelerator, getAcceleratorDisplay } from '@/lib/shortcut-registry'
 import type { SidebarModel } from './use-left-sidebar'
 
-export function ExpandedSidebar({ s }: { s: SidebarModel }): React.ReactElement {
+export function ExpandedSidebar({ s, onCollapse }: { s: SidebarModel; onCollapse?: () => void }): React.ReactElement {
   const {
     isMac,
     setSidebarCollapsed,
@@ -118,13 +118,14 @@ export function ExpandedSidebar({ s }: { s: SidebarModel }): React.ReactElement 
         <div className="flex-1 min-w-0">
           <ModeSwitcher />
         </div>
-        {!pocketMode && <Tooltip>
+        <Tooltip>
             <TooltipTrigger asChild>
               <button
-                onClick={() => setSidebarCollapsed(true)}
+                type="button"
+                aria-label="收起侧边栏"
+                onClick={() => (onCollapse ? onCollapse() : setSidebarCollapsed(true))}
                 className={cn(
                   'sidebar-collapse-button mt-2 size-10 flex-shrink-0 flex items-center justify-center rounded-[10px] text-foreground/40 titlebar-no-drag',
-                  pocketMode && 'ml-auto',
                   isClassic
                     ? 'bg-muted hover:bg-foreground/[0.08] hover:text-foreground/60 transition-colors'
                     : 'bg-primary/5 hover:bg-primary/10 hover:text-foreground/60 transition-[background-color,border-color,color] duration-150 border border-border/60 hover:border-border'
@@ -133,8 +134,8 @@ export function ExpandedSidebar({ s }: { s: SidebarModel }): React.ReactElement 
                 <PanelLeftClose size={14} />
               </button>
             </TooltipTrigger>
-            <TooltipContent side="right">收起侧边栏 ({navigator.platform.includes('Mac') ? '⌘B' : 'Ctrl+B'})</TooltipContent>
-          </Tooltip>}
+            <TooltipContent side="right">收起侧边栏</TooltipContent>
+        </Tooltip>
       </div>
 
       {/* 新对话/新会话按钮 + 搜索按钮 */}

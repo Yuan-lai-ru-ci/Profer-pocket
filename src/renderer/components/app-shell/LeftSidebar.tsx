@@ -24,7 +24,7 @@ import { SidebarDialogs } from './left-sidebar/sidebar-dialogs'
 export type { LeftSidebarProps } from './left-sidebar/types'
 import type { LeftSidebarProps } from './left-sidebar/types'
 
-export function LeftSidebar({ width, noTransition, pocketMode, renderSearchDialog = true }: LeftSidebarProps): React.ReactElement {
+export function LeftSidebar({ width, noTransition, pocketMode, flush, onCollapse, renderSearchDialog = true }: LeftSidebarProps): React.ReactElement {
   const s = useLeftSidebar(pocketMode)
   const isClassic = s.isClassic
   const sidebarCollapsed = s.sidebarCollapsed
@@ -35,8 +35,8 @@ export function LeftSidebar({ width, noTransition, pocketMode, renderSearchDialo
         'relative h-full overflow-hidden sidebar-collapse-ease',
         !noTransition && 'transition-[width] duration-300 will-change-[width] contain-layout',
         isClassic
-          ? 'bg-background rounded-2xl shadow-xl dark:shadow-md'
-          : 'bg-[hsl(var(--sidebar-surface))] rounded-2xl shadow-xl dark:shadow-md'
+          ? cn('bg-background', !flush && 'rounded-2xl shadow-xl dark:shadow-md')
+          : cn('bg-[hsl(var(--sidebar-surface))]', !flush && 'rounded-2xl shadow-xl dark:shadow-md')
       )}
       style={{
         width: sidebarCollapsed ? 60 : width ?? 300,
@@ -44,7 +44,7 @@ export function LeftSidebar({ width, noTransition, pocketMode, renderSearchDialo
         flexShrink: sidebarCollapsed ? 0 : 1,
       }}
     >
-      {sidebarCollapsed ? <SidebarRail s={s} /> : <ExpandedSidebar s={s} />}
+      {sidebarCollapsed ? <SidebarRail s={s} /> : <ExpandedSidebar s={s} onCollapse={onCollapse} />}
       {/* 迁移/搜索对话框：双视图共享状态，必须只在外层渲染唯一实例，
           否则 Radix Portal 双实例同时打开会叠出双遮罩+双内容 */}
       <SidebarDialogs s={s} />

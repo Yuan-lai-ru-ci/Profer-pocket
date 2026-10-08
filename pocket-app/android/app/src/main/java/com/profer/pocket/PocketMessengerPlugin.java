@@ -21,7 +21,8 @@ import com.getcapacitor.annotation.Permission;
  * 前端通过 window.Capacitor.Plugins.PocketMessenger.* 调用：
  *  - startService({ url, token })：启动前台服务 + 建立 WS 消息通道
  *  - stopService()：停止服务、移除常驻通知
- *  - setForegroundState({ foreground })：前台(true)时抑制消息通知（去重关键）
+ *  - setForegroundState({ foreground })：前台(true)时抑制原生 WS 通知（前台完成由 WebView 主动投递）
+ *  - notifyTaskCompletion({ sessionId, title })：投递任务完成系统通知
  *  - getPendingNotification()：返回点击通知携带的 { sessionId, type }（读取后清空）
  *  - requestPermissions()：请求 POST_NOTIFICATIONS（Android 13+）
  */
@@ -55,6 +56,26 @@ public class PocketMessengerPlugin extends Plugin {
     public void setForegroundState(PluginCall call) {
         boolean foreground = call.getBoolean("foreground", false);
         MessageService.setForeground(foreground);
+        call.resolve();
+    }
+
+    @PluginMethod
+    public void notifyTaskCompletion(PluginCall call) {
+        String sessionId = call.getString("sessionId");
+        String title = call.getString("title");
+        if (sessionId == null || sessionId.isEmpty()) {
+            call.reject("sessionId 必填");
+            return;
+        }
+        String body = (title == null || title.trim().isEmpty())
+                ? "Agent 任务已完成"
+                : title.trim() + " 已完成";
+        NotificationHelper.notifyMessage(
+                getActivity().getApplicationContext(),
+                "任务已完成",
+                body,
+                sessionId,
+                "run_completed");
         call.resolve();
     }
 

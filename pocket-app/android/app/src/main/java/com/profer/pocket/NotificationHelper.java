@@ -84,6 +84,7 @@ public final class NotificationHelper {
     @SuppressLint("MissingPermission")
     public static void notifyMessage(Context ctx, String title, String body,
                                      String sessionId, String type) {
+        ensureChannels(ctx);
         if (!hasNotificationPermission(ctx)) {
             // 权限被拒：仅保活，不发系统通知
             return;
