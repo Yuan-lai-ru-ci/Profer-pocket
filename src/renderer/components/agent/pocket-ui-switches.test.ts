@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import {
+  orderToolbarItemsForPocket,
   resolvePresetCompactMode,
   resolvePresetListClassName,
   shouldRenderStickyUserMessage,
@@ -44,5 +45,44 @@ describe('R4 预设菜单极简与限高', () => {
     expect(className).toBe('flex flex-col gap-0.5')
     expect(className).not.toContain('max-h')
     expect(className).not.toContain('overflow-y-auto')
+  })
+})
+
+describe('R11 移动端工具栏优先级', () => {
+  const item = (key: string): { key: string } => ({ key })
+
+  test('Given pocket When 重排 Then 模型与上下文用量前置、预设与附件后置', () => {
+    const ordered = orderToolbarItemsForPocket([
+      item('model'),
+      item('runtime'),
+      item('permission-mode'),
+      item('preset'),
+      item('attach-file'),
+      item('context-usage'),
+    ])
+
+    expect(ordered.map((i) => i.key)).toEqual([
+      'model',
+      'context-usage',
+      'runtime',
+      'permission-mode',
+      'preset',
+      'attach-file',
+    ])
+  })
+
+  test('Given 未列入优先级的 key Then 保持原有相对顺序并排在其后', () => {
+    const ordered = orderToolbarItemsForPocket([
+      item('model'),
+      item('graph'),
+      item('auto-preview'),
+      item('context-usage'),
+    ])
+
+    expect(ordered.map((i) => i.key)).toEqual(['model', 'context-usage', 'graph', 'auto-preview'])
+  })
+
+  test('Given 空列表 Then 返回空列表（不抛错）', () => {
+    expect(orderToolbarItemsForPocket([])).toEqual([])
   })
 })

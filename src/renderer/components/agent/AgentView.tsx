@@ -24,6 +24,7 @@ import { agentKnowledgePreviewMapAtom } from '@/atoms/knowledge-preview-atoms'
 // previewPanelOpenMapAtom 由下方现有 atoms import 统一提供。
 import { AgentMessages } from './AgentMessages'
 import { AgentHeader } from './AgentHeader'
+import { orderToolbarItemsForPocket } from './pocket-ui-switches'
 import { ContextUsageBadge } from './ContextUsageBadge'
 import { resolvePlanQuotaChannelId } from './context-usage-badge-channel'
 import { supportsChannelPlanQuota } from '@/lib/channel-plan-quota'
@@ -2985,7 +2986,7 @@ export function AgentView({ sessionId, pocketMode = false, hideAgentHeader = fal
     },
   ]
     return pocketMode
-      ? items.filter((item) => !POCKET_HIDDEN_TOOLBAR_KEYS.has(item.key))
+      ? orderToolbarItemsForPocket(items.filter((item) => !POCKET_HIDDEN_TOOLBAR_KEYS.has(item.key)))
       : items
   }, [
     agentChannelIds,

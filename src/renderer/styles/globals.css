@@ -2676,11 +2676,11 @@ body.pocket-mode .overflow-x-auto {
  * 竖屏窄屏下隐藏模型名文本与下拉箭头，只留模型 logo 图标；点击仍可打开选择弹窗。
  */
 @media (orientation: portrait) {
+  /* 竖屏窄屏：保留模型名 + 下拉箭头（桌面端「图标 + 模型名」信息不在移动端被裁掉）。
+   * 早期为了省空间把 span / chevron 直接 display:none，导致手机输入框只剩一个模型图标，
+   * 看不出当前用的是哪个模型；改为限制宽度 + truncate，长名不会挤占工具栏。 */
   body.pocket-mode .model-selector-trigger span {
-    display: none;
-  }
-  body.pocket-mode .model-selector-trigger .lucide-chevron-down {
-    display: none;
+    max-width: 120px;
   }
 }
 
