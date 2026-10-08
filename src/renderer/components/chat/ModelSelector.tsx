@@ -31,7 +31,8 @@ import { getModelLogo, getChannelLogo, DefaultLogo } from '@/lib/model-logo'
 import { navigationController } from '@/lib/navigation-controller'
 import { cn } from '@/lib/utils'
 import { ChannelPlanQuotaBadge } from './ChannelPlanQuotaBadge'
-import type { Channel, ModelOption } from '@profer/shared'
+import type { AgentRuntime, Channel, ModelOption } from '@profer/shared'
+import { isAgentChannelCompatibleWithRuntime } from '@profer/shared'
 import { getChannelProtocol, getChannelSource, type ChannelProtocol } from '@/lib/channel-model-groups'
 
 /** 紧凑模式 Context — 窄面板中 ModelSelector 只显示圆形 logo */
@@ -45,11 +46,18 @@ export const CompactModelSelectorCtx = React.createContext(false)
  * 代表性 channelId，现有 Chat/Agent 会话协议无需改变；真正的上游
  * 主备选择由网关完成。
  */
-function buildModelOptions(channels: Channel[], filterChannelId?: string, filterChannelIds?: string[], preferredProtocol: ChannelProtocol = 'openai'): ModelOption[] {
+function buildModelOptions(
+  channels: Channel[],
+  filterChannelId?: string,
+  filterChannelIds?: string[],
+  preferredProtocol: ChannelProtocol = 'openai',
+  agentRuntime?: AgentRuntime,
+): ModelOption[] {
   const optionsByModel = new Map<string, ModelOption>()
 
   for (const channel of channels) {
     if (!channel.enabled) continue
+    if (agentRuntime && !isAgentChannelCompatibleWithRuntime(channel, agentRuntime)) continue
     if (filterChannelId && channel.id !== filterChannelId) continue
     if (filterChannelIds && filterChannelIds.length > 0 && !filterChannelIds.includes(channel.id)) continue
 
@@ -108,8 +116,12 @@ interface ModelSelectorProps {
   compact?: boolean
   /** 当前调用运行时需要的协议；Pi/Chat 为 OpenAI，Claude Agent 为 Anthropic。 */
   preferredProtocol?: 'openai' | 'anthropic'
-  /** 打开 Dialog 时是否自动聚焦搜索框（默认 true）。平板触屏传 false，避免弹出软键盘遮挡选模型列表。 */
+  /** 当前 Agent runtime；传入时按渠道 runtime 能力过滤候选，避免非法 Pi/Claude 组合。 */
+  agentRuntime?: AgentRuntime
+  /** 打开 Dialog 时是否自动聚焦搜索框（默认 true）。触屏传 false，避免弹出软键盘遮挡选模型列表。 */
   autoFocusSearch?: boolean
+  /** Agent Session Projection 专用：目录缺项时不得回退显示旧模型。 */
+  agentProjectionDisplay?: boolean
 }
 
 export function ModelSelector({
@@ -120,7 +132,9 @@ export function ModelSelector({
   showChannelInTrigger = false,
   compact: compactProp,
   preferredProtocol = 'openai',
+  agentRuntime,
   autoFocusSearch = true,
+  agentProjectionDisplay = false,
 }: ModelSelectorProps = {}): React.ReactElement {
   const compactCtx = React.useContext(CompactModelSelectorCtx)
   const compact = compactProp ?? compactCtx
@@ -163,7 +177,10 @@ export function ModelSelector({
     return channels.filter((c) => !c.id.startsWith('newapi-'))
   }, [channels, authStatus.isLoggedIn])
 
-  const modelOptions = React.useMemo(() => buildModelOptions(visibleChannels, filterChannelId, filterChannelIds, preferredProtocol), [visibleChannels, filterChannelId, filterChannelIds, preferredProtocol])
+  const modelOptions = React.useMemo(
+    () => buildModelOptions(visibleChannels, filterChannelId, filterChannelIds, preferredProtocol, agentRuntime),
+    [visibleChannels, filterChannelId, filterChannelIds, preferredProtocol, agentRuntime],
+  )
   const grouped = React.useMemo(() => groupByChannel(modelOptions), [modelOptions])
 
   // 搜索过滤
@@ -220,10 +237,44 @@ export function ModelSelector({
     ) ?? null
   }, [selectedModel, modelOptions])
 
-  // 保持上次有效的模型信息，避免渠道未加载时闪烁"选择模型"
+  // Agent projection 目录刷新期间保留当前选择的 ID，但绝不回退显示上一个模型，
+  // 避免权威 session 已切换后按钮仍显示旧缓存模型。未解析时显示“目录更新中/模型不可用”。
+  const selectedModelKey = selectedModel ? `${selectedModel.channelId}:${selectedModel.modelId}` : null
+  const missingModelRefreshKeyRef = React.useRef<string | null>(null)
+  const [refreshingMissingModel, setRefreshingMissingModel] = React.useState(false)
+  React.useEffect(() => {
+    if (!agentProjectionDisplay || !selectedModel || currentModelInfo || !channelsLoaded) return
+    const key = `${selectedModel.channelId}:${selectedModel.modelId}`
+    if (missingModelRefreshKeyRef.current === key) return
+    missingModelRefreshKeyRef.current = key
+    setRefreshingMissingModel(true)
+    void window.electronAPI.listChannels()
+      .then((latest) => setChannels(latest))
+      .catch(console.error)
+      .finally(() => setRefreshingMissingModel(false))
+  }, [agentProjectionDisplay, selectedModel, selectedModelKey, currentModelInfo, channelsLoaded, setChannels])
+
+  // Chat/Automation 仍保留原有渠道加载期间的稳定标签；Agent projection 则使用原始 ID
+  // 作为安全兜底，绝不把旧 selected model 信息冒充当前权威选择。
   const stableModelInfoRef = React.useRef(currentModelInfo)
   if (currentModelInfo) stableModelInfoRef.current = currentModelInfo
-  const displayModelInfo = currentModelInfo ?? stableModelInfoRef.current
+  const displayModelInfo: ModelOption | null = agentProjectionDisplay
+    ? (currentModelInfo ?? (selectedModel ? {
+        channelId: selectedModel.channelId,
+        channelName: `渠道 ${selectedModel.channelId}`,
+        modelId: selectedModel.modelId,
+        modelName: selectedModel.modelId,
+        provider: 'openai',
+      } : null))
+    : (currentModelInfo ?? stableModelInfoRef.current)
+  const displayModelLabel = agentProjectionDisplay
+    ? (currentModelInfo
+      ? currentModelInfo.modelName
+      : selectedModel
+        ? (refreshingMissingModel ? '模型目录更新中' : `模型不可用 · ${selectedModel.modelId}`)
+        : '选择模型')
+    : (displayModelInfo?.modelName ?? '选择模型')
+  const displayChannelName = displayModelInfo?.channelName ?? null
 
   /** 选择模型并持久化到当前对话 */
   const handleSelect = (option: ModelOption): void => {
@@ -314,7 +365,7 @@ export function ModelSelector({
           compact && 'justify-center rounded-full size-7 px-0',
         )}
         title={displayModelInfo
-          ? (showChannelInTrigger ? `${displayModelInfo.channelName} · ${displayModelInfo.modelName}` : displayModelInfo.modelName)
+          ? (showChannelInTrigger && (!agentProjectionDisplay || currentModelInfo) ? `${displayChannelName} · ${displayModelLabel}` : displayModelLabel)
           : '选择模型'}
       >
         {displayModelInfo ? (
@@ -330,7 +381,7 @@ export function ModelSelector({
           <>
             <span className="max-w-[200px] truncate">
               {displayModelInfo
-                ? (showChannelInTrigger ? `${displayModelInfo.channelName} · ${displayModelInfo.modelName}` : displayModelInfo.modelName)
+                ? (showChannelInTrigger && (!agentProjectionDisplay || currentModelInfo) ? `${displayChannelName} · ${displayModelLabel}` : displayModelLabel)
                 : '选择模型'}
             </span>
             <ChevronDown className="size-3" />

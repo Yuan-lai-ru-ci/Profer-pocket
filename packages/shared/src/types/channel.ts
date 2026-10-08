@@ -4,6 +4,7 @@
  * 渠道是用户配置的 AI 供应商连接，包含 API Key、模型列表等信息。
  * API Key 使用 Electron safeStorage 加密后存储在本地配置文件中。
  */
+export type AgentRuntimeMode = 'pi' | 'claude'
 
 /**
  * 支持的 AI 供应商类型
@@ -30,6 +31,7 @@ export type ProviderType =
   | 'xiaomi-token-plan'
   | 'openai-codex'
   | 'xai'
+  | 'ollama'
   | 'custom'
 
 /**
@@ -57,6 +59,9 @@ export const PROVIDER_DEFAULT_URLS: Record<ProviderType, string> = {
   'xiaomi-token-plan': 'https://token-plan-cn.xiaomimimo.com/anthropic',
   'openai-codex': '',
   xai: '',
+  // Ollama 本地模型：对齐桌面 provider 集合，让 pocket 能正确识别桌面创建的 ollama 渠道
+  // （经 remote-service 下发的渠道列表可能含它，缺此键会让名称/URL 归一化回退到错误分支）。
+  ollama: 'http://127.0.0.1:11434',
   custom: '',
 }
 
@@ -75,6 +80,7 @@ export const PROVIDER_DEFAULT_AGENT_URLS: Partial<Record<ProviderType, string>> 
   minimax: 'https://api.minimaxi.com/anthropic',
   xiaomi: 'https://api.xiaomimimo.com/anthropic',
   'xiaomi-token-plan': 'https://token-plan-cn.xiaomimimo.com/anthropic',
+  ollama: 'http://127.0.0.1:11434',
 }
 
 /**
@@ -102,6 +108,7 @@ export const PROVIDER_LABELS: Record<ProviderType, string> = {
   'xiaomi-token-plan': '小米 MiMo Token Plan',
   'openai-codex': 'ChatGPT 订阅 (Codex)',
   xai: 'xAI 订阅 (Grok)',
+  ollama: 'Ollama 本地模型',
   custom: 'OpenAI 兼容格式',
 }
 
@@ -124,6 +131,7 @@ export const AGENT_COMPATIBLE_PROVIDERS: ReadonlySet<ProviderType> = new Set<Pro
   'xiaomi',
   'xiaomi-token-plan',
   'qwen-anthropic',
+  'ollama',
 ])
 
 /**
@@ -258,9 +266,35 @@ export interface XaiOAuthDeviceCode {
   qrCodeData?: string
 }
 
-/**
- * 渠道中的模型配置
- */
+export function isChannelEnabledForRuntime(
+  channel: Pick<Channel, 'provider' | 'enabled' | 'agentRuntimes' | 'agentExperimentalEnabled'>,
+  runtime: AgentRuntimeMode,
+): boolean {
+  if (!channel.enabled) return false
+  if (channel.agentRuntimes) return channel.agentRuntimes.includes(runtime)
+  if (channel.provider === 'xai') return runtime === 'pi' && channel.agentExperimentalEnabled === true
+  if (runtime === 'claude') return new Set<ProviderType>([
+    'anthropic', 'anthropic-compatible', 'deepseek', 'kimi-api', 'kimi-coding',
+    'zhipu-coding', 'zhipu-coding-team', 'minimax', 'qwen-anthropic', 'xiaomi', 'xiaomi-token-plan',
+  ]).has(channel.provider)
+  return true
+}
+export function getAgentChannelProtocol(provider: ProviderType): 'openai' | 'anthropic' {
+  return new Set<ProviderType>([
+    'anthropic', 'anthropic-compatible', 'deepseek', 'kimi-api', 'kimi-coding',
+    'zhipu-coding', 'zhipu-coding-team', 'minimax', 'xiaomi',
+    'xiaomi-token-plan', 'qwen-anthropic',
+  ]).has(provider) ? 'anthropic' : 'openai'
+}
+
+export function isAgentChannelCompatibleWithRuntime(
+  channel: Pick<Channel, 'provider' | 'enabled' | 'agentRuntimes' | 'agentExperimentalEnabled'>,
+  runtime: AgentRuntimeMode,
+): boolean {
+  return isChannelEnabledForRuntime(channel, runtime)
+}
+
+
 export interface ChannelModel {
   /** 模型唯一标识（如 claude-sonnet-4-5-20250929） */
   id: string
@@ -290,6 +324,10 @@ export interface Channel {
   baseUrl: string
   /** Agent 模式 Anthropic 兼容端点（为空则自动推导） */
   agentBaseUrl?: string
+  /** 该渠道允许用于哪些 Agent 内核；缺失时按 provider 规则推导。 */
+  agentRuntimes?: AgentRuntimeMode[]
+  /** xAI 旧配置的 Pi 实验开关。 */
+  agentExperimentalEnabled?: boolean
   /** 加密后的 API Key（base64 编码） */
   apiKey: string
   /** 可用模型列表 */

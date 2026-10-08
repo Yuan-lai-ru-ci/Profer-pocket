@@ -21,8 +21,15 @@ import {
   FileText,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { toast } from 'sonner'
 import { allPendingExitPlanRequestsAtom } from '@/atoms/agent-atoms'
 import { isEditableTarget } from '@/lib/navigation-controller'
+import {
+  runDismissFlow,
+  runSubmitFlow,
+  useInteractionGuardWatch,
+  type InteractionGuard,
+} from '@/lib/interaction-guard'
 import type { ExitPlanModeAction, ExitPlanAllowedPrompt } from '@profer/shared'
 
 /** 选项定义 */
@@ -68,9 +75,14 @@ const PLAN_OPTIONS: PlanOption[] = [
 interface ExitPlanModeBannerProps {
   sessionId: string
   onRequestStop: () => void
+  /**
+   * 交互守卫（仅移动端注入）：关闭/提交前先用主端快照判定请求是否仍待处理。
+   * 未注入（桌面端）或判定失败时恒为 unknown → 完全保留原有行为。
+   */
+  interactionGuard?: InteractionGuard
 }
 
-export function ExitPlanModeBanner({ sessionId, onRequestStop }: ExitPlanModeBannerProps): React.ReactElement | null {
+export function ExitPlanModeBanner({ sessionId, onRequestStop, interactionGuard }: ExitPlanModeBannerProps): React.ReactElement | null {
   const [allRequests, setAllRequests] = useAtom(allPendingExitPlanRequestsAtom)
   const requests = allRequests.get(sessionId) ?? []
   const [focusedIdx, setFocusedIdx] = React.useState(0)
@@ -79,6 +91,30 @@ export function ExitPlanModeBanner({ sessionId, onRequestStop }: ExitPlanModeBan
   const [submitting, setSubmitting] = React.useState(false)
 
   const request = requests[0] ?? null
+  const requestId = request?.requestId ?? null
+
+  /** 本地移除某个请求（不动 run）：过期横幅收敛与提交成功共用。 */
+  const removeRequest = React.useCallback((targetRequestId: string): void => {
+    setAllRequests((prev) => {
+      const current = prev.get(sessionId) ?? []
+      const next = current.filter((r) => r.requestId !== targetRequestId)
+      const map = new Map(prev)
+      if (next.length === 0) map.delete(sessionId)
+      else map.set(sessionId, next)
+      return map
+    })
+  }, [sessionId, setAllRequests])
+
+  // 另一端已审批/已关闭时的低频收敛：判定为过期就本地移除横幅并提示，绝不触碰 run（R8-P0）。
+  useInteractionGuardWatch({
+    guard: interactionGuard,
+    kind: 'exitPlan',
+    requestId,
+    onResolved: (resolvedRequestId) => {
+      removeRequest(resolvedRequestId)
+      toast.info('该计划审批已在其它端处理', { description: '已自动收起横幅，未停止 Agent。' })
+    },
+  })
 
   // ===== Refs：确保 keydown handler 始终读取最新值，消除闭包过期问题 =====
   const focusedIdxRef = React.useRef(focusedIdx)
@@ -97,20 +133,27 @@ export function ExitPlanModeBanner({ sessionId, onRequestStop }: ExitPlanModeBan
   const handleAction = async (action: ExitPlanModeAction): Promise<void> => {
     if (submitting || !request) return
     setSubmitting(true)
+    const targetRequestId = request.requestId
     try {
-      await window.electronAPI.respondExitPlanMode({
-        requestId: request.requestId,
-        action,
-        feedback: action === 'feedback' ? feedbackText.trim() : undefined,
-      })
-      // 从队列移除
-      setAllRequests((prev) => {
-        const map = new Map(prev)
-        const current = map.get(sessionId) ?? []
-        const newValue = current.filter((r) => r.requestId !== request.requestId)
-        if (newValue.length === 0) map.delete(sessionId)
-        else map.set(sessionId, newValue)
-        return map
+      // R8-P0：另一端已处理时不再回传（回传只会拿到「计划审批请求不存在或已处理」）。
+      // 提交路径本身不会停止 Agent。
+      await runSubmitFlow({
+        guard: interactionGuard,
+        kind: 'exitPlan',
+        requestId: targetRequestId,
+        submit: async () => {
+          await window.electronAPI.respondExitPlanMode({
+            requestId: targetRequestId,
+            action,
+            feedback: action === 'feedback' ? feedbackText.trim() : undefined,
+          })
+          // 从队列移除
+          removeRequest(targetRequestId)
+        },
+        onStale: () => {
+          removeRequest(targetRequestId)
+          toast.info('该计划审批已在其它端处理', { description: '无需重复提交。' })
+        },
       })
     } catch (error) {
       console.error('[ExitPlanModeBanner] 响应失败:', error)
@@ -121,14 +164,30 @@ export function ExitPlanModeBanner({ sessionId, onRequestStop }: ExitPlanModeBan
 
   handleActionRef.current = handleAction
 
-  /** 关闭计划审批，并经统一入口请求停止 Agent。 */
+  /**
+   * 关闭计划审批：本地先收起横幅，再按主端快照决定是否停止 Agent。
+   *
+   * R8-P0：仅当该 requestId **仍在主端待处理**（或无法判定）时才沿用「关闭并终止 Agent」语义；
+   * 快照显示已被另一端处理时只做本地移除 + 轻提示，**不调用 onRequestStop**。
+   */
   const handleDismiss = (): void => {
+    const targetRequestId = requestId
     setAllRequests((prev) => {
       const map = new Map(prev)
       map.delete(sessionId)
       return map
     })
-    onRequestStop()
+    if (!targetRequestId) {
+      onRequestStop()
+      return
+    }
+    void runDismissFlow({
+      guard: interactionGuard,
+      kind: 'exitPlan',
+      requestId: targetRequestId,
+      requestStop: onRequestStop,
+      notifyResolved: () => toast.info('该计划审批已在其它端处理', { description: '未停止 Agent。' }),
+    })
   }
 
   // 键盘导航：只在 requestId 变化时重建 handler，内部通过 ref 读取最新值

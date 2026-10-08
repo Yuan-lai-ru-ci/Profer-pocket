@@ -342,6 +342,12 @@ export const agentPendingFilesAtomFamily = atomFamily((sessionId: string) =>
 /** 工作区能力版本号 — 每次修改 MCP/Skills 后自增，触发侧边栏重新获取 */
 export const workspaceCapabilitiesVersionAtom = atom(0)
 
+/** 会话删除墓碑 revision（sessionId → revision）；低 revision upsert 不能复活已删除会话。 */
+export const agentSessionTombstoneRevisionsAtom = atom<Map<string, number>>(new Map())
+
+/** 目录失效 revision（`catalog:workspaceSlug` → revision）；旧目录响应不能覆盖较新状态。 */
+export const agentCatalogRevisionsAtom = atom<Map<string, number>>(new Map())
+
 /** 工作区文件版本号 — 文件变化时自增，触发文件浏览器重新加载 */
 export const workspaceFilesVersionAtom = atom(0)
 
@@ -997,6 +1003,17 @@ export const agentStreamErrorsAtom = atom<Map<string, string>>(new Map())
  * AgentView 监听版本号变化来重新加载消息。
  */
 export const agentMessageRefreshAtom = atom<Map<string, number>>(new Map())
+
+/**
+ * 平板「强制刷新」重载版本 Map — 以 sessionId 为 key（pocket-only）
+ *
+ * 与 `agentMessageRefreshAtom` 的区别：后者语义是「重拉一次消息」（增量/分页窗口），
+ * 本 atom 语义是「重新加载这个会话」：nonce 变化会
+ *  ① 让 AgentView 本次加载改走**全量水合**（等价于重新进入会话，绕过首帧分页窗口）；
+ *  ② 让消息子树换 React key 重挂载，归零执行过程折叠态 / 分页切片 / 淡入等本地视图态。
+ * 桌面端从不写入本 atom，取值恒为 0，行为与改动前完全一致。
+ */
+export const pocketSessionReloadAtom = atom<Map<string, number>>(new Map())
 
 /**
  * 持久化 SDKMessage 的内存缓存 Map — 以 sessionId 为 key

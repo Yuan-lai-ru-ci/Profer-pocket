@@ -15,21 +15,36 @@
 
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import ReactDOM from 'react-dom/client'
+import { createPortal } from 'react-dom'
 import { Provider, createStore, useSetAtom, useAtomValue } from 'jotai'
 import { Toaster, toast } from 'sonner'
 import '@fontsource-variable/inter/index.css'
 import '@/styles/globals.css'
-import { installElectronApiStub, setPocketRemoteClient, emitPocketAgentStreamEvent, emitPocketAgentStreamComplete, emitPocketChatStreamEvent, consumePocketStoppedByUser } from './electronapi-stub'
+import { installElectronApiStub, setPocketRemoteClient, emitPocketAgentStreamEvent, emitPocketAgentStreamComplete, emitPocketChatStreamEvent, consumePocketStoppedByUser, invalidatePocketSdkMessagesPageCache } from './electronapi-stub'
+import { forgetScrollPosition } from '@/hooks/useScrollPositionMemory'
 import { defaultWsUrl, WsClient, type AgentWorkflowEvent, type ChatWorkflowEvent } from './ws-client'
+import { useAgentRuntimeContextHydration } from './use-agent-runtime-context'
 // ===== 复用桌面组件 / atom（必须位于模块顶部，确保 ESM 正常收集）=====
+import { AgentView } from '@/components/agent'
+import { ChatView } from '@/components/chat'
+import { LeftSidebar } from '@/components/app-shell/LeftSidebar'
 import { SettingsDialog, type SettingsTabItem } from '@/components/settings'
 import { useGlobalAgentListeners } from '@/hooks/useGlobalAgentListeners'
 import { useGlobalChatListeners } from '@/hooks/useGlobalChatListeners'
 import { userProfileAtom } from '@/atoms/user-profile'
 import { authStatusAtom } from '@/atoms/identity-atoms'
-import { channelsAtom, channelsLoadedAtom, conversationsAtom, currentConversationIdAtom } from '@/atoms/chat-atoms'
-import { agentSessionsAtom, agentWorkspacesAtom, currentAgentSessionIdAtom, currentAgentWorkspaceIdAtom, agentChannelIdAtom, agentModelIdAtom, agentChannelIdsAtom, agentStreamingStatesAtom, agentMessageRefreshAtom, allPendingPermissionRequestsAtom, allPendingAskUserRequestsAtom, allPendingExitPlanRequestsAtom, settleInactiveAgentStreamState, shouldClearInactiveAgentStreamState } from '@/atoms/agent-atoms'
+import { channelsAtom, channelsLoadedAtom, conversationsAtom, currentConversationIdAtom, chatMessageRefreshAtom } from '@/atoms/chat-atoms'
+import { agentSessionsAtom, agentWorkspacesAtom, currentAgentSessionIdAtom, currentAgentWorkspaceIdAtom, agentChannelIdAtom, agentModelIdAtom, agentChannelIdsAtom, agentStreamingStatesAtom, agentMessageRefreshAtom, pocketSessionReloadAtom, agentDefaultPermissionModeAtom, allPendingPermissionRequestsAtom, allPendingAskUserRequestsAtom, allPendingExitPlanRequestsAtom, settleInactiveAgentStreamState, shouldClearInactiveAgentStreamState } from '@/atoms/agent-atoms'
+import { remoteStoreAtom } from '@/atoms/remote-store-atoms'
+import { reduceRemoteStore } from './remote-store'
 import { appModeAtom } from '@/atoms/app-mode'
+import {
+  themeModeAtom,
+  themeStyleAtom,
+  systemIsDarkAtom,
+  resolvedThemeAtom,
+  applyThemeToDOM,
+} from '@/atoms/theme'
 import { initPocketUiScale } from '@/atoms/ui-scale'
 import { initPocketScreenOrientation } from '@/lib/pocket-screen-orientation'
 import { checkPocketUpdate, initializePocketUpdater } from '@/atoms/pocket-updater'
@@ -38,20 +53,44 @@ import { getPocketPendingNotification, normalizeWsUrl, notifyPocketTaskCompletio
 import { initDebugHud, debugLog } from '@/lib/debug-hud'
 import { UiScaleContainer } from '@/components/UiScaleContainer'
 import { FilePreviewContainer } from '@/components/file-browser/FilePreviewContainer'
-import { TooltipProvider } from '@/components/ui/tooltip'
-import { Palette, Link, Bell, Download } from 'lucide-react'
-import { type AgentStreamPayload, type AskUserRequest, type ExitPlanModeRequest, type PermissionRequest } from '@profer/shared'
+import { Button } from '@/components/ui/button'
+import { AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogFooter, AlertDialogTitle, AlertDialogDescription, AlertDialogAction, AlertDialogCancel } from '@/components/ui/alert-dialog'
+import { TooltipProvider, Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip'
+import { Menu, Plus, Palette, Link, Loader2, Bell, RefreshCw, Download } from 'lucide-react'
+import { type AgentStreamPayload, type AgentEndReason, type AgentSessionMeta } from '@profer/shared'
+import { markPocketResolvedInteraction, type PendingInteractionKind } from './pending-interaction-reconciliation'
+import { syncPendingInteractions } from './pending-interaction-sync'
+import {
+  bumpReloadNonce,
+  classifyPocketReloadFailure,
+  collectPocketReloadInvalidations,
+  collectPocketReloadSteps,
+  describePocketReloadFailure,
+  POCKET_RELOAD_TOAST,
+} from './session-reload'
+import { PENDING_INTERACTION_POLL_INTERVAL_MS } from '@/lib/interaction-guard'
 import { pocketBackgroundMessagingAtom, pocketConnectionStatusAtom, pocketNotifyCompleteAtom, pocketUnbindRequestAtom } from '@/atoms/pocket-settings'
-import { PocketConnectionView } from './PocketConnectionView'
-import { PocketWorkspace } from './PocketWorkspace'
+import { PocketStartupMotion } from './PocketStartupMotion'
 
 // ===== 先安装 electronAPI stub（必须在任何复用组件求值前）=====
 installElectronApiStub()
 
-// ===== Capacitor 原生 App 环境检测 =====
-// App 内 WebView 沉浸式全屏，系统状态栏（通知栏）会盖住顶部内容；浏览器模式 env() 为 0 无需处理。
+// ===== 原生 App 安全区处理 =====
+// App 内 WebView 沉浸式全屏，系统状态栏（通知栏）会盖住顶部内容、底部导航条会盖住输入区/抽屉。
+// .pocket-safe-area 类始终挂载：桌面浏览器 env(safe-area-inset-*) 为 0 → padding 归零无副作用；
+// 真机 WebView（Capacitor / 鸿蒙兼容层）只要支持 env() 即自动获得上下安全区。
+// 不再依赖 Capacitor.isNativePlatform()——鸿蒙兼容层未必能检测到 Capacitor，漏判会导致安全区不生效。
+// 注意：isNativeApp 仍保留，用于登录页「App 端必填服务器地址」等与安全区无关的判断。
+//
+// Android WebView / 卓易通的 env(safe-area-inset-*) 恒为 0（无 viewport-fit=cover 支持），
+// 因此原生侧（MainActivity）会向 documentElement 注入 --pocket-safe-top / --pocket-safe-bottom，
+// 以下常量统一用 max(env(), var(--pocket-safe-*, 0px))：变量缺失/为 0 时与旧写法等价。
 const isNativeApp = typeof window !== 'undefined' && !!((window as unknown as { Capacitor?: { isNativePlatform?: () => boolean } }).Capacitor?.isNativePlatform?.())
-const SAFE_AREA_CLS = isNativeApp ? 'pocket-safe-area' : ''
+const SAFE_AREA_CLS = 'pocket-safe-area'
+// R5：原生侧（MainActivity）把状态栏/导航栏高度注入这两个变量；env() 在 Android WebView
+// 恒为 0、在缺变量时退化为 0，因此 max() 两种来源合取，缺变量即与旧写法（仅 env()）等价。
+const SAFE_AREA_TOP = 'max(env(safe-area-inset-top), var(--pocket-safe-top, 0px))'
+const SAFE_AREA_BOTTOM = 'max(env(safe-area-inset-bottom), var(--pocket-safe-bottom, 0px))'
 
 // ===== 移动模式标记：Portal 到 body 的组件（设置弹窗等）需要 CSS 定向（竖屏差异化布局）=====
 if (typeof document !== 'undefined') {
@@ -96,10 +135,37 @@ function clearLastView(): void {
 }
 
 // ===== 类型 =====
-interface ChannelInfo { id: string; name: string; provider: string; models: { id: string; name: string }[] }
+interface ChannelInfo { id: string; name: string; provider: string; agentRuntimes?: ('claude' | 'pi')[]; agentExperimentalEnabled?: boolean; models: { id: string; name: string }[] }
 interface SessionInfo { id: string; title: string; channelId?: string; modelId?: string; workspaceId?: string; agentRuntime?: 'claude' | 'pi'; permissionMode?: string; active: boolean; createdAt?: number; updatedAt?: number; pinned?: boolean; archived?: boolean; draft?: boolean }
 
 const pocketStore = createStore()
+
+/**
+ * R8-P0：用主端权威快照重建三个 pending 交互 atom。
+ *
+ * 背景：
+ * 1. 交互请求不是持久化消息，断线期间的 `*_request` 事件会丢；
+ * 2. 桌面端作答只发本窗口 IPC、**不广播也不进事件重放日志**，移动端收不到 `*_resolved`。
+ * 所以移动端只能靠这份快照收敛横幅（另一端已处理 → 本端 ≤5s 内自动消失），
+ * 失败（旧服务端不支持 / 连接不可用）时保留现有 atom，不把已有横幅清掉。
+ *
+ * @param sessions 白名单会话（缺省取 agentSessionsAtom，即 loadSessions 写入的 personalSessions）
+ */
+async function rebuildPendingInteractions(
+  client: WsClient,
+  sessions?: ReadonlyArray<{ id: string }>,
+): Promise<void> {
+  const allowed = sessions ?? pocketStore.get(agentSessionsAtom)
+  await syncPendingInteractions({
+    fetchSnapshot: () => client.getPendingInteractions(),
+    allowedSessionIds: new Set(allowed.map((session) => session.id)),
+    commit: (applied) => {
+      pocketStore.set(allPendingPermissionRequestsAtom, applied.permission)
+      pocketStore.set(allPendingAskUserRequestsAtom, applied.askUser)
+      pocketStore.set(allPendingExitPlanRequestsAtom, applied.exitPlan)
+    },
+  })
+}
 
 // 平板默认略微放大 UI（触屏友好）：无本地缓存时取 110%，已有用户选择则保持。
 // 必须在渲染前写入 pocketStore 的 uiScaleAtom（atom 默认值在模块加载时已固定）
@@ -163,7 +229,6 @@ const pendingStopTimers = new Map<string, ReturnType<typeof setTimeout>>()
 // 只保留 loadSessions（列表刷新无副作用）。旧服务端（无 run_completed）时 run_idle 仍正常成为唯一信号。
 const runCompletedProcessed = new Map<string, number>()
 const RUN_COMPLETED_DEDUP_WINDOW_MS = 3000
-const sessionRefreshTimers = new Map<string, ReturnType<typeof setTimeout>>()
 
 // list_sessions 没有可与 WS eventId 比较的服务端版本；仅记录本地观察到的 session 活动，
 // 防止请求期间收到的新 Agent event 被较早发起的 inactive 快照反向覆盖。
@@ -194,16 +259,72 @@ function markSessionActivity(sessionId: string): number {
   }) as typeof window.electronAPI.stopAgent
 }
 
+// ===== 移动端主题初始化 =====
+// Pocket 入口不复用桌面 renderer/main.tsx，因此必须在此独立同步系统主题。
+// Android/HarmonyOS 的 WebView 会在系统外观变化时更新 prefers-color-scheme；
+// 监听 MediaQueryList change 可让“跟随系统”无需重启应用即可切换。
+function PocketThemeInitializer(): null {
+  const themeMode = useAtomValue(themeModeAtom)
+  const themeStyle = useAtomValue(themeStyleAtom)
+  const systemIsDark = useAtomValue(systemIsDarkAtom)
+  const resolvedTheme = useAtomValue(resolvedThemeAtom)
+  const setSystemIsDark = useSetAtom(systemIsDarkAtom)
+
+  useEffect(() => {
+    const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)')
+    const syncSystemTheme = (): void => setSystemIsDark(mediaQuery.matches)
+    const onNativeThemeChange = (event: Event): void => {
+      const detail = (event as CustomEvent<{ isDark?: unknown }>).detail
+      if (typeof detail?.isDark === 'boolean') setSystemIsDark(detail.isDark)
+    }
+    syncSystemTheme()
+    // 部分鸿蒙/卓易通 WebView 不会刷新 prefers-color-scheme；Android 壳在
+    // uiMode 变化时主动派发此事件，作为 MediaQueryList change 的可靠兜底。
+    window.addEventListener('profer:system-theme-change', onNativeThemeChange)
+
+    if (typeof mediaQuery.addEventListener === 'function') {
+      mediaQuery.addEventListener('change', syncSystemTheme)
+      return () => {
+        mediaQuery.removeEventListener('change', syncSystemTheme)
+        window.removeEventListener('profer:system-theme-change', onNativeThemeChange)
+      }
+    }
+
+    // 兼容鸿蒙卓易通可能使用的旧版 WebView MediaQueryList API。
+    mediaQuery.addListener(syncSystemTheme)
+    return () => {
+      mediaQuery.removeListener(syncSystemTheme)
+      window.removeEventListener('profer:system-theme-change', onNativeThemeChange)
+    }
+  }, [setSystemIsDark])
+
+  useEffect(() => {
+    applyThemeToDOM(themeMode, themeStyle, systemIsDark)
+    // 同步浏览器/容器的 theme-color 元数据；Android 原生系统栏由 values-night
+    // 资源随系统 UI mode 提供对应的日间/夜间颜色。
+    document.querySelector('meta[name="theme-color"]')?.setAttribute(
+      'content',
+      resolvedTheme === 'dark' ? '#0b0d0e' : '#ffffff',
+    )
+  }, [themeMode, themeStyle, systemIsDark, resolvedTheme])
+
+  return null
+}
+
 // ===== 根组件 =====
 function PocketApp(): React.ReactElement {
+  const [startupReady, setStartupReady] = useState(false)
+  const markStartupReady = useCallback(() => setStartupReady(true), [])
+
   return (
     <Provider store={pocketStore}>
+      <PocketThemeInitializer />
       {/* AgentView/LeftSidebar 组件树大量使用 Tooltip，缺少 Provider 会批量抛错 */}
       <TooltipProvider>
         <Toaster theme="system" position="top-center" richColors />
         {/* 等比缩放容器：内容整体 scale(s)，容器反补偿保持视口内，区域不放大 */}
         <UiScaleContainer pocketMode>
-          <App />
+          <App onReady={markStartupReady} />
         </UiScaleContainer>
         {/* 设置入口：LeftSidebar 底部头像/设置按钮置位 settingsOpenAtom，此处渲染原版 Dialog；
             Portal 到 body，不随缩放容器变换 */}
@@ -214,11 +335,19 @@ function PocketApp(): React.ReactElement {
             预览只能以弹窗形式呈现。 */}
         <FilePreviewContainer />
       </TooltipProvider>
+      <PocketStartupMotion ready={startupReady} />
     </Provider>
   )
 }
 
-function App(): React.ReactElement {
+function App({ onReady }: { onReady: () => void }): React.ReactElement {
+  useEffect(() => {
+    // The first committed App frame is the reliable local hand-off point. The
+    // extra frame lets the browser paint the connection or restored-session UI.
+    const frame = window.requestAnimationFrame(onReady)
+    return () => window.cancelAnimationFrame(frame)
+  }, [onReady])
+
   // useGlobalAgentListeners：桌面 Agent 事件 → atoms 的完整逻辑；事件源由 WS 桥喂入
   useGlobalAgentListeners()
   // useGlobalChatListeners：桌面 Chat 流式事件（chunk/reasoning/complete/error/tool-activity）→ atoms
@@ -247,8 +376,6 @@ function App(): React.ReactElement {
   const userProfile = useAtomValue(userProfileAtom)
   const backgroundMessagingOn = useAtomValue(pocketBackgroundMessagingAtom)
   const clientRef = useRef<WsClient | null>(null)
-  const initialSnapshotLoadedRef = useRef(false)
-  const sessionSnapshotInFlightRef = useRef<Promise<void> | null>(null)
 
   // 界面状态：reconnecting = 已绑定但断线，保持主界面 + 横幅自动重连（不再回登录页“重新校验”）
   const [connection, setConnection] = useState<'idle' | 'connecting' | 'open' | 'reconnecting' | 'error' | 'unauthorized'>('idle')
@@ -261,6 +388,8 @@ function App(): React.ReactElement {
   const [currentTitle, setCurrentTitle] = useState('')
   // 窄屏时侧栏以抽屉承载；宽屏保持与原生工作台一致的左侧导航。
   const [sidebarOpen, setSidebarOpen] = useState(false)
+  // R10：强制刷新进行中（顶栏刷新按钮转圈 + 禁用重复点击 + 防重入）
+  const [refreshing, setRefreshing] = useState(false)
   // 解绑确认弹窗：解绑 = 清除本机保存的服务器地址/令牌并断开连接，回到连接页
   const [unbindConfirmOpen, setUnbindConfirmOpen] = useState(false)
   const hasStoredBinding = Boolean(getStoredToken() || getStoredServerUrl())
@@ -291,29 +420,32 @@ function App(): React.ReactElement {
   }, [])
 
   // ===== WS 管理 =====
+  // R2：桌面端权威上下文窗口水合（连接/重连后按主端 active 会话拉取，切会话时单会话拉取）。
+  // 失败/旧服务端不支持时静默降级，不影响现有流事件与模型名推断。
+  const { refresh: refreshAgentRuntimeContext } = useAgentRuntimeContextHydration()
+
   const connect = useCallback((token: string, serverInput?: string) => {
     if (clientRef.current) clientRef.current.disconnect()
-    initialSnapshotLoadedRef.current = false
     const url = normalizeWsUrl(serverInput ?? getStoredServerUrl()) ?? defaultWsUrl()
     const client = new WsClient({
       url,
       token,
       onStatusChange: (status) => {
+        pocketStore.set(remoteStoreAtom, (previous) => reduceRemoteStore(previous, {
+          type: 'connection',
+          phase: status === 'open' ? 'snapshot_loading' : status === 'connecting' ? 'connecting' : 'disconnected',
+        }))
         if (status === 'open') {
           setConnection('open'); setErrMsg(undefined)
-          const shouldLoadInitialSnapshot = !initialSnapshotLoadedRef.current
-          initialSnapshotLoadedRef.current = true
           // 平板通过 WS 连接的是已授权（可能已登录）的电脑端，官方渠道（newapi-*）由电脑端
           // 登录后从服务端同步而来。ModelSelector 的「未登录隐藏官方渠道」过滤依赖此标志；
           // 平板无登录流程，authStatusAtom 恒为 isLoggedIn:false，会误杀全部官方渠道，
           // 导致远程端看不到 GPT/Claude 官方模型。这里在连接成功后置为已登录态以放行官方渠道。
           setAuthStatus((prev) => ({ ...prev, isLoggedIn: true }))
-          if (shouldLoadInitialSnapshot) {
-            void loadChannels(client)
-            void loadSessions(client)
-            void loadConversations(client)
-            void loadUserProfile(client)
-          }
+          void loadChannels(client)
+          void loadSessions(client)
+          void loadConversations(client)
+          void loadUserProfile(client)
         } else if (status === 'unauthorized') {
           // token 无效：服务端已拒绝对话且客户端已停止自动重连，停留登录页提示用户重新输入；
           // 原生后台服务同样收到 4001 会自停，这里再显式 stop 一次保证两端一致
@@ -327,12 +459,57 @@ function App(): React.ReactElement {
         } else if (status === 'error') setConnection('error')
         else setConnection('connecting')
       },
-      onAgentEvent: (evt) => handleAgentEvent(client, evt),
+      onCommandPending: (pending) => {
+        pocketStore.set(remoteStoreAtom, (previous) => reduceRemoteStore(previous, {
+          type: 'command_pending',
+          commandId: pending.commandId,
+          expectedRevision: pending.expectedRevision,
+          sessionId: pending.sessionId,
+        }))
+      },
+      onCommandResult: (result) => {
+        pocketStore.set(remoteStoreAtom, (previous) => reduceRemoteStore(previous, {
+          type: 'command_result',
+          result,
+        }))
+        if (result.ok && result.data && typeof result.data === 'object' && 'id' in result.data) {
+          const session = result.data as AgentSessionMeta
+          pocketStore.set(remoteStoreAtom, (previous) => reduceRemoteStore(previous, {
+            type: 'session_snapshot_upsert',
+            session,
+          }))
+        }
+      },
+      onAgentEvent: (evt) => {
+        const payload = evt.payload as { kind?: string; operation?: string; session?: import('@profer/shared').AgentSessionUiProjection; sessionId?: string; revision?: number } | null
+        if (payload?.kind === 'session_projection' && payload.operation === 'upsert' && payload.session) {
+          pocketStore.set(remoteStoreAtom, (previous) => reduceRemoteStore(previous, { type: 'projection_upsert', session: payload.session! }))
+        } else if (payload?.kind === 'session_projection' && payload.operation === 'delete' && payload.sessionId && typeof payload.revision === 'number') {
+          pocketStore.set(remoteStoreAtom, (previous) => reduceRemoteStore(previous, { type: 'projection_delete', sessionId: payload.sessionId!, revision: payload.revision! }))
+        }
+        handleAgentEvent(client, evt)
+      },
       onAgentResumeStatus: (status) => {
+        if (status.serverInstanceId) {
+          pocketStore.set(remoteStoreAtom, (previous) => reduceRemoteStore(previous, {
+            type: 'hello',
+            serverInstanceId: status.serverInstanceId!,
+            latestEventId: status.latestEventId,
+          }))
+        }
+        pocketStore.set(remoteStoreAtom, (previous) => reduceRemoteStore(previous, {
+          type: 'replay_completed',
+          cursor: status.toEventId,
+          requiresSnapshot: status.requiresSnapshot,
+        }))
         debugLog(`[WS resume] replayed=${status.replayed} complete=${status.complete} snapshot=${status.requiresSnapshot} duplicate=${status.duplicateEvents} reorder=${status.outOfOrderEvents}`)
         if (status.requiresSnapshot) {
           // 事件窗口过期或主端重启后，按现有权威快照恢复，不继续拼接不完整的事件流。
           void loadSessions(client)
+        } else {
+          // R8-P0：桌面端作答只发本窗口 IPC，既不广播也不进 WS 事件重放日志，
+          // 重放补不回已解决的交互请求；这里按权威快照对齐一次 pending 交互。
+          void rebuildPendingInteractions(client)
         }
       },
       onChatEvent: (evt) => handleChatEvent(evt),
@@ -360,6 +537,8 @@ function App(): React.ReactElement {
         // 否则 AgentView 的 hasAvailableModel 判定（channel.enabled && models[].enabled）恒为 false，
         // 会错误提示“请去设置中启用渠道”。
         enabled: true,
+        agentRuntimes: c.agentRuntimes,
+        agentExperimentalEnabled: c.agentExperimentalEnabled,
         models: (c.models || []).map((m) => ({ ...m, enabled: true })),
       }))
       setChannels(ch as never)
@@ -378,7 +557,7 @@ function App(): React.ReactElement {
     } catch (e) { console.error('拉取渠道失败', e) }
   }, [setChannels, setChannelsLoaded, setAgentChannelIds, setAgentChannelId, setAgentModelId])
 
-  const loadSessionsSnapshot = useCallback(async (client: WsClient) => {
+  const loadSessions = useCallback(async (client: WsClient) => {
     // 只比较本次快照开始时已观察到的活动；请求期间的任意新 Agent event 或乐观新 run 都会使对应 session 的清理失效。
     const snapshotActivityRevisions = new Map(sessionActivityRevisions)
     const snapshotStartedAts = new Map(
@@ -398,6 +577,11 @@ function App(): React.ReactElement {
         pinned: s.pinned ?? false,
         archived: s.archived ?? false,
         draft: s.draft ?? false,
+      }))
+      pocketStore.set(remoteStoreAtom, (previous) => reduceRemoteStore(previous, {
+        type: 'snapshot',
+        sessions: normalizedSessions as AgentSessionMeta[],
+        cursor: previous.connection.cursor,
       }))
 
       // 平板版暂时隐藏团队版功能：先拉工作区列表识别团队工作区（type === 'team'），
@@ -427,7 +611,11 @@ function App(): React.ReactElement {
       const personalSessions = normalizedSessions.filter((s) => !teamWorkspaceIds.has(s.workspaceId ?? ''))
       setSessions(personalSessions)
       // 原生 LeftSidebar 直接读取这些 atoms；平板只替换数据传输层。
-      setNativeSessions(personalSessions as never)
+      // Remote Store 是会话目录的事实入口；agentSessionsAtom 仅作为迁移桥供旧桌面组件消费。
+      // 先合并服务端快照，再把筛选后的投影镜像给旧桥，避免两套状态互相覆盖最终值。
+      const remoteSnapshot = pocketStore.get(remoteStoreAtom).sessions
+      const remotePersonalSessions = Object.values(remoteSnapshot).filter((s) => !teamWorkspaceIds.has(s.workspaceId ?? ''))
+      setNativeSessions((remotePersonalSessions.length > 0 ? remotePersonalSessions : personalSessions) as never)
 
       // 陈旧 streaming 兜底：主进程返回 active=false 的会话若本地仍标记 running，
       // 说明完成事件在断线/事件丢失时没送达（平板没有桌面 STREAM_COMPLETE IPC 保底）。
@@ -481,36 +669,18 @@ function App(): React.ReactElement {
         })
       }
 
-      // 交互请求不是持久化消息，断线期间的 ask_user/permission 事件会丢失；
-      // 每次列表刷新都用主端服务的 pending 快照重建，解决“Agent 卡住但没有追问框”。
-      // 旧服务端不支持该命令时保留当前 atom，避免降级连接把已有请求清掉。
-      try {
-        const snapshot = await client.getPendingInteractions() as {
-          permissions?: unknown[]
-          askUsers?: unknown[]
-          exitPlans?: unknown[]
-        }
-        const allowedSessionIds = new Set(personalSessions.map((s) => s.id))
-        const groupBySession = <T extends { sessionId?: unknown; requestId?: unknown }>(items: unknown[] | undefined): Map<string, T[]> => {
-          const grouped = new Map<string, T[]>()
-          for (const rawItem of items ?? []) {
-            if (!rawItem || typeof rawItem !== 'object') continue
-            const item = rawItem as T
-            const sessionId = item.sessionId
-            if (typeof sessionId !== 'string' || !allowedSessionIds.has(sessionId)) continue
-            if (typeof item.requestId !== 'string' || item.requestId.length === 0) continue
-            const current = grouped.get(sessionId) ?? []
-            if (current.some((entry) => entry.requestId === item.requestId)) continue
-            grouped.set(sessionId, [...current, item])
-          }
-          return grouped
-        }
-        pocketStore.set(allPendingPermissionRequestsAtom, groupBySession<PermissionRequest>(snapshot?.permissions))
-        pocketStore.set(allPendingAskUserRequestsAtom, groupBySession<AskUserRequest>(snapshot?.askUsers))
-        pocketStore.set(allPendingExitPlanRequestsAtom, groupBySession<ExitPlanModeRequest>(snapshot?.exitPlans))
-      } catch (error) {
-        console.warn('[Pocket] 同步待处理交互失败，保留现有状态:', error)
+      // R2：`context_window` 是 run 启动时的瞬时事件。首次连入运行中的会话、或断线重连后，
+      // Pocket 可能已错过它，只能按模型名推断窗口（与电脑端不一致）；这里用主端权威快照补齐，
+      // 做一次即可让圆环弹层的「上下文 x/y」「占用 %」与电脑端对齐。
+      // 旧版桌面端不识别该命令时静默降级（保留实时事件/模型推断现状）。
+      if (remoteActiveIds.size > 0) {
+        refreshAgentRuntimeContext([...remoteActiveIds])
       }
+
+      // R8-P0：交互请求不是持久化消息，断线期间的 ask_user/permission 事件会丢失；
+      // 每次列表刷新都用主端 pending 快照重建（实现已抽到 pending-interaction-sync，可单测）。
+      // 旧服务端不支持该命令时保留当前 atom，避免降级连接把已有请求清掉。
+      await rebuildPendingInteractions(client, personalSessions)
 
       // 优先从服务端获取真实项目（工作区）列表，带真实项目名称；
       // 旧版服务端无 list_workspaces 指令时回退为从会话归纳 workspaceId。
@@ -535,20 +705,7 @@ function App(): React.ReactElement {
         setNativeWorkspaceId(fallback.id)
       }
     } catch (e) { console.error('拉取会话失败', e) }
-  }, [setNativeSessions, setNativeWorkspaces, setNativeWorkspaceId])
-
-  const loadSessions = useCallback((client: WsClient): Promise<void> => {
-    const inFlight = sessionSnapshotInFlightRef.current
-    if (inFlight) return inFlight
-
-    const request = loadSessionsSnapshot(client).finally(() => {
-      if (sessionSnapshotInFlightRef.current === request) {
-        sessionSnapshotInFlightRef.current = null
-      }
-    })
-    sessionSnapshotInFlightRef.current = request
-    return request
-  }, [loadSessionsSnapshot])
+  }, [setNativeSessions, setNativeWorkspaces, setNativeWorkspaceId, refreshAgentRuntimeContext])
 
   const loadConversations = useCallback(async (client: WsClient) => {
     try {
@@ -582,7 +739,12 @@ function App(): React.ReactElement {
     setCurrentTitle(title || '')
     setSidebarOpen(false)
     saveLastView({ mode: 'agent', sessionId })
-  }, [setNativeSessionId, setNativeAppMode])
+    // R2：会话切换时补齐桌面端权威上下文窗口；非常规运行中的会话拿不到快照，静默无变化。
+    refreshAgentRuntimeContext([sessionId])
+    // R8-P0：切进一个长期后台的会话时也该以主端为准对齐 pending 交互（丢失/过期两种情况）。
+    const sessionSwitchClient = clientRef.current
+    if (sessionSwitchClient?.isOpen()) void rebuildPendingInteractions(sessionSwitchClient)
+  }, [setNativeSessionId, setNativeAppMode, refreshAgentRuntimeContext])
 
   /** 打开 Chat 对话：ChatView 自行加载消息与流式状态，平板只切换 conversationId 与模式 */
   const openChatConversation = useCallback((conversationId: string, title?: string) => {
@@ -631,8 +793,40 @@ function App(): React.ReactElement {
 
   const handleAgentEvent = useCallback((client: WsClient, evt: AgentWorkflowEvent) => {
     markSessionActivity(evt.sessionId)
+    const payload = evt.payload as { kind?: string; event?: { type?: string; requestId?: string } } | null
+    if (payload?.kind === 'profer_event' && payload.event && typeof payload.event.requestId === 'string') {
+      const interactionKinds: Partial<Record<string, PendingInteractionKind>> = {
+        permission_resolved: 'permission',
+        ask_user_resolved: 'askUser',
+        exit_plan_mode_resolved: 'exitPlan',
+      }
+      const kind = payload.event.type ? interactionKinds[payload.event.type] : undefined
+      if (kind) markPocketResolvedInteraction({ kind, sessionId: evt.sessionId, requestId: payload.event.requestId })
+    }
+    // Remote Store 只消费运行态 ProferEvent；session_projection 在上方单独处理，
+    // 不能通过 runtime reducer，否则元数据事件会把 idle 会话误激活为 running。
+    const runtimeEvent = (evt.payload as { kind?: string; event?: { type?: string; sessionId?: string; message?: string; stoppedByUser?: boolean; resultSubtype?: string; resultErrors?: string[]; active?: boolean } } | null)?.event
+    if ((evt.payload as { kind?: string } | null)?.kind === 'profer_event' && runtimeEvent) {
+      const runtimeSessionId = runtimeEvent.sessionId ?? evt.sessionId
+      const eventType = runtimeEvent.type
+      const runtimeAction = eventType === 'run_resumed' ? { type: 'run_resumed' as const, sessionId: runtimeSessionId }
+        : eventType === 'run_idle' ? { type: 'run_idle' as const, sessionId: runtimeSessionId }
+          : eventType === 'run_completed' ? { type: 'run_completed' as const, sessionId: runtimeSessionId, stoppedByUser: runtimeEvent.stoppedByUser, resultSubtype: runtimeEvent.resultSubtype, resultErrors: runtimeEvent.resultErrors }
+            : eventType === 'error' ? { type: 'error' as const, sessionId: runtimeSessionId, message: runtimeEvent.message ?? 'Agent 执行失败' }
+              : eventType === 'permission_request' ? { type: 'permission_request' as const, sessionId: runtimeSessionId }
+                : eventType === 'permission_resolved' ? { type: 'permission_resolved' as const, sessionId: runtimeSessionId }
+                  : eventType === 'ask_user_request' ? { type: 'ask_user_request' as const, sessionId: runtimeSessionId }
+                    : eventType === 'ask_user_resolved' ? { type: 'ask_user_resolved' as const, sessionId: runtimeSessionId }
+                      : eventType === 'exit_plan_mode_request' ? { type: 'exit_plan_mode_request' as const, sessionId: runtimeSessionId }
+                        : eventType === 'exit_plan_mode_resolved' ? { type: 'exit_plan_mode_resolved' as const, sessionId: runtimeSessionId }
+                          : eventType === 'plan_mode_changed' ? { type: 'plan_mode_changed' as const, sessionId: runtimeSessionId, active: runtimeEvent.active === true }
+                            : null
+      if (runtimeAction) {
+        pocketStore.set(remoteStoreAtom, (previous) => reduceRemoteStore(previous, { type: 'runtime_event', event: runtimeAction, eventId: evt.eventId }))
+      }
+    }
     emitPocketAgentStreamEvent({ sessionId: evt.sessionId, payload: evt.payload as AgentStreamPayload })
-    const p = evt.payload as { kind?: string; event?: { type?: string; stoppedByUser?: boolean; startedAt?: number; resultSubtype?: string; resultErrors?: string[]; backgroundTasksPending?: boolean } } | null
+    const p = evt.payload as { kind?: string; event?: { type?: string; stoppedByUser?: boolean; startedAt?: number; resultSubtype?: string; resultErrors?: string[]; backgroundTasksPending?: boolean; endReason?: AgentEndReason; endReasonLabel?: string } } | null
     // run_completed（remote-service 在 orchestrator onComplete 时广播，携带真实完成元数据）
     // 与 run_idle（orchestrator finally 释放 active 时广播）都可能到达；两者都表示"本轮结束"。
     // 优先用 run_completed 携带的真实 startedAt/stoppedByUser，避免用 Date.now() 伪造 startedAt
@@ -666,8 +860,12 @@ function App(): React.ReactElement {
           resultSubtype: p.event.resultSubtype,
           resultErrors: p.event.resultErrors,
           backgroundTasksPending: p.event.backgroundTasksPending,
+          // 服务端 run_completed 携 endReason / label（orchestrator 归一化后的真实结束原因）：
+          // 透传后 useGlobalAgentListeners 才能置位中断 chip 并弹错 toast。
+          endReason: p.event.endReason,
+          endReasonLabel: p.event.endReasonLabel,
         })
-        // Android 系统通知：前台由 WebView 主动投递；后台由原生保活服务投递，避免重复。
+        // 前台额外投递本地新增的系统完成通知；远端的后台保活通知与事件去重逻辑保持不变。
         if (!stoppedByUser && p.event.backgroundTasksPending !== true && !document.hidden) {
           const completedSession = sessionsRef.current.find((session) => session.id === evt.sessionId)
           void notifyPocketTaskCompletion(evt.sessionId, completedSession?.title)
@@ -684,14 +882,8 @@ function App(): React.ReactElement {
       // 会话已空闲：撤销该会话的停止超时兜底定时器
       const timer = pendingStopTimers.get(evt.sessionId)
       if (timer) { clearTimeout(timer); pendingStopTimers.delete(evt.sessionId) }
-      // 会话标题/时间可能已更新，刷新左侧列表。run_completed 和 run_idle 常在同一时间到达，
-      // 合并为一次快照请求，避免一轮 Agent 结束触发两次 list_sessions/list_workspaces。
-      const previousRefreshTimer = sessionRefreshTimers.get(evt.sessionId)
-      if (previousRefreshTimer) clearTimeout(previousRefreshTimer)
-      sessionRefreshTimers.set(evt.sessionId, setTimeout(() => {
-        sessionRefreshTimers.delete(evt.sessionId)
-        void loadSessions(client)
-      }, 120))
+      // 会话标题/时间可能已更新，刷新左侧列表
+      void loadSessions(client)
     }
   }, [loadSessions])
 
@@ -699,7 +891,8 @@ function App(): React.ReactElement {
     const client = clientRef.current
     if (!client || !client.isOpen()) return
     try {
-      const data = await client.createSession({ title: '新会话' }) as { sessionId: string; title: string }
+      const permissionMode = pocketStore.get(agentDefaultPermissionModeAtom)
+      const data = await client.createSession({ title: '新会话', permissionMode }) as { sessionId: string; title: string; permissionMode?: string }
       if (data?.sessionId) {
         await openSession(data.sessionId, data.title)
         void loadSessions(client)
@@ -751,25 +944,74 @@ function App(): React.ReactElement {
     toast.success('已解绑此设备，可重新输入服务器地址与访问令牌')
   }, [])
 
-  /** 手动刷新当前视图内容：除事件桥接自动刷新外，提供一键重拉兜底，
-   *  解决“显示结束但最后一条结果未出现”的残余情况（分页/事件竞态）。
-   *  - Agent：递增 agentMessageRefreshAtom 版本 → AgentView 重拉持久化消息（含分页刷新）。
-   *  - Chat：重拉对话列表 + 已打开对话的消息（ChatView 监听 conversationId 变化时自行加载）。 */
-  const handleRefresh = useCallback(() => {
+  /** 强制刷新（重新加载当前会话 / 对话）——R10
+   *
+   * 与旧实现的区别：旧版只递增 `agentMessageRefreshAtom` + `loadSessions` + toast，
+   * 属于**增量**重拉（分页窗口 + 保留全部本地视图态），用户体感“点了没变化”。
+   * 现在按三个阶段执行（顺序即语义）：
+   *  ① 失效本地视图态：传输层分页窗口缓存（sdkMessagesPageCache）+ 滚动位置记忆；
+   *  ② 用主端权威快照重建：list_sessions（active/running，含陈旧 running 收敛与反向补齐。
+   *     其内部已 await rebuildPendingInteractions → 待处理交互一并重建）+ 权威 contextWindow；
+   *  ③ 递增 pocketSessionReloadAtom nonce + agentMessageRefreshAtom →
+   *     AgentView 本次加载改走全量水合（等价于重新进入会话），消息子树换 key 重挂载
+   *     （归零执行过程折叠态 / visibleGroupStart 分页切片 / ready 淡入）。
+   *
+   * 弱网容错：全程 try/catch，失败只给 toast，不清空界面（渲染层消息缓存刻意不动）；
+   * 旧服务端不认得的命令在各自内部已静默降级（contextWindow / pending 快照）。 */
+  const handleRefresh = useCallback(async () => {
+    if (refreshing) return
     const client = clientRef.current
-    if (appMode === 'agent' && currentSessionId) {
-      pocketStore.set(agentMessageRefreshAtom, (prev) => {
-        const map = new Map(prev)
-        map.set(currentSessionId, (prev.get(currentSessionId) ?? 0) + 1)
-        return map
-      })
-      if (client?.isOpen()) void loadSessions(client)
-      toast.success('已刷新会话', { duration: 1500 })
-    } else if (appMode === 'chat') {
-      if (client?.isOpen()) { void loadConversations(client); void loadSessions(client) }
-      toast.success('已刷新对话', { duration: 1500 })
+    const connected = !!client?.isOpen()
+    const mode: 'agent' | 'chat' = appMode === 'chat' ? 'chat' : 'agent'
+    setRefreshing(true)
+    try {
+      if (!connected) {
+        const kind = classifyPocketReloadFailure(undefined, { connected: false })
+        toast.error(describePocketReloadFailure(kind))
+        return
+      }
+      if (mode === 'agent' && currentSessionId) {
+        // ① 失效本地视图态：分页窗口（带缺口时永远合不回来）+ 滚动记忆（要求回到底部）
+        invalidatePocketSdkMessagesPageCache(currentSessionId)
+        forgetScrollPosition(currentSessionId)
+        // ② 主端权威态：列表（active/running）+ 待处理交互 + 权威上下文窗口
+        await loadSessions(client!)
+        refreshAgentRuntimeContext([currentSessionId])
+        // ③ 触发全量重载：nonce 让 AgentView 走全量水合，refresh 版本让刷新语义与旧路径一致
+        pocketStore.set(pocketSessionReloadAtom, (prev) => bumpReloadNonce(prev, currentSessionId))
+        pocketStore.set(agentMessageRefreshAtom, (prev) => {
+          const map = new Map(prev)
+          map.set(currentSessionId, (map.get(currentSessionId) ?? 0) + 1)
+          return map
+        })
+        debugLog(`[Pocket 强制刷新] ${collectPocketReloadSteps().join(' → ')}；失效项=${collectPocketReloadInvalidations(mode).join(',')}`)
+        toast.success(POCKET_RELOAD_TOAST.agent, { duration: 1500 })
+        return
+      }
+      if (mode === 'chat' && currentChatId) {
+        forgetScrollPosition(currentChatId)
+        await loadConversations(client!)
+        void loadSessions(client!)
+        pocketStore.set(chatMessageRefreshAtom, (prev) => {
+          const map = new Map(prev)
+          map.set(currentChatId, (map.get(currentChatId) ?? 0) + 1)
+          return map
+        })
+        toast.success(POCKET_RELOAD_TOAST.chat, { duration: 1500 })
+        return
+      }
+      // 落在空态（没有打开的会话/对话）：只重拉列表
+      await loadConversations(client!)
+      await loadSessions(client!)
+      toast.success('已重新加载列表', { duration: 1500 })
+    } catch (error) {
+      const kind = classifyPocketReloadFailure(error, { connected })
+      console.warn('[Pocket 强制刷新] 失败，界面保持原样:', error)
+      toast.error(describePocketReloadFailure(kind, error), { duration: 4000 })
+    } finally {
+      setRefreshing(false)
     }
-  }, [appMode, currentSessionId, loadSessions, loadConversations])
+  }, [refreshing, appMode, currentSessionId, currentChatId, loadSessions, loadConversations, refreshAgentRuntimeContext])
 
   // 连接状态同步到设置页 atom（「连接」tab 的状态徽标）
   useEffect(() => {
@@ -819,6 +1061,25 @@ function App(): React.ReactElement {
     if (sessions[0]) void openSession(sessions[0].id, sessions[0].title)
   }, [connection, currentSessionId, currentChatId, sessions, conversations, appMode, openSession, openChatConversation])
 
+  // R8-P0：有可见交互横幅时的低频兜底（仅当三个 atom 中确有待处理请求时启用，避免空转）。
+  // 桌面端作答不广播、也不进事件重放日志，移动端若不主动对齐快照，横幅会一直残留；
+  // 5s 一次 get_pending_interactions 是纯内存快照读取，开销可忽略。
+  const pendingPermissionRequests = useAtomValue(allPendingPermissionRequestsAtom)
+  const pendingAskUserRequests = useAtomValue(allPendingAskUserRequestsAtom)
+  const pendingExitPlanRequests = useAtomValue(allPendingExitPlanRequestsAtom)
+  const hasPendingInteraction = pendingPermissionRequests.size > 0
+    || pendingAskUserRequests.size > 0
+    || pendingExitPlanRequests.size > 0
+  useEffect(() => {
+    if (!hasPendingInteraction) return
+    const timer = window.setInterval(() => {
+      if (document.hidden) return
+      const pollingClient = clientRef.current
+      if (pollingClient?.isOpen()) void rebuildPendingInteractions(pollingClient)
+    }, PENDING_INTERACTION_POLL_INTERVAL_MS)
+    return () => window.clearInterval(timer)
+  }, [hasPendingInteraction])
+
   // ===== 前后台切换：恢复前台时立即检测/重连 WebSocket =====
   // Android 后台可能冻结 WebView、网络休眠导致 WS 失效；恢复前台主动检查，
   // 已断则立即重连（不等 2s 定时器），仍连则 reconnectNow 内部 no-op，完全无感。
@@ -828,6 +1089,10 @@ function App(): React.ReactElement {
       void setPocketKeepaliveForeground(!document.hidden)
       if (document.hidden) return
       clientRef.current?.reconnectNow()
+      // R8-P0：后台冻结时间短于服务端空闲阈值时 WS 仍为 OPEN，reconnectNow() 是 no-op，
+      // 因此回前台必须显式补一次 pending 快照重建，否则另一端已处理的横幅会一直残留。
+      const foregroundClient = clientRef.current
+      if (foregroundClient?.isOpen()) void rebuildPendingInteractions(foregroundClient)
     }
     document.addEventListener('visibilitychange', onVisibility)
     // Capacitor App 插件（若已安装 @capacitor/app）：原生 resume 事件同样兜底
@@ -840,6 +1105,9 @@ function App(): React.ReactElement {
         // 恢复前台：同步原生层为前台（抑制通知）并立即检测/重连 WS
         void setPocketKeepaliveForeground(true)
         clientRef.current?.reconnectNow()
+        // R8-P0：与 visibilitychange 同理，原生 resume 后补一次 pending 快照重建
+        const resumeClient = clientRef.current
+        if (resumeClient?.isOpen()) void rebuildPendingInteractions(resumeClient)
       }).then((h) => { resumeHandle = h })
     }
     return () => {
@@ -888,46 +1156,219 @@ function App(): React.ReactElement {
   return (
     <>
       {showLogin ? (
-        <PocketConnectionView
-          tokenInput={tokenInput}
-          serverInput={serverInput}
-          errorMessage={errMsg}
-          connection={connection}
-          hasStoredBinding={hasStoredBinding}
-          storedServerUrl={getStoredServerUrl()}
-          isNativeApp={isNativeApp}
-          safeAreaClassName={SAFE_AREA_CLS}
-          onTokenChange={setTokenInput}
-          onServerChange={setServerInput}
-          onSubmit={submitToken}
-          onRequestUnbind={() => setUnbindConfirmOpen(true)}
-        />
+        // 未连接：token 页
+        // 登录页不用 .pocket-safe-area（该类带 !important，会覆盖这里的行内 padding，
+        // 让 py-10 的 2.5rem 保底失效）；改为行内 max(2.5rem, 安全区)，本机无安全区时与 py-10 等价。
+        <div className="pocket-login-shell flex h-full w-full items-center justify-center bg-background text-foreground px-6 py-10" style={{ paddingTop: `max(2.5rem, ${SAFE_AREA_TOP})`, paddingBottom: `max(2.5rem, ${SAFE_AREA_BOTTOM})` }}>
+        <div className="pocket-login-panel w-full max-w-sm space-y-6 rounded-3xl bg-card/80 p-6 shadow-2xl shadow-primary/5 backdrop-blur-xl sm:p-8">
+          <div className="space-y-4">
+            <div className="flex items-center gap-3">
+              <div className="flex size-11 items-center justify-center rounded-2xl bg-primary text-lg font-semibold text-primary-foreground shadow-lg shadow-primary/20" aria-hidden> P </div>
+              <div>
+                <div className="text-xl font-semibold tracking-tight">Profer <span className="text-muted-foreground">Pocket</span></div>
+                <div className="mt-0.5 text-xs text-muted-foreground">随时连接你的电脑工作台</div>
+              </div>
+            </div>
+            <div className="rounded-2xl bg-muted/45 px-3.5 py-3 text-sm leading-6 text-muted-foreground">
+              在电脑上以 <code className="rounded-md bg-background/70 px-1.5 py-0.5 font-mono text-xs text-foreground">--pocket</code> 启动 Profer，然后输入连接信息。
+            </div>
+          </div>
+          <div className="space-y-3">
+            <label className="block space-y-1.5 text-xs font-medium text-muted-foreground" htmlFor="pocket-server">
+              服务器地址 <span className="font-normal opacity-70">{isNativeApp ? '（App 端必填）' : '（可留空自动发现）'}</span>
+              <input
+                id="pocket-server"
+                value={serverInput}
+                onChange={(e) => setServerInput(e.target.value)}
+                placeholder="例如 http://192.168.1.10:7788"
+                inputMode="url"
+                autoCapitalize="none"
+                autoCorrect="off"
+                spellCheck={false}
+                className="w-full rounded-xl border border-border/70 bg-background/75 px-3.5 py-3 text-sm font-normal outline-none transition focus:border-primary/60 focus:ring-2 focus:ring-primary/20 placeholder:text-muted-foreground/55"
+              />
+            </label>
+            <label className="block space-y-1.5 text-xs font-medium text-muted-foreground" htmlFor="pocket-token">
+              访问令牌
+              <input
+                id="pocket-token"
+                type="password"
+                value={tokenInput}
+                onChange={(e) => setTokenInput(e.target.value)}
+                placeholder="粘贴电脑端启动日志中的 Token"
+                autoFocus
+                autoComplete="off"
+                autoCapitalize="none"
+                autoCorrect="off"
+                spellCheck={false}
+                className="w-full rounded-xl border border-border/70 bg-background/75 px-3.5 py-3 text-sm font-normal outline-none transition focus:border-primary/60 focus:ring-2 focus:ring-primary/20 placeholder:text-muted-foreground/55"
+              />
+            </label>
+          </div>
+          {errMsg && <div className="rounded-xl bg-destructive/10 px-3.5 py-2.5 text-sm leading-5 text-destructive" role="alert">{errMsg}</div>}
+          <button onClick={submitToken} className="w-full rounded-xl bg-primary py-3.5 text-sm font-medium text-primary-foreground shadow-lg shadow-primary/15 transition active:scale-[0.98] disabled:opacity-60" disabled={connection === 'connecting'}>
+            {connection === 'connecting' ? '正在连接…' : '连接到 Profer'}
+          </button>
+          {hasStoredBinding && (
+            <div className="space-y-2">
+              {/* 已绑定状态指示：明确当前并非“未连接”，而是已保存绑定信息 */}
+              <div className="flex items-center justify-center gap-1.5 text-[12px] text-muted-foreground">
+                <span className="size-1.5 shrink-0 rounded-full bg-emerald-500" aria-hidden />
+                <span className="truncate">
+                  已绑定{getStoredServerUrl() ? `：${getStoredServerUrl()}` : isNativeApp ? '（缺少服务器地址）' : '（自动地址）'}
+                </span>
+              </div>
+              <button
+              type="button"
+              onClick={() => setUnbindConfirmOpen(true)}
+              className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-border py-2 text-[12px] text-foreground/70 hover:text-destructive hover:border-destructive/40 transition-colors"
+            >
+              <Link className="size-3.5" />
+              解绑并重新连接
+            </button>
+            </div>
+          )}
+        </div>
+      </div>
       ) : (
         <>
-        <PocketWorkspace
-          connection={connection}
-          reconnectBannerText={reconnectBannerText}
-          visualTop={visualTop}
-          landscapeWide={landscapeWide}
-          sidebarOpen={sidebarOpen}
-          activeTitle={activeTitle}
-          appMode={appMode}
-          currentSessionId={currentSessionId}
-          currentChatId={currentChatId}
-          userName={userProfile.userName}
-          safeAreaClassName={SAFE_AREA_CLS}
-          onOpenSidebar={() => setSidebarOpen(true)}
-          onCloseSidebar={() => setSidebarOpen(false)}
-          onRefresh={handleRefresh}
-          onRequestUnbind={() => setUnbindConfirmOpen(true)}
-          onCreateSession={() => void createSession()}
-          onCreateConversation={() => void createConversation()}
-          unbindConfirmOpen={unbindConfirmOpen}
-          onUnbindConfirmOpenChange={setUnbindConfirmOpen}
-          onUnbind={unbind}
-        />
+        {/* 断线重连横幅：已绑定场景切屏回来若 WS 已断，主界面不消失，顶部横幅提示自动重连；
+            连接恢复后横幅自动消失。Portal 到 body 避开 UiScaleContainer 的 transform。 */}
+        {connection !== 'open' && createPortal(
+          <div
+            className="fixed inset-x-0 z-40 flex justify-center px-4"
+            style={{ top: `calc(${visualTop}px + ${landscapeWide ? '12px' : '60px'} + ${SAFE_AREA_TOP})` }}
+          >
+            <div className="pointer-events-auto flex items-center gap-2 rounded-full bg-amber-500/95 px-4 py-1.5 text-[12px] font-medium text-white shadow-lg">
+              <Loader2 className="size-3.5 animate-spin" />
+              <span>{reconnectBannerText}</span>
+            </div>
+          </div>,
+          document.body
+        )}
+        {/* 已连接：桌面式布局（左侧会话栏 + 主区，无右侧栏；对话区整体复用桌面 AgentView）。
+            断点约定：横屏且 ≥1024px 显示固定侧栏（iPad 横屏/桌面浏览器）；其余一律抽屉+顶栏——
+            竖屏不管宽度（含 iPad Pro 12.9" 竖屏 1024px）都走抽屉，避免固定侧栏挤压对话区。 */}
+        {/* 浮动顶栏（竖屏/窄屏；横屏固定侧栏布局由 AgentHeader 自带标题）。
+            Portal 到 body 是关键：UiScaleContainer 的 transform 是定位 containing block，
+            顶栏若渲染在容器内，fixed 会退化为相对容器定位，键盘弹起触发文档滚动时被顶出屏幕；
+            Portal 后 fixed 相对视口 + visualViewport.offsetTop 驱动，永远锚定可视区域顶部，
+            键盘弹起/滚动都不影响。 */}
+        {!landscapeWide && createPortal(
+          <div
+            className="fixed inset-x-0 z-30 flex h-12 items-center bg-tabbar-surface/90 px-2 backdrop-blur-md"
+            style={{ top: `calc(${visualTop}px + ${SAFE_AREA_TOP})` }}
+          >
+            <Button type="button" variant="ghost" size="icon" onClick={() => setSidebarOpen(true)} className="mr-1 size-10 shrink-0 rounded-[12px] text-foreground/65 hover:bg-foreground/[0.06]" aria-label="打开导航"><Menu className="size-[18px]" /></Button>
+            <div className="flex-1 min-w-0 px-1">
+              <span className="block truncate text-sm font-medium text-foreground">{activeTitle}</span>
+            </div>
+            {/* 强制刷新入口（R10）：重新加载当前会话（等价于重新进一次）——兼做“完成但结果未出现”
+                与弱网下输出不全（缩在执行过程里）的兑底。加载中图标旋转 + 禁用重复点击。 */}
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button type="button" variant="ghost" size="icon" onClick={() => void handleRefresh()} disabled={refreshing} className="size-10 shrink-0 rounded-[12px] text-foreground/65 hover:bg-foreground/[0.06]" aria-label="重新加载当前会话" aria-busy={refreshing}>
+                  <RefreshCw className={refreshing ? 'size-[18px] animate-spin' : 'size-[18px]'} />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent side="bottom">{refreshing ? '正在重新加载…' : '重新加载当前会话'}</TooltipContent>
+            </Tooltip>
+            {/* 顶栏解绑入口：Link 图标 + 绿色状态点表示“已绑定”，避免 Unlink（断链图标）被误读为未连接 */}
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button type="button" variant="ghost" size="icon" onClick={() => setUnbindConfirmOpen(true)} className="relative size-10 shrink-0 rounded-[12px] text-foreground/65 hover:bg-foreground/[0.06]" aria-label="已绑定，点击解绑">
+                  <Link className="size-[18px]" />
+                  <span className="absolute right-1.5 top-1.5 size-1.5 rounded-full bg-emerald-500" aria-hidden />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent side="bottom">已绑定 · 点击解绑</TooltipContent>
+            </Tooltip>
+          </div>,
+          document.body
+        )}
+
+        <div className={`pocket-app-root flex h-full w-full overflow-hidden bg-background p-0 text-foreground landscape:min-[1024px]:p-2 ${SAFE_AREA_CLS}`}>
+      <NativePocketSidebar mobileOpen={sidebarOpen} onDismiss={() => setSidebarOpen(false)} />
+
+      {/* 主区（竖屏 pt-12 为浮动顶栏预留高度，滚动内容从悬浮条下方穿过；横屏无顶栏不需要） */}
+      <div className="flex-1 min-w-0 flex flex-col overflow-hidden bg-content-area pt-12 landscape:min-[1024px]:pt-0 landscape:min-[1024px]:ml-2 landscape:min-[1024px]:rounded-[24px] landscape:min-[1024px]:border landscape:min-[1024px]:border-border/70 landscape:min-[1024px]:shadow-xl">
+        {/* 对话区：完整复用桌面 AgentView / ChatView。
+            注意：必须是 flex 容器（flex flex-col）——AgentView 根是 flex-1，StickToBottom 滚动容器是
+            height:100%，依赖整条父链的高度约束；若此处是普通块级元素，滚动容器被内容撑开后溢出，
+            对话区将无法滚动（历史消息被 overflow-hidden 截断）。 */}
+        <div className="flex min-h-0 flex-1 flex-col touch-pan-y">
+          {appMode === 'chat' ? (
+            currentChatId ? (
+              <ChatView conversationId={currentChatId} pocketMode hideChatHeader={!landscapeWide} />
+            ) : (
+              <div className="flex h-full flex-col items-center justify-center px-6 text-center">
+                <div className="max-w-sm space-y-2">
+                  <div className="text-[22px] font-semibold tracking-tight text-foreground">{userProfile.userName}，早上好</div>
+                  <p className="mt-16 text-[13px] leading-5 text-muted-foreground">开始你的第一个 Chat 对话，与 Agent 共享渠道与模型</p>
+                  <Button type="button" variant="outline" size="sm" onClick={createConversation} className="mt-3 h-9 gap-1.5"><Plus className="size-3.5" />新建对话</Button>
+                </div>
+              </div>
+            )
+          ) : (
+            currentSessionId ? (
+              <AgentView sessionId={currentSessionId} pocketMode hideAgentHeader={!landscapeWide} />
+            ) : (
+              <div className="flex h-full flex-col items-center justify-center px-6 text-center">
+                <div className="max-w-sm space-y-2">
+                  <div className="text-[22px] font-semibold tracking-tight text-foreground">{userProfile.userName}，早上好</div>
+                  <p className="mt-16 text-[13px] leading-5 text-muted-foreground">开始你的第一个 Agent 会话，Token 消耗热力图将在这里显示</p>
+                  <Button type="button" variant="outline" size="sm" onClick={createSession} className="mt-3 h-9 gap-1.5"><Plus className="size-3.5" />新建会话</Button>
+                </div>
+              </div>
+            )
+          )}
+        </div>
+      </div>
+        </div>
         </>
       )}
+
+      {/* 解绑确认弹窗（Portal 到 body，不随缩放容器变换） */}
+      <AlertDialog open={unbindConfirmOpen} onOpenChange={setUnbindConfirmOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>解绑此设备？</AlertDialogTitle>
+            <AlertDialogDescription>
+              解绑后将清除本机保存的服务器地址和访问令牌，断开当前连接并回到连接页，需要重新输入才能继续使用。
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>取消</AlertDialogCancel>
+            <AlertDialogAction className="bg-destructive text-destructive-foreground hover:bg-destructive/90" onClick={unbind}>确认解绑</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </>
+  )
+}
+
+// ===== 平板直接复用桌面 LeftSidebar；浏览器端只以 WebSocket adapter 替代 Electron IPC。 =====
+function NativePocketSidebar({ mobileOpen, onDismiss }: { mobileOpen: boolean; onDismiss: () => void }): React.ReactElement {
+  const drawerWidth = Math.max(200, Math.min(288, window.innerWidth - 24))
+  return (
+    <>
+      <div className="hidden h-full shrink-0 landscape:min-[1024px]:block"><LeftSidebar width={288} pocketMode /></div>
+      <div className={`fixed inset-0 z-50 landscape:min-[1024px]:hidden ${mobileOpen ? 'pointer-events-auto' : 'pointer-events-none'}`} aria-hidden={!mobileOpen}>
+        <button type="button" className={`absolute inset-0 z-0 bg-black/40 transition-opacity duration-200 ${mobileOpen ? 'opacity-100' : 'opacity-0'}`} onClick={onDismiss} aria-label="关闭会话导航" tabIndex={mobileOpen ? 0 : -1} />
+        <div
+          className={`absolute inset-y-0 left-0 z-10 w-[min(288px,calc(100vw-24px))] max-w-[calc(100vw-24px)] touch-pan-y transition-transform duration-200 ease-out ${SAFE_AREA_CLS} ${mobileOpen ? 'translate-x-0' : '-translate-x-full'}`}
+          // 再次点击当前已选中会话：收起抽屉（冒泡阶段判断；子会话箭头/操作按钮已 stopPropagation 不会冒泡到此处）
+          onClick={(e) => {
+            if ((e.target as Element | null)?.closest?.('[data-profer-navigation-item="session"][data-profer-navigation-active="true"]')) {
+              onDismiss()
+            }
+          }}
+        >
+          {/* 搜索面板（SearchDialog）是全局 atom + Portal，只需渲染一份；由横屏固定侧栏实例承担。
+              抽屉实例设为 false，避免双 SearchDialog 叠加导致打开即被 interactOutside 关闭（“一闪即逝”）。 */}
+          <LeftSidebar width={drawerWidth} pocketMode renderSearchDialog={false} />
+        </div>
+      </div>
     </>
   )
 }
@@ -937,7 +1378,7 @@ initDebugHud()
 debugLog('Pocket UI 已启动，调试 HUD 就绪')
 
 // 原生后台消息通道日志 → 调试 HUD：轮询拉取原生 WS 日志喂给 debugLog（仅 dev 变体/联调生效）
-if (import.meta.env.DEV || (window as unknown as { __POCKET_BUILD__?: string }).__POCKET_BUILD__ === 'dev') {
+if (import.meta.env.DEV) {
   setInterval(async () => {
     try {
       const logs = await getPocketKeepaliveLogs()

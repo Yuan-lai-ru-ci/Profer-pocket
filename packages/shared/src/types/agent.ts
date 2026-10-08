@@ -622,11 +622,13 @@ export type ProferEvent =
   | { type: 'context_window'; contextWindow: number }
   | { type: 'permission_mode_changed'; mode: ProferPermissionMode }
   | { type: 'title_updated'; title: string }
-  | { type: 'external_run_started'; source: AgentExternalRunSource; sessionId: string; parentSessionId?: string; title?: string; workspaceId?: string; modelId?: string; startedAt: number; session?: AgentSessionMeta }
-  | { type: 'delegation_session_updated'; session: AgentSessionMeta }
-  // 跨端会话元数据同步：Pocket 远程命令修改会话后立即通知桌面与其他 Pocket 客户端。
-  | { type: 'session_updated'; session: AgentSessionMeta }
-  | { type: 'session_deleted'; sessionId: string }
+  | { type: 'external_run_started'; source: AgentExternalRunSource; sessionId: string; parentSessionId?: string; title?: string; workspaceId?: string; modelId?: string; startedAt: number; session?: AgentSessionUiProjection }
+  /** @deprecated 使用顶层 session_projection payload；仅保留旧客户端兼容。 */
+  | { type: 'delegation_session_updated'; session: AgentSessionUiProjection }
+  /** @deprecated 使用顶层 session_projection payload；仅保留旧客户端兼容。 */
+  | { type: 'session_updated'; session: AgentSessionUiProjection }
+  /** @deprecated 使用顶层 session_projection delete payload；仅保留旧客户端兼容。 */
+  | { type: 'session_deleted'; sessionId: string; revision?: number }
   | { type: 'run_resumed'; sessionId: string }
   // 会话 run 结束、active 所有权已释放（含手动压缩 /compact 等非对话 run）。
   // 协作层监听它做「父会话空闲后重查自动续跑」，修复 compaction 占位导致的续跑遗漏。
@@ -634,17 +636,54 @@ export type ProferEvent =
   // 会话 run 真正完成（平板 remote-service 在 orchestrator onComplete 时广播，携带完成元数据）。
   // 与 run_idle 的区别：run_idle 表示 active 所有权释放（可能无结果），run_completed 表示本轮有确定结束。
   // 平板靠它拿到真实 startedAt/stoppedByUser，替代用 Date.now() 伪造 startedAt 的旧路。
-  | { type: 'run_completed'; sessionId: string; stoppedByUser?: boolean; startedAt?: number; resultSubtype?: string; resultErrors?: string[]; backgroundTasksPending?: boolean }
+  | { type: 'run_completed'; sessionId: string; stoppedByUser?: boolean; startedAt?: number; resultSubtype?: string; resultErrors?: string[]; backgroundTasksPending?: boolean; endReason?: AgentEndReason; endReasonLabel?: string }
 
 /** 外部入口触发 Agent 运行的来源 */
 export type AgentExternalRunSource = 'feishu' | 'dingtalk' | 'wechat' | 'bridge' | 'delegation' | 'automation'
 
-/** IPC 传输的统一 payload（替代 AgentEvent） */
+/** UI Projection Plane：会话安全完整快照或删除墓碑。 */
+export type AgentSessionProjectionPayload =
+  | { kind: 'session_projection'; operation: 'upsert'; session: AgentSessionUiProjection }
+  | { kind: 'session_projection'; operation: 'delete'; sessionId: string; revision: number }
+
+/** 可失效并重新拉取的目录类型。 */
+export type AgentCatalogKind = 'channels' | 'presets' | 'workspace_capabilities' | 'workspaces'
+
+/** UI Projection Plane：目录只发送失效通知，不广播配置正文。 */
+export interface AgentCatalogInvalidation {
+  kind: 'catalog_invalidation'
+  catalog: AgentCatalogKind
+  workspaceSlug: string | null
+  revision: number
+  changedAt: number
+}
+
+/** IPC/WS 复用的三平面 payload。kind 是唯一分流依据。 */
 export type AgentStreamPayload =
   | { kind: 'sdk_message'; message: SDKMessage }
   | { kind: 'profer_event'; event: ProferEvent }
+  | AgentSessionProjectionPayload
+  | AgentCatalogInvalidation
 
 // ===== Agent 会话管理 =====
+
+/**
+ * Agent run 结束原因。
+ *
+ * - 持久化到会话 meta（lastInterruptReason），刷新/重启后可恢复中断说明 chip
+ * - 追加对话记录条目（interruption_record）
+ * - 透传到 STREAM_COMPLETE，驱动前端中断说明 chip 与 toast
+ *
+ * completed 表示正常完成，不算中断，不记录、不显示 chip。
+ */
+export type AgentEndReason =
+  | 'completed'        // 正常完成（不记录、不显示 chip）
+  | 'stopped_by_user'  // 用户手动停止
+  | 'max_turns'        // 达到轮次上限（Claude error_max_turns）
+  | 'max_budget'       // 达到预算上限（Claude error_max_budget_usd）
+  | 'max_tokens'       // 输出/上下文达到长度上限（Pi stopReason=length / subtype=max_tokens）
+  | 'error'            // 执行期错误 / preflight 错误 / 异常 catch
+  | 'unknown'          // 已知以外的未知 subtype
 
 /**
  * Agent 执行时使用的文件根。
@@ -656,6 +695,53 @@ export type AgentCwdMode = 'session' | 'project'
 
 /** 会话私有工作台的文件布局。缺失字段兼容旧版 `.context/` 子目录。 */
 export type SessionWorkbenchLayout = 'legacy-context' | 'root'
+
+/**
+ * UI Projection Plane：会话安全完整快照。
+ *
+ * 只包含可跨设备广播的「安全 UI 字段」，由桌面主进程逐字段白名单构建；
+ * 不含本地文件/目录等设备私有字段（这些由本地 meta 保留）。
+ */
+export interface AgentSessionUiProjection {
+  schemaVersion: 1
+  id: string
+  revision: number
+  title: string
+  createdAt: number
+  updatedAt: number
+  channelId: string | null
+  modelId: string | null
+  agentRuntime: AgentRuntime
+  permissionMode: ProferPermissionMode
+  presetId: string | null
+  presetReference: import('./agent-preset').PresetReference | null
+  openAIThinkingLevel: AgentThinkingLevel | null
+  codexFastMode: boolean
+  autoQueueSendEnabled: boolean
+  workspaceId: string | null
+  pinned: boolean
+  archived: boolean
+  draft: boolean
+  parentSessionId: string | null
+  rootSessionId: string | null
+  sourceDelegationId: string | null
+  /** Pi `/tree` 探索分支所属的主线会话；仅探索分支设置，普通 fork 保持 null */
+  explorationParentSessionId: string | null
+  /** Pi `/tree` 探索分支的 assistant 分叉锚点（SDK 消息 uuid）；仅探索分支设置 */
+  explorationSourceMessageId: string | null
+  /** 用户可读的分叉来源标签，用于重新打开探索分支时恢复上下文提示；仅探索分支设置 */
+  explorationSourceLabel: string | null
+  delegationRole: string | null
+  delegationStatus: string | null
+  delegationDepth: number | null
+  sourceAutomationId: string | null
+  automationGraduated: boolean
+  completedButUnconfirmed: boolean
+  stoppedByUser: boolean
+  lastInterruptReason: AgentEndReason | null
+  lastInterruptLabel: string | null
+  lastInterruptAt: number | null
+}
 
 /**
  * Agent 会话轻量索引项
@@ -698,6 +784,8 @@ export interface AgentSessionMeta {
   workspaceId?: string
   /** 本会话绑定的 Agent 预设 ID（缺省时按工作区默认解析；预设系统两端共享） */
   presetId?: string
+  /** 本会话绑定的显式预设引用（新数据同时保存 presetId）。 */
+  presetReference?: import('./agent-preset').PresetReference
   /** 是否置顶 */
   pinned?: boolean
   /** 是否已归档 */
@@ -712,6 +800,12 @@ export interface AgentSessionMeta {
   knowledgeReferences?: KnowledgeReference[]
   /** 分叉来源：源会话的 Profer 工作目录（SDK session 文件在此目录的项目空间中，首次 resume 后清除） */
   forkSourceDir?: string
+  /** Pi `/tree` 探索分支所属的主线会话；仅探索分支设置，普通 fork 保持 undefined。 */
+  explorationParentSessionId?: string
+  /** Pi `/tree` 探索分支的 assistant 分叉锚点。 */
+  explorationSourceMessageId?: string
+  /** 用户可读的分叉来源，用于重新打开探索分支时恢复上下文提示。 */
+  explorationSourceLabel?: string
   /** 分叉来源：源会话的 SDK session ID（用于 rewind 时读取源会话的 file-history-snapshot 和备份文件） */
   forkSourceSdkSessionId?: string
   /** 回退后的 resume 截断点：下次发消息时传给 SDK resumeSessionAt（消费后清除） */
@@ -722,6 +816,14 @@ export interface AgentSessionMeta {
   completedButUnconfirmed?: boolean
   /** 最后一次流式执行是否被用户主动中断 */
   stoppedByUser?: boolean
+  /** 最近一次非正常结束的中断原因；正常完成时清除。 */
+  lastInterruptReason?: AgentEndReason
+  /** 最近中断的可读短文案。 */
+  lastInterruptLabel?: string
+  /** 最近中断时间戳。 */
+  lastInterruptAt?: number
+  /** 队列「自动发送」开关：轮结束是否自动发送队首消息。per-session 持久化，缺省为开。 */
+  autoQueueSendEnabled?: boolean
   /** 该会话当前的权限模式（持久化到磁盘，重启后恢复）。未设置时新会话默认 auto */
   permissionMode?: ProferPermissionMode
   /** 来源定时任务 ID（该会话由定时任务自动创建/复用时标记，用于侧栏显示钟表图标 + 跳转设置） */
@@ -748,6 +850,8 @@ export interface AgentSessionMeta {
   createdAt: number
   /** 更新时间戳 */
   updatedAt: number
+  /** 会话实体单调版本；历史数据缺失时按 0 兼容。 */
+  revision?: number
 }
 
 /** Whether an Agent session may be shown in user-facing session lists. */
@@ -1056,6 +1160,8 @@ export interface AgentSendInput {
   mentionedSessionIds?: string[]
   /** 渲染进程生成的流式开始时间戳，主进程原样回传到 STREAM_COMPLETE，确保竞态保护比较的是同一个值 */
   startedAt?: number
+  /** 前端预生成的消息 UUID（透传到持久化消息，用于乐观气泡与消息重载按 uuid 合并去重） */
+  uuid?: string
   /** 触发来源：用户手动 vs 定时任务自动触发（用于 UI 区分标记） */
   triggeredBy?: 'user' | 'automation' | 'delegation'
   /** 定时任务执行上下文（注入到系统提示词，用户不可见） */
@@ -1149,6 +1255,22 @@ export interface ForkSessionInput {
   upToMessageUuid?: string
   /** 目标模型 ID。省略时继承源会话模型；传入时必须属于源会话同一渠道且已启用 */
   modelId?: string
+}
+
+/**
+ * 创建探索分支输入（Pi `/tree` 探索分支，对应跨端 WS 命令 `create_exploration_session`）。
+ *
+ * 探索与普通 fork 是两种语义：fork 重建独立顶层会话（会话救援 / 换模型接续），
+ * 探索则挂在主线右侧血缘下，并通过 explorationSourceLabel 记录来源。
+ * 不传 modelId —— 探索必须继承源会话渠道与模型。
+ */
+export interface CreateExplorationSessionInput {
+  /** 父会话（主线）ID */
+  sessionId: string
+  /** assistant 分叉锚点消息 uuid（SDK 消息 uuid），必填 */
+  upToMessageUuid: string
+  /** 用户可读的分叉来源标签；服务端会 trim、折叠空白并截断至 120 字符 */
+  explorationSourceLabel?: string
 }
 
 /** 快照回退输入（同一会话内回退到指定点） */
@@ -1257,6 +1379,10 @@ export interface AgentStreamCompletePayload {
   resultErrors?: string[]
   /** 本轮主体结束但仍有后台任务/定时任务在飞行：UI 进入"空闲可输入"态，等待任务完成自动唤醒 */
   backgroundTasksPending?: boolean
+  /** 归一化后的结束原因（仅主 orchestrator 路径透传；completed 不触发 chip） */
+  endReason?: AgentEndReason
+  /** 结束原因的可读短文案（AGENT_END_REASON_LABELS 之一），供 chip / toast 展示 */
+  endReasonLabel?: string
 }
 
 // ===== 文件浏览器 =====
@@ -1508,6 +1634,59 @@ export const PROFER_PERMISSION_MODE_CONFIG = {
 
 /** 权限模式定义顺序（用于循环切换） */
 export const PROFER_PERMISSION_MODE_ORDER: readonly ProferPermissionMode[] = PROFER_PERMISSION_MODES
+
+/** 解析预设上限与会话请求后的有效权限模式。 */
+export function resolveEffectivePermissionMode(
+  presetPermissionMode: ProferPermissionMode | undefined,
+  requestedOverride?: ProferPermissionMode,
+): ProferPermissionMode {
+  const presetMode = presetPermissionMode ?? PROFER_DEFAULT_PERMISSION_MODE
+  if (!requestedOverride) return presetMode
+  const strictness: Record<ProferPermissionMode, number> = {
+    plan: 0,
+    auto: 1,
+    bypassPermissions: 2,
+  }
+  return strictness[requestedOverride] < strictness[presetMode] ? requestedOverride : presetMode
+}
+
+/** 候选权限模式是否在预设上限内可持久化。 */
+export function canSelectPermissionMode(
+  presetPermissionMode: ProferPermissionMode | undefined,
+  candidate: ProferPermissionMode,
+): boolean {
+  const capMode = presetPermissionMode ?? PROFER_DEFAULT_PERMISSION_MODE
+  return resolveEffectivePermissionMode(capMode, candidate) === candidate
+}
+
+/** 统一解析会话工具栏应显示的有效权限模式。 */
+export function resolveSelectorPermissionMode(
+  presetPermissionMode: ProferPermissionMode | undefined,
+  requestedMode: ProferPermissionMode | undefined,
+): ProferPermissionMode {
+  const capMode = presetPermissionMode ?? PROFER_DEFAULT_PERMISSION_MODE
+  return requestedMode === undefined ? capMode : resolveEffectivePermissionMode(capMode, requestedMode)
+}
+
+/** 双端共享菜单顺序、标签和越权说明。 */
+export function buildPermissionModeMenu(presetPermissionMode: ProferPermissionMode | undefined): Array<{
+  mode: ProferPermissionMode
+  selectable: boolean
+  label: string
+  description: string
+}> {
+  return PROFER_PERMISSION_MODE_ORDER.map((mode) => ({
+    mode,
+    selectable: canSelectPermissionMode(presetPermissionMode, mode),
+    label: PROFER_PERMISSION_MODE_CONFIG[mode].label,
+    description: PROFER_PERMISSION_MODE_CONFIG[mode].description,
+  }))
+}
+
+export function describePermissionModeRestriction(presetPermissionMode: ProferPermissionMode | undefined): string {
+  const capMode = presetPermissionMode ?? PROFER_DEFAULT_PERMISSION_MODE
+  return `当前预设将权限限制为「${PROFER_PERMISSION_MODE_CONFIG[capMode].label}」，不能切换到更宽松的模式`
+}
 
 export function isProferPermissionMode(mode: string): mode is ProferPermissionMode {
   return (PROFER_PERMISSION_MODES as readonly string[]).includes(mode)

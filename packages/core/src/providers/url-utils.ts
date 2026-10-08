@@ -66,6 +66,27 @@ function removePathSuffixForSdkBaseUrl(rawUrl: string, suffix: string): string {
 }
 
 /**
+ * 判断端点是否为 Anthropic 协议形态（路径含 `/anthropic`）。
+ *
+ * 供「同一 provider 同时提供 OpenAI 与 Anthropic 两套入口」的供应商使用（典型是 DeepSeek）。
+ * 这类供应商的协议必须跟随**端点形态**，不能写死 provider：
+ * - 官方 Anthropic 入口（`…/anthropic`）→ Anthropic 协议
+ * - 第三方 OpenAI 兼容网关（`…/v1`）→ OpenAI 协议
+ *
+ * 商业代管 relay（如 `…/v1/proxy`）由服务端路由决定协议，不适用本判定，
+ * 调用方需自行排除。
+ */
+export function isAnthropicShapedEndpoint(baseUrl?: string): boolean {
+  const raw = baseUrl?.trim()
+  if (!raw) return false
+  try {
+    return new URL(raw).pathname.toLowerCase().includes('/anthropic')
+  } catch {
+    return raw.toLowerCase().includes('/anthropic')
+  }
+}
+
+/**
  * 规范化 Anthropic Base URL（用于 Proma Chat 直接调用 API）
  *
  * 去除尾部斜杠，去除误填的 /messages 后缀，如果没有版本路径则追加 /v1。
@@ -171,6 +192,10 @@ export function normalizeOpenAIBaseUrlForSdk(baseUrl: string): string {
  * - custom: "https://api.example.com/v1/chat/completions" → 原样使用
  */
 export function resolveOpenAIChatCompletionsUrl(baseUrl: string, provider: ProviderType = 'openai'): string {
+  if (provider === 'ollama') {
+    const rootUrl = normalizeBaseUrl(baseUrl).replace(/\/v1$/, '')
+    return `${rootUrl}/v1/chat/completions`
+  }
   if (provider === 'custom') {
     return trimTrailingUrlPathSlash(baseUrl)
   }
@@ -218,6 +243,9 @@ export function resolveOpenAIModelsUrl(baseUrl: string): string {
  * （已含版本路径如 `/coding/v1` 的不会重复追加），与 Agent SDK 自动拼接 /v1/messages 的行为保持一致。
  */
 export function normalizeAnthropicProviderUrl(baseUrl: string, provider: ProviderType): string {
+  if (provider === 'ollama') {
+    return normalizeVersionedAnthropicBaseUrl(baseUrl)
+  }
   if (
     provider === 'minimax'
     || provider === 'xiaomi'
@@ -244,6 +272,10 @@ export function normalizeAnthropicProviderUrl(baseUrl: string, provider: Provide
  * - anthropic-compatible: "https://gateway.example.com/v1/messages" → 原样使用
  */
 export function resolveAnthropicMessagesUrl(baseUrl: string, provider: ProviderType): string {
+  if (provider === 'ollama') {
+    const normalized = normalizeBaseUrl(baseUrl).replace(/\/v1$/, '')
+    return `${normalized}/v1/messages`
+  }
   if (provider === 'anthropic-compatible') {
     return trimTrailingUrlPathSlash(baseUrl)
   }
@@ -263,6 +295,9 @@ export function resolveAnthropicMessagesUrl(baseUrl: string, provider: ProviderT
  * 内置供应商按协议根地址推导 /models。
  */
 export function resolveAnthropicModelsUrl(baseUrl: string, provider: ProviderType): string {
+  if (provider === 'ollama') {
+    return `${normalizeBaseUrl(baseUrl).replace(/\/v1$/, '')}/v1/models`
+  }
   if (hasPathSuffix(baseUrl, '/messages')) {
     return replacePathSuffix(baseUrl, '/messages', '/models')
   }

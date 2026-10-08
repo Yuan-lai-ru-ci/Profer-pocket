@@ -19,6 +19,7 @@ import { userProfileAtom } from '@/atoms/user-profile'
 import { stickyUserMessageEnabledAtom } from '@/atoms/ui-preferences'
 import { MessageResponse, remarkMentions } from './message'
 import type { RemarkPluginFn } from './message'
+import { usePocketMode } from './pocket-mode-context'
 import { cn } from '@/lib/utils'
 
 /** 悬浮条专用 remark 插件（仅 mention，不保留换行） */
@@ -48,6 +49,9 @@ export function StickyUserMessage({ userMessages }: StickyUserMessageProps): Rea
   const { scrollRef, stopScroll, state: stickyState } = useStickToBottomContext()
   const userProfile = useAtomValue(userProfileAtom)
   const stickyEnabled = useAtomValue(stickyUserMessageEnabledAtom)
+  // 0.1.15：pocket 侧整体关闭悬浮条（渲染点已不再挂载，这里再兜一层，
+  // 防止后续新增渲染点把移动端行为带回来）。桌面端 pocketMode 恒为 false。
+  const pocketMode = usePocketMode()
 
   // 当前悬浮展示的消息
   const [stickyMessage, setStickyMessage] = React.useState<UserMessageData | null>(null)
@@ -63,7 +67,7 @@ export function StickyUserMessage({ userMessages }: StickyUserMessageProps): Rea
 
   React.useEffect(() => {
     const el = scrollRef.current
-    if (!el || userMessages.length === 0 || !stickyEnabled) {
+    if (!el || userMessages.length === 0 || !stickyEnabled || pocketMode) {
       setStickyMessage(null)
       return
     }
@@ -109,7 +113,7 @@ export function StickyUserMessage({ userMessages }: StickyUserMessageProps): Rea
       resizeObserver.disconnect()
       cancelAnimationFrame(rafId)
     }
-  }, [scrollRef, userMessages, messageMap, stickyEnabled])
+  }, [scrollRef, userMessages, messageMap, stickyEnabled, pocketMode])
 
   // 点击回滚到原始消息
   const scrollToOriginal = React.useCallback(() => {
@@ -135,7 +139,7 @@ export function StickyUserMessage({ userMessages }: StickyUserMessageProps): Rea
   const isSticky = stickyMessage !== null
   const hasContent = stickyMessage && (stickyMessage.text || stickyMessage.attachments.length > 0)
 
-  if (!stickyEnabled) return <></>
+  if (!stickyEnabled || pocketMode) return <></>
   if (!hasContent && !isSticky) return <></>
 
   return (

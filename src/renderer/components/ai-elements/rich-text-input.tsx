@@ -214,7 +214,7 @@ export function RichTextInput({
 
   // Mention Suggestion 配置（稳定引用，不随 workspacePath 变化重建）
   const mentionSuggestion = useMemo(
-    () => createFileMentionSuggestion(workspacePathRef, mentionActiveRef, attachedDirsRef, mentionItemCountRef, sessionAttachedDirsRef),
+    () => createFileMentionSuggestion(workspacePathRef, mentionActiveRef, attachedDirsRef, mentionItemCountRef, sessionAttachedDirsRef, currentSessionIdRef),
     [],
   )
 

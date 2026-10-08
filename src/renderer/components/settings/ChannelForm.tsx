@@ -116,6 +116,7 @@ const PROVIDER_CHAT_PATHS: Record<ProviderType, string> = {
   'xiaomi-token-plan': '/v1/messages',
   'openai-codex': '',
   xai: '',
+  ollama: '/v1/chat/completions',
   custom: '/chat/completions',
 }
 

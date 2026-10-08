@@ -1,0 +1,14 @@
+{
+  "source": "ProferAI/apps/electron/resources/icon.svg",
+  "sourceRevision": "workspace snapshot 2026-09-21",
+  "viewBox": "0 0 1024 1024",
+  "colors": {
+    "background": "#000000",
+    "surface": "#F2F0EC",
+    "shadow": "#000000",
+    "accent": "#7F7F7F",
+    "nativeSplashBackground": "#0b0d0e"
+  },
+  "androidAdaptiveIconSafeZone": "foreground geometry remains inside 27..81 of the 108dp viewport",
+  "syncRule": "Update this independent copy only from the desktop icon source; never reference the desktop repository at build time."
+}

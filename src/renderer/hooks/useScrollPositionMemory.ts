@@ -30,6 +30,17 @@ function setScrollPosition(id: string, distance: number): void {
 }
 
 /**
+ * 丢弃某个对话/会话的滚动位置记忆（下一次 ScrollPositionManager 就绪时直接回到底部）。
+ *
+ * R10（强制刷新）：用户点「重新加载会话」时期望立刻看到最新输出，
+ * 而不是被旧的非底部位置恢复拦住（那是切会话的语义，不是刷新）。
+ * 仅由 pocket 强制刷新路径调用，桌面端行为不变。
+ */
+export function forgetScrollPosition(id: string): void {
+  scrollPositionCache.delete(id)
+}
+
+/**
  * ScrollPositionManager — 放在 Conversation（StickToBottom）内部
  */
 export function ScrollPositionManager({ id, ready }: { id: string; ready: boolean }): null {

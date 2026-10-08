@@ -11,6 +11,8 @@
  * 这里统一交给对应订阅者处理。
  */
 
+import type { CommandResult, CreateExplorationSessionInput } from '@profer/shared'
+
 export type AgentWorkflowEvent = {
   sessionId: string
   payload: unknown
@@ -96,12 +98,9 @@ function settlePendingSendId(payload: { sessionId: string; userMessage: string; 
   }
 }
 
-type CommandResultMessage = {
+type CommandResultMessage = CommandResult<unknown> & {
   kind: 'command_result'
   requestId: string | null
-  ok: boolean
-  data?: unknown
-  error?: string
 }
 
 type InboundMessage =
@@ -133,8 +132,10 @@ export interface WsClientOptions {
   onAgentEvent?: (evt: AgentWorkflowEvent) => void
   /** Chat 流式事件回调 */
   onChatEvent?: (evt: ChatWorkflowEvent) => void
-  /** 指令结果回调（按 requestId 分发） */
+  /** 指令结果回调（按 commandId 分发） */
   onCommandResult?: (result: CommandResultMessage) => void
+  /** 新命令发送前记录 pending，供 Remote Store 幂等管理。 */
+  onCommandPending?: (pending: { commandId: string; expectedRevision?: number; sessionId?: string }) => void
   /** Agent 事件恢复结果，用于触发缓存过期后的快照兜底和调试指标记录。 */
   onAgentResumeStatus?: (status: AgentResumeStatus) => void
 }
@@ -147,6 +148,8 @@ export class WsClient {
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null
   private pendingCommands = new Map<string, { resolve: (r: unknown) => void; reject: (e: Error) => void }>()
+  private completedCommands = new Set<string>()
+  private onCommandPending?: WsClientOptions['onCommandPending']
 
   /** 待发消息队列：连接断开时暂存 send_message，重连后按序重放（幂等去重依靠 clientMessageId）。
    *  只暂存「用户核心输入」类操作；stop/权限/读操作时效性强，断线后应重新发起而非重放。 */
@@ -182,6 +185,7 @@ export class WsClient {
     this.onAgentEvent = options.onAgentEvent
     this.onChatEvent = options.onChatEvent
     this.onCommandResult = options.onCommandResult
+    this.onCommandPending = options.onCommandPending
     this.onAgentResumeStatus = options.onAgentResumeStatus
     this.resumeStorageKey = `profer-remote-agent-events:${stableHash(`${this.url}|${this.token}`)}`
     this.lastEventId = this.readResumeState()?.lastEventId ?? 0
@@ -353,7 +357,8 @@ export class WsClient {
   }
 
   private resolveCommandResult(msg: CommandResultMessage): void {
-    const id = msg.requestId as string | undefined
+    const id = (msg.commandId || msg.requestId) as string | undefined
+    if (id && this.completedCommands.has(id)) return
     // 旧版服务端会把 resume_agent_events 当未知指令返回 command_result；
     // 它没有对应 pending command，不能落入 FIFO 兜底误消费其他业务请求。
     if (id && id === this.resumeCommandId) {
@@ -363,8 +368,9 @@ export class WsClient {
     if (id && this.pendingCommands.has(id)) {
       const pending = this.pendingCommands.get(id)!
       this.pendingCommands.delete(id)
+      this.completedCommands.add(id)
       if (msg.ok) pending.resolve(msg.data)
-      else pending.reject(new Error(msg.error || '指令失败'))
+      else pending.reject(new Error(msg.conflict?.code ? `${msg.conflict.code}: ${msg.error || '指令失败'}` : (msg.error || '指令失败')))
       return
     }
     // 无 requestId 时用 FIFO 兜底（兼容）
@@ -372,8 +378,9 @@ export class WsClient {
     if (fallback) {
       const [fid, pending] = fallback
       this.pendingCommands.delete(fid)
+      this.completedCommands.add(fid)
       if (msg.ok) pending.resolve(msg.data)
-      else pending.reject(new Error(msg.error || '指令失败'))
+      else pending.reject(new Error(msg.conflict?.code ? `${msg.conflict.code}: ${msg.error || '指令失败'}` : (msg.error || '指令失败')))
     }
   }
 
@@ -481,7 +488,7 @@ export class WsClient {
    * 发送一条指令并等待 command_result。
    * 若连接未就绪则立即 reject。
    */
-  sendCommand<T = unknown>(payload: Record<string, unknown>): Promise<T> {
+  sendCommand<T = unknown>(payload: Record<string, unknown>, options?: { expectedRevision?: number }): Promise<T> {
     if (!this.isOpen()) {
       return Promise.reject(new Error('连接未就绪，请稍候重试'))
     }
@@ -491,7 +498,12 @@ export class WsClient {
       //  与命令追踪 ID 重名冲突曾被展开覆盖，导致主进程收到命令 ID 去查 pending → “提问请求不存在”）。
       const cmdId = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
       this.pendingCommands.set(cmdId, { resolve: resolve as (r: unknown) => void, reject })
-      this.ws!.send(JSON.stringify({ ...payload, _cmdId: cmdId }))
+      this.onCommandPending?.({
+        commandId: cmdId,
+        expectedRevision: options?.expectedRevision,
+        sessionId: typeof payload.sessionId === 'string' ? payload.sessionId : undefined,
+      })
+      this.ws!.send(JSON.stringify({ ...payload, ...(options?.expectedRevision !== undefined ? { expectedRevision: options.expectedRevision } : {}), _cmdId: cmdId }))
       // 超时兜底
       setTimeout(() => {
         if (this.pendingCommands.has(cmdId)) {
@@ -516,6 +528,10 @@ export class WsClient {
     return this.sendCommand({ type: 'list_workspaces' })
   }
 
+  getWorkspaceCapabilities(workspaceSlug: string): Promise<unknown> {
+    return this.sendCommand({ type: 'get_workspace_capabilities', workspaceSlug })
+  }
+
   getWorkspaceHeatmapDaily(workspaceId: string): Promise<unknown> {
     return this.sendCommand({ type: 'get_workspace_heatmap_daily', workspaceId })
   }
@@ -531,6 +547,16 @@ export class WsClient {
   /** 分叉会话（从指定消息处创建新会话继续；对齐桌面 forkAgentSession） */
   forkSession(payload: { sessionId: string; upToMessageUuid?: string }): Promise<unknown> {
     return this.sendCommand({ type: 'fork_session', ...payload })
+  }
+
+  /**
+   * 创建 Pi `/tree` 探索分支（对齐桌面 forkAgentSession + explorationSourceLabel 语义）。
+   *
+   * 与分叉的区别：不重建顶层会话，分支挂在主线血缘下并继承源会话模型
+   * （服务端不接受 modelId）；服务端返回完整会话对象，含探索血缘字段。
+   */
+  createExplorationSession(payload: CreateExplorationSessionInput): Promise<unknown> {
+    return this.sendCommand({ type: 'create_exploration_session', ...payload })
   }
 
   /** 快照回退（同一会话内回退到指定点，恢复文件 + 截断对话；对齐桌面 rewindSession） */
@@ -570,6 +596,23 @@ export class WsClient {
     return this.sendCommand({ type: 'session_detail', sessionId })
   }
 
+  /** Pi 推理档位能力（对齐桌面 IPC getPiReasoningCapability）：
+   *  档位由服务端 resolvePiReasoningCapability 计算（renderer 无 pi-ai 目录，无法本地推导）。 */
+  getPiReasoningCapability(provider: string, modelId: string): Promise<unknown> {
+    return this.sendCommand({ type: 'get_pi_reasoning_capability', provider, modelId })
+  }
+
+  /** 搜索会话可引用的工作区文件（@ 引用）：roots 由服务端按会话授权推导，
+   *  客户端不提交 rootPath / candidateBasePaths（与 resolve_and_read_file 同一授权策略）。 */
+  searchWorkspaceFiles(sessionId: string, query: string, limit?: number): Promise<unknown> {
+    return this.sendCommand({
+      type: 'search_workspace_files',
+      sessionId,
+      query,
+      ...(typeof limit === 'number' ? { limit } : {}),
+    })
+  }
+
   getSdkMessages(
     sessionId: string,
     opts?: { before?: number; targetMessages?: number },
@@ -585,6 +628,21 @@ export class WsClient {
     return this.sendCommand({ type: 'get_pending_interactions', ...(sessionId ? { sessionId } : {}) })
   }
 
+  /**
+   * 获取活跃 Agent 会话的运行时上下文窗口快照（对齐桌面 remote-service `get_agent_runtime_contexts`）。
+   *
+   * `context_window` 是 run 启动时的瞬时事件，Pocket 晚连接/重连/切回会话时会错过它，
+   * 只能按模型名推断窗口，导致上下文分母与电脑端不一致。此命令返回主端权威快照
+   * （仅覆盖活跃 run 的会话：`{ sessionId, contextWindow, updatedAt }`）。
+   * 旧服务端不识别时返回 `ok:false`，由调用方静默降级。
+   */
+  getAgentRuntimeContexts(sessionIds?: string[]): Promise<unknown> {
+    return this.sendCommand({
+      type: 'get_agent_runtime_contexts',
+      ...(sessionIds && sessionIds.length > 0 ? { sessionIds } : {}),
+    })
+  }
+
   respondPermission(requestId: string, behavior: 'allow' | 'deny', alwaysAllow = false): Promise<unknown> {
     return this.sendCommand({ type: 'respond_permission', requestId, behavior, alwaysAllow })
   }
@@ -597,16 +655,16 @@ export class WsClient {
     return this.sendCommand({ type: 'respond_exit_plan_mode', requestId, action, feedback })
   }
 
-  updateSessionModel(sessionId: string, channelId: string, modelId?: string): Promise<unknown> {
-    return this.sendCommand({ type: 'update_session_model', sessionId, channelId, modelId })
+  updateSessionModel(sessionId: string, channelId?: string, modelId?: string, expectedRevision?: number): Promise<unknown> {
+    return this.sendCommand({ type: 'update_session_model', sessionId, ...(channelId ? { channelId } : {}), ...(modelId ? { modelId } : {}) }, { expectedRevision })
   }
 
-  updateSessionRuntime(sessionId: string, runtime: 'claude' | 'pi'): Promise<unknown> {
-    return this.sendCommand({ type: 'update_session_runtime', sessionId, runtime })
+  updateSessionRuntime(sessionId: string, runtime: 'claude' | 'pi', expectedRevision?: number): Promise<unknown> {
+    return this.sendCommand({ type: 'update_session_runtime', sessionId, runtime }, { expectedRevision })
   }
 
-  updatePermissionMode(sessionId: string, mode: 'auto' | 'plan' | 'bypassPermissions'): Promise<unknown> {
-    return this.sendCommand({ type: 'update_permission_mode', sessionId, mode })
+  updatePermissionMode(sessionId: string, mode: 'auto' | 'plan' | 'bypassPermissions', expectedRevision?: number): Promise<unknown> {
+    return this.sendCommand({ type: 'update_permission_mode', sessionId, mode }, { expectedRevision })
   }
 
   // ===== Agent 预设（对齐主仓库 remote-service 预设 WS 命令，数据与电脑端共享） =====
@@ -623,8 +681,8 @@ export class WsClient {
     return this.sendCommand({ type: 'set_default_preset', workspaceSlug, presetId })
   }
 
-  updateSessionPreset(sessionId: string, presetId: string): Promise<unknown> {
-    return this.sendCommand({ type: 'update_session_preset', sessionId, presetId })
+  updateSessionPreset(sessionId: string, presetId: string, expectedRevision?: number): Promise<unknown> {
+    return this.sendCommand({ type: 'update_session_preset', sessionId, presetId }, { expectedRevision })
   }
 
   createPreset(workspaceSlug: string, input: Record<string, unknown>): Promise<unknown> {
@@ -651,7 +709,19 @@ export class WsClient {
     return this.sendCommand({ type: 'rename_session', sessionId, title })
   }
 
-  createSession(payload: { title?: string; channelId?: string; workspaceId?: string; modelId?: string }): Promise<unknown> {
+  regenerateSessionTitle(sessionId: string, channelId?: string, modelId?: string): Promise<unknown> {
+    return this.sendCommand({ type: 'regenerate_session_title', sessionId, channelId, modelId })
+  }
+
+  markSessionUnread(sessionId: string): Promise<unknown> {
+    return this.sendCommand({ type: 'mark_session_unread', sessionId })
+  }
+
+  markSessionRead(sessionId: string): Promise<unknown> {
+    return this.sendCommand({ type: 'mark_session_read', sessionId })
+  }
+
+  createSession(payload: { title?: string; channelId?: string; workspaceId?: string; modelId?: string; permissionMode?: 'auto' | 'plan' | 'bypassPermissions' }): Promise<unknown> {
     return this.sendCommand({ type: 'create_session', ...payload })
   }
 
@@ -665,7 +735,7 @@ export class WsClient {
     return this.sendCommand({ type: 'ensure_project_draft_session', ...payload })
   }
 
-  sendMessage(payload: { sessionId: string; userMessage: string; channelId: string; modelId?: string; workspaceId?: string }): Promise<unknown> {
+  sendMessage(payload: { sessionId: string; userMessage: string; channelId: string; modelId?: string; workspaceId?: string; permissionMode?: 'auto' | 'plan' | 'bypassPermissions'; uuid?: string; startedAt?: number }): Promise<unknown> {
     // 幂等去重键既要覆盖同一 WebView 的 WS 重连，也要覆盖“服务端已接收但 WebView
     // 被系统杀掉、未收到 accepted”的跨进程恢复窗口。
     const clientMessageId = claimPendingSendId(payload, WsClient.newClientMessageId)

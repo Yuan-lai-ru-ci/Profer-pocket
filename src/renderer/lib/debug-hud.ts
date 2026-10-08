@@ -13,9 +13,8 @@
  * 展开面板悬浮在输入框正上方，不遮挡输入。composer 随 React 重渲染重建时，
  * MutationObserver 检测到胶囊脱离工具栏后自动重新挂载。
  *
- * 启用条件：import.meta.env.DEV（本地 vite 联调）或 window.__POCKET_BUILD__ === 'dev'
- * （dev 变体 APK，由 build-apk.mjs 在 sync-web 后向 web/index.html 注入标记）。
- * release 变体不注入标记 → init 为空操作，HUD 完全关闭。
+ * 启用条件：仅 import.meta.env.DEV（本地 vite 联调）。
+ * release/dev APK 均不启用屏显 HUD，避免将调试工具带入正式产物。
  *
  * 用法（pocket/main.tsx 挂载时）：
  *   import { initDebugHud, debugLog } from '@/lib/debug-hud'
@@ -44,14 +43,9 @@ let followBottom = true
 let copyResetTimer: ReturnType<typeof setTimeout> | null = null
 let observer: MutationObserver | null = null
 
-/** 是否启用 HUD：本地 vite 联调（import.meta.env.DEV）或 dev 变体 APK（__POCKET_BUILD__） */
+/** 是否启用 HUD：仅本地 vite 联调。 */
 function isHudEnabled(): boolean {
-  if (import.meta.env.DEV) return true
-  if (typeof window !== 'undefined') {
-    const buildTag = (window as unknown as { __POCKET_BUILD__?: string }).__POCKET_BUILD__
-    return buildTag === 'dev'
-  }
-  return false
+  return import.meta.env.DEV
 }
 
 function nowTime(): string {

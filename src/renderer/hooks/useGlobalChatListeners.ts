@@ -46,18 +46,27 @@ export function useGlobalChatListeners(): void {
     /** 辅助函数：更新 Map 中某个对话的流式状态 */
     const updateState = (
       convId: string,
+      runId: string,
       updater: (prev: ConversationStreamState) => ConversationStreamState
     ): void => {
       store.set(streamingStatesAtom, (prev) => {
-        const current = prev.get(convId) ?? {
-          streaming: false,
-          content: '',
-          reasoning: '',
-          model: undefined,
-          toolActivities: [],
-          startedAt: Date.now(),
-        }
-        const next = updater(current)
+        const current = prev.get(convId)
+        // 旧 run 的迟到事件不能写进当前新 run 的状态。
+        if (current?.runId && current.runId !== runId) return prev
+        // 移动端平台差异：runId 由服务端分配，客户端发送时无从得知，
+        // 因此「首个到达的事件」负责把状态绑定到该 runId（桌面由 ChatView 发送前预生成）。
+        const base = current
+          ? { ...current, runId }
+          : {
+            runId,
+            streaming: false,
+            content: '',
+            reasoning: '',
+            model: undefined,
+            toolActivities: [],
+            startedAt: Date.now(),
+          }
+        const next = updater(base)
         const map = new Map(prev)
         map.set(convId, next)
         return map
@@ -77,7 +86,7 @@ export function useGlobalChatListeners(): void {
     // ===== 1. 流式内容块 =====
     const cleanupChunk = window.electronAPI.onStreamChunk(
       (event: StreamChunkEvent) => {
-        updateState(event.conversationId, (s) => ({
+        updateState(event.conversationId, event.runId, (s) => ({
           ...s,
           content: s.content + event.delta,
         }))
@@ -87,7 +96,7 @@ export function useGlobalChatListeners(): void {
     // ===== 2. 流式推理内容 =====
     const cleanupReasoning = window.electronAPI.onStreamReasoning(
       (event: StreamReasoningEvent) => {
-        updateState(event.conversationId, (s) => ({
+        updateState(event.conversationId, event.runId, (s) => ({
           ...s,
           reasoning: s.reasoning + event.delta,
         }))
@@ -97,10 +106,13 @@ export function useGlobalChatListeners(): void {
     // ===== 3. 流式完成 =====
     const cleanupComplete = window.electronAPI.onStreamComplete(
       (event: StreamCompleteEvent) => {
+        // 旧 run 的完成事件不能关闭当前新 run；状态无 runId（首个事件就是终态）时同样接纳。
+        const current = store.get(streamingStatesAtom).get(event.conversationId)
+        if (current?.runId && current.runId !== event.runId) return
         // 标记 streaming=false，但保留 content/reasoning 作为过渡气泡
         // 流式状态的完全清除由 ChatView 在消息加载完成后执行（见 chatMessageRefreshAtom 的 useEffect），
         // 确保不会出现「气泡消失 → 持久化消息尚未加载」的空档闪烁
-        updateState(event.conversationId, (s) => ({ ...s, streaming: false }))
+        updateState(event.conversationId, event.runId, (s) => ({ ...s, streaming: false }))
 
         // 递增消息刷新版本号，通知 ChatView 重新加载消息
         store.set(chatMessageRefreshAtom, (prev) => {
@@ -144,10 +156,13 @@ export function useGlobalChatListeners(): void {
     // ===== 4. 流式错误 =====
     const cleanupError = window.electronAPI.onStreamError(
       (event: StreamErrorEvent) => {
+        // 旧 run 的错误事件不能关闭当前新 run；状态无 runId（首个事件就是终态）时同样接纳。
+        const currentErrorState = store.get(streamingStatesAtom).get(event.conversationId)
+        if (currentErrorState?.runId && currentErrorState.runId !== event.runId) return
         console.error('[GlobalChatListeners] 流式错误:', event.error)
 
         // 标记 streaming=false，保留内容作为过渡（与完成逻辑一致）
-        updateState(event.conversationId, (s) => ({ ...s, streaming: false }))
+        updateState(event.conversationId, event.runId, (s) => ({ ...s, streaming: false }))
 
         // 存储错误消息，供 UI 显示
         store.set(chatStreamErrorsAtom, (prev) => {
@@ -185,7 +200,7 @@ export function useGlobalChatListeners(): void {
     // ===== 5. 工具活动 =====
     const cleanupToolActivity = window.electronAPI.onStreamToolActivity(
       (event: StreamToolActivityEvent) => {
-        updateState(event.conversationId, (s) => ({
+        updateState(event.conversationId, event.runId, (s) => ({
           ...s,
           toolActivities: [...s.toolActivities, event.activity],
         }))

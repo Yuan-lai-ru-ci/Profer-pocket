@@ -17,6 +17,7 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { cn } from '@/lib/utils'
 import type { ChannelPlanQuotaResult, ChannelPlanQuotaWindow } from '@profer/shared'
 import { usePlanQuota } from '@/hooks/use-plan-quota'
+import { useAgentRuntimeContextHydration } from '@/pocket/use-agent-runtime-context'
 
 /** 不支持 Plan 额度时主进程返回的统一消息，renderer 端用于判断应不展示额度区 */
 const UNSUPPORTED_PLAN_QUOTA_MESSAGE = '当前渠道不支持订阅 Plan 额度查询'
@@ -217,6 +218,14 @@ export function ContextUsageBadge({
 
   const [open, setOpen] = React.useState(false)
   const closeTimerRef = React.useRef<number | null>(null)
+
+  // R2：弹层打开时向电脑端拉取权威上下文窗口（run 启动后的瞬时事件 Pocket 可能已错过，
+  // 本地按模型名推断的窗口会与电脑端不一致）。未连接/旧版桌面端时静默无变化。
+  const { refresh: refreshRuntimeContext } = useAgentRuntimeContextHydration()
+  React.useEffect(() => {
+    if (!open || !sessionId) return
+    refreshRuntimeContext([sessionId])
+  }, [open, sessionId, refreshRuntimeContext])
 
   const cancelClose = React.useCallback(() => {
     if (closeTimerRef.current != null) {

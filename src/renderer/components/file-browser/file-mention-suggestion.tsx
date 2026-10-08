@@ -21,6 +21,7 @@ export function createFileMentionSuggestion(
   attachedDirsRef?: React.RefObject<string[]>,
   mentionItemCountRef?: React.MutableRefObject<number>,
   sessionAttachedDirsRef?: React.RefObject<string[]>,
+  sessionIdRef?: React.RefObject<string | null>,
 ): Omit<SuggestionOptions<FileIndexEntry>, 'editor'> {
   let lastResult: FileSearchResult | null = null
   let missingWorkspaceToastShown = false
@@ -32,8 +33,12 @@ export function createFileMentionSuggestion(
 
     items: async ({ query }): Promise<FileIndexEntry[]> => {
       const wsPath = workspacePathRef.current
-      if (!wsPath) {
-        console.warn('[FileMention] workspacePath is null, mention disabled')
+      // G2-c：pocket 拿不到桌面机工作区的本地路径（getAgentSessionPath 在 pocket 恒 null），
+      // 因此门禁从「有桌面路径」改为「远程可用」——有 sessionId 即可经 WS 搜索，
+      // 文件 roots 由服务端按会话授权推导（客户端不提交 rootPath / additionalPaths）。
+      const remoteSessionId = sessionIdRef?.current ?? null
+      if (!wsPath && !remoteSessionId) {
+        console.warn('[FileMention] no workspacePath and no remote session, mention disabled')
         if (!missingWorkspaceToastShown) {
           toast.warning('暂时无法引用文件', {
             description: '当前 Agent 会话没有可用的工作区路径。请在顶部选择工作区，或新建 Agent 会话后重试。',
@@ -45,6 +50,28 @@ export function createFileMentionSuggestion(
       missingWorkspaceToastShown = false
 
       try {
+        if (!wsPath) {
+          // 远程模式（pocket）：第一个参数承载 sessionId（见 pocket/electronapi-stub.ts 注释）。
+          const remoteResult = await window.electronAPI.searchWorkspaceFiles(
+            remoteSessionId as string,
+            query ?? '',
+            200,
+          )
+          // 旧服务端不支持该命令时 stub 回 null → 与本地失败一致的降级（toast + 空列表）。
+          if (!remoteResult || !Array.isArray(remoteResult.entries)) {
+            lastResult = null
+            if (!missingWorkspaceToastShown) {
+              toast.warning('暂时无法引用文件', {
+                description: '远程文件搜索不可用（服务端未支持该指令或连接已断开）。',
+              })
+              missingWorkspaceToastShown = true
+            }
+            return []
+          }
+          lastResult = remoteResult
+          return remoteResult.entries
+        }
+
         const additionalPaths = attachedDirsRef?.current ?? []
         const sessionPaths = sessionAttachedDirsRef?.current ?? []
 
@@ -60,6 +87,13 @@ export function createFileMentionSuggestion(
       } catch(e) {
         console.error('[FileMention] search failed:', e)
         lastResult = null
+        // 远程搜索失败（如旧服务端返回未知指令）也给出与之前等价的可见降级，不静默。
+        if (!wsPath && !missingWorkspaceToastShown) {
+          toast.warning('暂时无法引用文件', {
+            description: '远程文件搜索不可用（服务端未支持该指令或连接已断开）。',
+          })
+          missingWorkspaceToastShown = true
+        }
         return []
       }
     },

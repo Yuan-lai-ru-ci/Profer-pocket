@@ -11,9 +11,11 @@
  *    安全空实现或明确报错，避免复用组件崩溃或出现“可点但无效果”的伪按钮。
  */
 
-import type { AgentStreamEvent, AgentStreamCompletePayload, StreamChunkEvent, StreamReasoningEvent, StreamCompleteEvent, StreamErrorEvent, StreamToolActivityEvent, GenerateTitleInput } from '@profer/shared'
+import type { AgentStreamEvent, AgentStreamCompletePayload, StreamChunkEvent, StreamReasoningEvent, StreamCompleteEvent, StreamErrorEvent, StreamToolActivityEvent, GenerateTitleInput, CreateExplorationSessionInput } from '@profer/shared'
 import { CHAT_IPC_CHANNELS, BUILTIN_DEFAULT_ID, BUILTIN_DEFAULT_PROMPT } from '@profer/shared'
 import { debugLog } from '@/lib/debug-hud'
+import { getFileBaseName } from '@/lib/file-utils'
+import { resolvePocketInteractionVerdict, type InteractionVerdictQuery } from './pending-interaction-guard'
 
 interface HeatmapDailyEntry {
   date: string
@@ -106,10 +108,13 @@ export async function requestWorkspaceHeatmapDaily(
 interface PocketRemoteClient extends HeatmapRemoteClient {
   listSessions(): Promise<unknown>
   listWorkspaces(): Promise<unknown>
+  getWorkspaceCapabilities(workspaceSlug: string): Promise<unknown>
   createWorkspace(name: string): Promise<unknown>
   deleteSession(sessionId: string): Promise<unknown>
   /** 分叉会话 */
   forkSession(payload: { sessionId: string; upToMessageUuid?: string }): Promise<unknown>
+  /** 创建 Pi `/tree` 探索分支（WS 命令 create_exploration_session） */
+  createExplorationSession(payload: CreateExplorationSessionInput): Promise<unknown>
   /** 快照回退 */
   rewindSession(payload: { sessionId: string; assistantMessageUuid: string }): Promise<unknown>
   /** 置顶/取消置顶 */
@@ -122,16 +127,26 @@ interface PocketRemoteClient extends HeatmapRemoteClient {
   updateSessionThinkingLevel(sessionId: string, level: string | null): Promise<unknown>
   getUserProfile(): Promise<unknown>
   getPendingInteractions(sessionId?: string): Promise<unknown>
+  /** 活跃 Agent 会话的运行时上下文窗口快照（对齐桌面 remote-service `get_agent_runtime_contexts`）。
+   *  旧版桌面端不识别该命令时返回 ok:false，调用方静默降级。 */
+  getAgentRuntimeContexts(sessionIds?: string[]): Promise<unknown>
   listChannels(): Promise<unknown>
-  createSession(payload: { title?: string; channelId?: string; workspaceId?: string; modelId?: string }): Promise<unknown>
+  createSession(payload: { title?: string; channelId?: string; workspaceId?: string; modelId?: string; permissionMode?: 'auto' | 'plan' | 'bypassPermissions' }): Promise<unknown>
   migrateChatToAgent(conversationId: string, agentSessionId: string): Promise<unknown>
   ensureProjectDraftSession(payload: { workspaceId: string; channelId?: string; modelId?: string }): Promise<unknown>
   renameSession(sessionId: string, title: string): Promise<unknown>
+  regenerateSessionTitle(sessionId: string, channelId?: string, modelId?: string): Promise<unknown>
+  markSessionUnread(sessionId: string): Promise<unknown>
+  markSessionRead(sessionId: string): Promise<unknown>
   getSdkMessages(
     sessionId: string,
     opts?: { before?: number; targetMessages?: number },
   ): Promise<unknown>
-  sendMessage(payload: { sessionId: string; userMessage: string; channelId: string; modelId?: string; workspaceId?: string }): Promise<unknown>
+  sendMessage(payload: { sessionId: string; userMessage: string; channelId: string; modelId?: string; workspaceId?: string; permissionMode?: 'auto' | 'plan' | 'bypassPermissions'; uuid?: string; startedAt?: number }): Promise<unknown>
+  /** Pi 推理档位能力（服务端 resolvePiReasoningCapability） */
+  getPiReasoningCapability(provider: string, modelId: string): Promise<unknown>
+  /** 远程搜索会话可引用的工作区文件（roots 由服务端按会话授权推导） */
+  searchWorkspaceFiles(sessionId: string, query: string, limit?: number): Promise<unknown>
   /** 向正在运行的 Agent 注入消息（对齐桌面 queueAgentMessage：interrupt 软打断 / uuid 幂等） */
   queueMessage(payload: {
     sessionId: string
@@ -143,9 +158,9 @@ interface PocketRemoteClient extends HeatmapRemoteClient {
     mentionedMcpServers?: string[]
     mentionedSessionIds?: string[]
   }): Promise<unknown>
-  updateSessionModel(sessionId: string, channelId: string, modelId?: string): Promise<unknown>
-  updateSessionRuntime(sessionId: string, runtime: 'claude' | 'pi'): Promise<unknown>
-  updatePermissionMode(sessionId: string, mode: 'auto' | 'plan' | 'bypassPermissions'): Promise<unknown>
+  updateSessionModel(sessionId: string, channelId?: string, modelId?: string, expectedRevision?: number): Promise<unknown>
+  updateSessionRuntime(sessionId: string, runtime: 'claude' | 'pi', expectedRevision?: number): Promise<unknown>
+  updatePermissionMode(sessionId: string, mode: 'auto' | 'plan' | 'bypassPermissions', expectedRevision?: number): Promise<unknown>
   stopAgent(sessionId: string): Promise<unknown>
   // ---- 交互式问答/审批响应（AskUserQuestion / 权限审批 / ExitPlanMode） ----
   respondPermission(requestId: string, behavior: 'allow' | 'deny', alwaysAllow?: boolean): Promise<unknown>
@@ -188,7 +203,7 @@ interface PocketRemoteClient extends HeatmapRemoteClient {
   listPresets(workspaceSlug?: string): Promise<unknown>
   getDefaultPreset(workspaceSlug?: string): Promise<unknown>
   setDefaultPreset(workspaceSlug: string, presetId: string): Promise<unknown>
-  updateSessionPreset(sessionId: string, presetId: string): Promise<unknown>
+  updateSessionPreset(sessionId: string, presetId: string, expectedRevision?: number): Promise<unknown>
   createPreset(workspaceSlug: string, input: Record<string, unknown>): Promise<unknown>
   copyPreset(workspaceSlug: string, fromId: string, name?: string): Promise<unknown>
   updatePreset(workspaceSlug: string, presetId: string, updates: Record<string, unknown>): Promise<unknown>
@@ -203,6 +218,16 @@ let remoteClient: PocketRemoteClient | null = null
 /** 在 WebSocket 建连后注入，使原生桌面组件沿用 electronAPI 形状调用远程服务。 */
 export function setPocketRemoteClient(client: PocketRemoteClient | null): void {
   remoteClient = client
+}
+
+/**
+ * 读取当前注入的远程客户端。
+ *
+ * pocket 侧的非 IPC 通道（如权威上下文窗口水合）需要直接发起只读 WS 命令；
+ * 未连接/已解绑时为 null，调用方据此静默降级。
+ */
+export function getPocketRemoteClient(): PocketRemoteClient | null {
+  return remoteClient
 }
 
 /**
@@ -251,6 +276,43 @@ function setCachedPage(sessionId: string, state: SdkMessagesPageState): void {
 /** 返回当前会话已累计的消息数组（无则返回空数组，由调用方触发迁移）。 */
 function getCachedSdkMessages(sessionId: string): unknown[] {
   return sdkMessagesPageCache.get(sessionId)?.messages ?? []
+}
+
+/**
+ * R10（强制刷新）：丢弃某个会话的传输层分页窗口。
+ *
+ * 分页缓存保存的是「已累计」消息数组 + 起点游标，是**增量**语义：若它曾因事件丢失/
+ * 早期截断而带缺口，后面的 `paginateFirst` 刷新只会用去重键做前缀合并，缺口永远补不回来
+ * （用户看到的就是「桌面已显示、移动端输出缩在执行过程里」）。强制刷新必须先丢缓存，
+ * 再走无参全量拉取（`getAgentSessionSDKMessages(sessionId)` 会重建为 startIndex=0/hasMore=false）。
+ *
+ * 注意：只动传输层缓存，渲染层 atom（agentSDKMessagesCacheAtom）保持不动——全量拉取
+ * 失败时界面继续用旧数据展示，不会白屏。
+ */
+export function invalidatePocketSdkMessagesPageCache(sessionId?: string): void {
+  if (typeof sessionId === 'string' && sessionId.length > 0) {
+    sdkMessagesPageCache.delete(sessionId)
+    return
+  }
+  sdkMessagesPageCache.clear()
+}
+
+/**
+ * PB-5（G1-d）：把刚发出、尚未被服务端分页确认的用户消息补进传输层分页缓存。
+ *
+ * 背景：渲染层（AgentView.pendingOptimisticMessagesRef）有自己的乐观副本，而 stub 侧
+ * `sdkMessagesPageCache` 只会在 `getAgentSessionSDKMessages` 时写入——两者是双真源。
+ * 若发送后立即下拉刷新/切会话回读，而服务端分页窗口尚未包含该条时，消息列表会短暂缺这一条。
+ *
+ * 边界：① 仅在会话已有分页缓存时追加（不无中生有创建只有 1 条消息的缓存页）；
+ * ② 用 `sdkMessageKey` 去重——服务端持久化后的消息 uuid 与乐观副本一致，不会重复。
+ */
+function appendOptimisticMessageToPageCache(sessionId: string, message: unknown): void {
+  const prev = sdkMessagesPageCache.get(sessionId)
+  if (!prev) return
+  const key = sdkMessageKey(message)
+  if (prev.messages.some((m) => sdkMessageKey(m) === key)) return
+  setCachedPage(sessionId, { ...prev, messages: [...prev.messages, message] })
 }
 
 // ===== 分页合并辅助 =====
@@ -413,6 +475,26 @@ const unsupported = (what: string): Promise<never> =>
   Promise.reject(new Error(`平板暂不支持${what}`))
 
 /**
+ * 未显式 stub 的 electronAPI 成员名（按首次访问顺序）。
+ * 用于开发期聚合告警，也供诊断/测试断言「能力缺口被识别」而不是静默成功。
+ */
+const missingElectronApiKeys = new Set<string>()
+
+/** 供诊断/测试：已探测到但未在 pocket stub 中实现的 electronAPI 成员名。 */
+export function getMissingElectronApiKeys(): string[] {
+  return [...missingElectronApiKeys]
+}
+
+/** 是否开发构建（渲染层由 vite 注入 import.meta.env；bun test 等环境安全回退 false）。 */
+function isDevBuild(): boolean {
+  try {
+    return Boolean((import.meta as unknown as { env?: { DEV?: boolean } })?.env?.DEV)
+  } catch {
+    return false
+  }
+}
+
+/**
  * 安装平板版 electronAPI 桥。
  * 在业务 React 渲染之前调用（main.tsx 顶部）。
  */
@@ -442,15 +524,37 @@ export function installElectronApiStub(): void {
     // ---- 命令映射：Agent 核心动作 → WS 远程命令 ----
     sendAgentMessage: (input: Record<string, unknown>) => {
       if (!remoteClient) return Promise.reject(new Error('移动端连接未就绪'))
+      // G1-a：渲染进程预生成的 uuid / startedAt 透传给服务端。
+      // uuid 让服务端把持久化消息与乐观气泡按同一身份对齐（回传后气泡让位、不重复）；
+      // startedAt 让 STREAM_COMPLETE 的竞态保护比较同源于本机时钟，避免跨机绝对时钟偏差。
+      // 旧服务端不认识这两个字段会直接忽略，不构成协议破坏。
+      const uuid = typeof input.uuid === 'string' ? input.uuid : undefined
+      const startedAt = typeof input.startedAt === 'number' ? input.startedAt : undefined
       const payload = {
         sessionId: String(input.sessionId || ''),
         userMessage: String(input.userMessage || ''),
         channelId: String(input.channelId || ''),
         modelId: input.modelId as string | undefined,
         workspaceId: input.workspaceId as string | undefined,
+        permissionMode: input.permissionModeOverride as 'auto' | 'plan' | 'bypassPermissions' | undefined,
+        uuid,
+        startedAt,
       }
       debugLog(`[WS send] session=${payload.sessionId} chars=${payload.userMessage.length}`)
-      return remoteClient.sendMessage(payload)
+      const cacheSessionId = payload.sessionId
+      return remoteClient.sendMessage(payload).then((result) => {
+        // PB-5：服务端已接受该消息 → 同步写入传输层分页缓存（加固，见函数注释）。
+        if (typeof uuid === 'string' && uuid.length > 0) {
+          appendOptimisticMessageToPageCache(cacheSessionId, {
+            type: 'user',
+            uuid,
+            message: { content: [{ type: 'text', text: payload.userMessage }] },
+            parent_tool_use_id: null,
+            _createdAt: typeof startedAt === 'number' ? startedAt : Date.now(),
+          })
+        }
+        return result
+      })
     },
     queueAgentMessage: async (input: Record<string, unknown>) => {
       // 平板队列消息必须走主进程 queue_message 指令（注入正在运行的 Agent）：
@@ -595,22 +699,22 @@ export function installElectronApiStub(): void {
     getSdkMessagesHasMore: (sessionId: string) => {
       return sdkMessagesPageCache.get(sessionId)?.hasMore ?? false
     },
-    updateAgentSessionModel: (sessionId: string, channelId: string, modelId?: string) => {
+    updateAgentSessionModel: (sessionId: string, channelId?: string, modelId?: string, expectedRevision?: number) => {
       if (!remoteClient) return Promise.reject(new Error('移动端连接未就绪'))
-      return remoteClient.updateSessionModel(sessionId, channelId, modelId).then((r) => {
+      return remoteClient.updateSessionModel(sessionId, channelId, modelId, expectedRevision).then((r) => {
         // 契约兜底：旧版服务端可能只返回 { channelId, modelId }，补全 id 等字段，
         // 保证桌面组件 .then((updated) => updated.id / updated.updatedAt) 拿到完整对象。
         const updated = (r ?? {}) as Record<string, unknown>
         return { ...updated, id: updated.id ?? sessionId }
       })
     },
-    updateSessionAgentRuntime: (sessionId: string, runtime: 'claude' | 'pi') => {
+    updateSessionAgentRuntime: (sessionId: string, runtime: 'claude' | 'pi', expectedRevision?: number) => {
       if (!remoteClient) return Promise.reject(new Error('移动端连接未就绪'))
-      return remoteClient.updateSessionRuntime(sessionId, runtime)
+      return remoteClient.updateSessionRuntime(sessionId, runtime, expectedRevision)
     },
-    updateSessionPermissionMode: (sessionId: string, mode: 'auto' | 'plan' | 'bypassPermissions') => {
+    updateSessionPermissionMode: (sessionId: string, mode: 'auto' | 'plan' | 'bypassPermissions', expectedRevision?: number) => {
       if (!remoteClient) return Promise.reject(new Error('移动端连接未就绪'))
-      return remoteClient.updatePermissionMode(sessionId, mode)
+      return remoteClient.updatePermissionMode(sessionId, mode, expectedRevision)
     },
     // ---- Agent 预设：全部走 WS 远程命令（预设数据在电脑端主进程持久化，两端共享） ----
     listAgentPresets: (workspaceSlug?: string) => {
@@ -621,13 +725,14 @@ export function installElectronApiStub(): void {
       if (!remoteClient) return Promise.reject(new Error('移动端连接未就绪'))
       return remoteClient.getDefaultPreset(workspaceSlug)
     },
-    updateAgentSessionPreset: (sessionId: string, presetId: string) => {
+    updateAgentSessionPreset: (sessionId: string, presetId: string, expectedRevision?: number) => {
       if (!remoteClient) return Promise.reject(new Error('移动端连接未就绪'))
-      return remoteClient.updateSessionPreset(sessionId, presetId).then((r) => {
-        // 契约兜底：旧版服务端可能未返回完整 meta，补全 id / presetId 字段，
-        // 保证桌面组件 .then((updated) => updated.presetId) 拿到持久化真源。
+      return remoteClient.updateSessionPreset(sessionId, presetId, expectedRevision).then((r) => {
         const updated = (r ?? {}) as Record<string, unknown>
-        return { ...updated, id: updated.id ?? sessionId, presetId: updated.presetId ?? presetId }
+        if (typeof updated.id !== 'string' || typeof updated.revision !== 'number') {
+          throw new Error('服务端未返回完整的权威会话投影')
+        }
+        return updated
       })
     },
     setDefaultAgentPreset: (workspaceSlug: string, presetId: string) => {
@@ -672,6 +777,10 @@ export function installElectronApiStub(): void {
       if (!remoteClient) return Promise.reject(new Error('移动端连接未就绪'))
       return remoteClient.respondExitPlanMode(requestId, action as 'approve_auto' | 'approve_edit' | 'deny' | 'feedback', feedback)
     },
+    // 交互请求过期判定（R8-P0）：三个横幅在关闭/提交前用主端 pending 快照确认该 requestId
+    // 是否仍待处理。连接未建立 / 旧服务端不支持该命令时返回 'unknown'，调用方按原有行为处理。
+    getPendingInteractionVerdict: (query: InteractionVerdictQuery) =>
+      resolvePocketInteractionVerdict(remoteClient, query),
     stopAgent: (sessionId: string) => {
       // 记录用户主动停止标记：run_idle 桥接 STREAM_COMPLETE 时用（stoppedByUser 展示“已停止”）
       if (sessionId) pocketStoppedByUser.add(String(sessionId))
@@ -682,9 +791,9 @@ export function installElectronApiStub(): void {
     },
     // ---- 命令映射：LeftSidebar 会话管理（已在 WebSocket 建连后注入） ----
     listAgentSessions: () => remoteClient?.listSessions() ?? Promise.resolve([]),
-    createAgentSession: async (title?: string, channelId?: string, workspaceId?: string, modelId?: string) => {
+    createAgentSession: async (title?: string, channelId?: string, workspaceId?: string, modelId?: string, permissionMode?: 'auto' | 'plan' | 'bypassPermissions') => {
       if (!remoteClient) throw new Error('移动端连接未就绪')
-      const created = await remoteClient.createSession({ title, channelId, workspaceId, modelId }) as Record<string, unknown>
+      const created = await remoteClient.createSession({ title, channelId, workspaceId, modelId, permissionMode }) as Record<string, unknown>
       const sessionId = typeof created.id === 'string' ? created.id : String(created.sessionId || '')
       if (!sessionId) throw new Error('远端创建会话未返回 sessionId')
       return resolveAuthoritativeAgentSession(remoteClient, sessionId, created)
@@ -700,6 +809,21 @@ export function installElectronApiStub(): void {
     updateAgentSessionTitle: async (id: string, title: string) => {
       if (!remoteClient) throw new Error('移动端连接未就绪')
       const updated = await remoteClient.renameSession(id, title)
+      return resolveAuthoritativeAgentSession(remoteClient, id, updated)
+    },
+    regenerateAgentSessionTitle: async (id: string, channelId?: string, modelId?: string) => {
+      if (!remoteClient) throw new Error('移动端连接未就绪')
+      const updated = await remoteClient.regenerateSessionTitle(id, channelId, modelId)
+      return resolveAuthoritativeAgentSession(remoteClient, id, updated)
+    },
+    setAgentCompletionState: async (id: string) => {
+      if (!remoteClient) throw new Error('移动端连接未就绪')
+      const updated = await remoteClient.markSessionUnread(id)
+      return resolveAuthoritativeAgentSession(remoteClient, id, updated)
+    },
+    clearAgentCompletionState: async (id: string) => {
+      if (!remoteClient) throw new Error('移动端连接未就绪')
+      const updated = await remoteClient.markSessionRead(id)
       return resolveAuthoritativeAgentSession(remoteClient, id, updated)
     },
     getAgentSessionMeta: async (id: string) => {
@@ -792,7 +916,10 @@ export function installElectronApiStub(): void {
       if (!remoteClient) return Promise.reject(new Error('移动端连接未就绪'))
       return remoteClient.getPendingInteractions(sessionId)
     },
-    getSystemTheme: () => Promise.resolve(true),
+    // Pocket 不经过桌面主进程；直接读取 WebView 暴露的系统外观，避免始终回报暗色。
+    getSystemTheme: () => Promise.resolve(
+      typeof window !== 'undefined' && window.matchMedia('(prefers-color-scheme: dark)').matches,
+    ),
     // SystemPromptSelector（ChatHeader）挂载时拉取提示词配置并 setConfig 覆写 promptConfigAtom：
     // 必须返回桌面同构默认配置，否则 Proxy 兜底的 undefined 会把 promptConfigAtom 覆写成 undefined，
     // 导致 defaultPromptIdAtom 等派生 atom 抛 “Cannot read properties of undefined (reading 'defaultPromptId')”，
@@ -944,7 +1071,11 @@ export function installElectronApiStub(): void {
       return normalized
     },
     getModels: () => Promise.resolve([]),
-    getWorkspaceCapabilities: () => Promise.resolve(null),
+    getWorkspaceCapabilities: async (workspaceSlug: string) => {
+      if (!remoteClient) throw new Error('移动端连接未就绪')
+      const result = await remoteClient.getWorkspaceCapabilities(workspaceSlug)
+      return result ?? null
+    },
     getWorkspaceHeatmapDaily: (workspaceId: string) =>
       requestWorkspaceHeatmapDaily(remoteClient, workspaceId),
     getAccountCapabilities: () => Promise.resolve({ membershipTier: 'free', canSelfConfig: true }),
@@ -954,6 +1085,56 @@ export function installElectronApiStub(): void {
     getWorkspaceAttachedFiles: () => Promise.resolve([]),
     getSessionProcessCount: () => Promise.resolve(0),
     listSessionProcesses: () => Promise.resolve([]),
+    // 归档会话计数：pocket 当前左侧栏无归档徽标调用点（grep=0），按主仓库 tablet 参照补 0 计数兜底。
+    getArchivedCounts: () => Promise.resolve({ conversations: 0, agentSessions: 0 }),
+    // 商业版开关：pocket 无主进程配置源，恒按「非商业版」处理（useCreditsLoader → clearCreditsState）。
+    getCommercialMode: () => Promise.resolve(false),
+    // Pi 模型推理档位能力：pocket 无该数据源 → undefined（档位菜单按「未知能力」渲染）。
+    // Pi 推理档位能力（G3）：改由 WS 命令取服务端 resolvePiReasoningCapability 的计算结果。
+    // 为何不在客户端推导：catalog 分支需要主进程加载的 pi-ai 目录（renderer 拿不到）；
+    // profile 分支虽可算，但 pocket 的 shared 快照比桌面旧，会在 glm-5.3/grok-4.6 等模型上
+    // 给出与桌面不同的档位集合 → 等于把双端漂移换个地方复现。
+    // 旧服务端不认识该命令 → sendCommand 拒绝或 ok:false → 这里返回 undefined，
+    // 与改动前「恒 undefined」的降级完全等价（调用方 AgentView:733 已带 .catch 兜底）。
+    getPiReasoningCapability: async (provider: string, modelId?: string) => {
+      if (!remoteClient || !provider) return undefined
+      try {
+        const result = (await remoteClient.getPiReasoningCapability(provider, modelId ?? '')) as
+          | { levels?: unknown }
+          | null
+          | undefined
+        // 形状校验：非 ReasoningCapability（如旧服务端的错误对象）一律视为不可用。
+        if (!result || typeof result !== 'object' || !Array.isArray(result.levels)) return undefined
+        return result
+      } catch {
+        return undefined
+      }
+    },
+    // 会话本地目录：pocket 无本地文件系统，远程协议未暴露会话路径 → null（调用方走「无路径」分支）。
+    getAgentSessionPath: () => Promise.resolve(null),
+    // @ 引用文件搜索（G2-c）：桌面端是主进程本地 fs 递归扫描（rootPath 由 renderer 传入），
+    // pocket 无本地文件系统 → 改走 WS `search_workspace_files`，roots 由服务端从会话
+    // （会话工作目录 + attachedDirectories + 工作区附加目录 + attachedFiles）推导并做授权校验，
+    // 客户端不提交 rootPath/candidateBasePaths（与 resolve_and_read_file 同一授权策略）。
+    // 注意：pocket 语义下第一个参数承载 **sessionId**（调用方 file-mention-suggestion 已同步）；
+    // 形参名保持与 electron-api.d.ts 一致，避免两端 API 面分裂。
+    // 旧服务端不认识该命令 → sendCommand 拒绝/ok:false → 返回 null；调用方回退到
+    // 「暂时无法引用文件」的既有降级，不报错、不白屏。
+    searchWorkspaceFiles: async (sessionId: string, query: string, limit?: number) => {
+      if (!remoteClient || !sessionId) return null
+      try {
+        const result = (await remoteClient.searchWorkspaceFiles(sessionId, query, limit)) as
+          | { entries?: unknown }
+          | null
+          | undefined
+        if (!result || typeof result !== 'object' || !Array.isArray(result.entries)) return null
+        return result
+      } catch {
+        return null
+      }
+    },
+    // git diff 缓存失效：pocket 无本地 git 缓存 → 安全空操作（useGlobalAgentListeners 写工具完成路径直接调用）。
+    invalidateGitDiffCache: safeNoop,
     getAgentKnowledgeReferences: () => Promise.resolve([]),
     knowledge: {
       getLibrarySnapshot: () => Promise.resolve({ items: [] }),
@@ -975,6 +1156,13 @@ export function installElectronApiStub(): void {
       // remote 已返回桌面同构 buildSessionItem（含 createdAt/updatedAt/draft/pinned 等），
       // 直接透传，保证 fork 后 setAgentSessions 插入的元数据与桌面一致（LeftSidebar 渲染/排序依赖）。
       return remoteClient.forkSession(input) as Promise<Record<string, unknown>>
+    },
+    // 探索分支：与分叉同源但语义不同（不传 modelId，分支挂主线血缘下）。
+    // 必须显式 stub——否则 Proxy noop 会让“探索成功”是假的，且调用方读 meta.id 会拿到
+    // undefined 导致 openSession 崩溃。服务端返回的已是含探索血缘字段的完整会话对象。
+    createExplorationSession: async (input: { sessionId: string; upToMessageUuid: string; explorationSourceLabel?: string }) => {
+      if (!remoteClient) throw new Error('移动端连接未就绪')
+      return remoteClient.createExplorationSession(input) as Promise<Record<string, unknown>>
     },
     rewindSession: async (input: { sessionId: string; assistantMessageUuid: string }) => {
       if (!remoteClient) throw new Error('移动端连接未就绪')
@@ -1030,6 +1218,24 @@ export function installElectronApiStub(): void {
       if (!remoteClient) throw new Error('移动端连接未就绪')
       return remoteClient.readFileAsDataUrl(filePath, access)
     },
+    // 文件存在性解析（resolveFilePath）：pocket 无本地文件系统，无法判断桌面端文件是否存在。
+    // 返回非 null 的 `{ url: '' }` 使 chip 的 `resolved !== null` 判真 → 保持 resolved 态（与改动前
+    // deep stub 返回 undefined → `undefined !== null` 判真一致），零视觉回归；图片/媒体预览拿到
+    // 空 url 走「无数据」分支（与改动前 `if (undefined)` 走 else 一致）。
+    resolveFilePath: () => Promise.resolve({ url: '' }),
+    // 打开文件（systemOpenFile）：pocket 无本地文件系统，无法让桌面程序真打开 → 语义冻结为
+    // 「应用内只读预览」。派发既有 'profer:file-preview' 事件（与 file-path-chip.tsx:200 同一模式），
+    // 由 pocket/main.tsx 挂载的 FilePreviewContainer → FilePreviewDialog → WS read_file_as_data_url
+    // （服务端命令已存在）完成预览。旧行为 safeNoop 会让所有 pocket 可达调用点静默无反应：
+    // file-path-chip:184 / message:601,605,608 / reasoning:233 / DefaultAppOpenButton:33 /
+    // TeamWorkspaceView:1850,1857。无路径时保持静默（不抛错），兼容既有 `.catch` 调用方。
+    systemOpenFile: async (filePath: string) => {
+      if (typeof filePath === 'string' && filePath.length > 0) {
+        window.dispatchEvent(new CustomEvent('profer:file-preview', {
+          detail: { path: filePath, name: getFileBaseName(filePath) },
+        }))
+      }
+    },
     saveFilesToAgentSession: () => unsupported('保存文件到会话'),
     addAgentKnowledgeReferences: () => unsupported('知识库引用'),
     removeAgentKnowledgeReference: () => unsupported('知识库引用'),
@@ -1047,43 +1253,38 @@ export function installElectronApiStub(): void {
     killProcess: () => unsupported('进程管理'),
   }
 
-  // 用 Proxy 兜底：任何未显式 stub 的方法都返回安全空实现，杜绝 "undefined is not a function"
-  const handler = {
-    get(_target: Record<string, unknown>, prop: string): unknown {
-      if (prop in _target) return _target[prop]
-      // 常见 IPC 返回 Promise；纯函数返回 undefined
-      if (prop.startsWith('get') || prop.endsWith('Async') || prop === 'invoke') {
-        return safeNoop
+  // ===== 未显式 stub 的能力：返回真 undefined，而不是「永远成功」的可调用对象 =====
+  //
+  // 历史行为：未命中的 key → 可调用 Proxy（恒 resolve(undefined)、可无限嵌套）。
+  // 它把能力缺口全变成静默失败：
+  //   ① `if (window.electronAPI?.onXxx)` 判真 → 「假注册」（监听永不触发、零报错零日志）；
+  //   ② 存在性检测 + 降级逻辑被骗过（如 showDesktopNotification → Web Notification 兜底失效）；
+  //   ③ 缺口没有任何可观测信号，只能靠人工 grep 发现。
+  // 现在：未显式 stub 的 key 一律返回 undefined（存在性检测看到真相，调用方据此降级或隐藏入口），
+  // 开发构建下按首次访问聚合告警并列出缺失方法名。
+  const reportMissingKey = (key: string): undefined => {
+    if (!missingElectronApiKeys.has(key)) {
+      missingElectronApiKeys.add(key)
+      if (isDevBuild()) {
+        console.warn(
+          `[Pocket] electronAPI.${key} 未在 pocket stub 中显式实现，已按 undefined 返回。` +
+            `累计缺失 ${missingElectronApiKeys.size} 项：${[...missingElectronApiKeys].join(', ')}`,
+        )
       }
-      return noop
-    },
+    }
+    return undefined
   }
 
-  // 需要嵌套命名空间（electronAPI.team.*, electronAPI.chat.* 等）也 Proxy 化。
-  // ⚠️ 必须返回【可调用】对象：target 是函数（typeof 为 function），否则
-  // window.electronAPI.xxx() 直接调用会抛 "is not a function"（曾因返回纯对象 Proxy 踩坑）。
-  const makeDeepStub = (): unknown => {
-    const fn = (() => Promise.resolve(undefined)) as unknown as Record<string, unknown>
-    return new Proxy(fn, {
-      get: (_t, p) => {
-        if (typeof p === 'string') return makeDeepStub()
-        return undefined
-      },
-      apply: () => Promise.resolve(undefined),
-    })
-  }
-
-  // 顶层也允许任意嵌套访问
+  // 顶层：显式 stub 的成员照常返回，其余返回 undefined（不再伪造可调用对象）
   const top = new Proxy(stub, {
     get(t, p) {
-      if (typeof p === 'string' && p in t) return t[p]
-      if (typeof p === 'string') return makeDeepStub()
-      return undefined
+      if (typeof p !== 'string') return undefined
+      if (Object.prototype.hasOwnProperty.call(t, p)) return Reflect.get(t, p)
+      return reportMissingKey(p)
     },
   }) as unknown as Record<string, unknown>
 
   ;(globalThis as unknown as { electronAPI?: Record<string, unknown> }).electronAPI = top
-  void handler
 }
 
 /** 检查当前是否在 Electron/有真实 electronAPI（供平板逻辑判断） */

@@ -11,10 +11,14 @@ import { useEffect } from 'react'
 import { unstable_batchedUpdates } from 'react-dom'
 import { useStore } from 'jotai'
 import { draftSessionIdsAtom } from '@/atoms/draft-session-atoms'
+import { channelsAtom, channelsLoadedAtom } from '@/atoms/chat-atoms'
+import { agentPresetsAtom } from '@/atoms/agent-preset-atoms'
 import {
   agentStreamingStatesAtom,
   agentStreamErrorsAtom,
   agentSessionsAtom,
+  agentSessionTombstoneRevisionsAtom,
+  agentCatalogRevisionsAtom,
   agentMessageRefreshAtom,
   agentPendingPromptAtom,
   allPendingPermissionRequestsAtom,
@@ -38,6 +42,7 @@ import {
   currentAgentSessionIdAtom,
   currentAgentWorkspaceIdAtom,
   agentWorkspacesAtom,
+  workspaceCapabilitiesVersionAtom,
   agentAttachedDirectoriesMapAtom,
   agentAttachedFilesMapAtom,
   workspaceAttachedDirectoriesMapAtom,
@@ -59,26 +64,69 @@ import { appModeAtom } from '@/atoms/app-mode'
 import { tabsAtom, activeTabIdAtom, openTab, updateTabTitle } from '@/atoms/tab-atoms'
 import type { AgentStreamState } from '@/atoms/agent-atoms'
 import { agentDiffUnseenChangesAtom, agentDiffUnseenFilesAtom, agentDiffPanelTabAtom, agentSidePanelOpenAtom } from '@/atoms/agent-atoms'
-import { autoPreviewEnabledAtom, previewPanelOpenMapAtom, previewFileMapAtom } from '@/atoms/preview-atoms'
+import { autoPreviewEnabledAtom, previewPanelOpenMapAtom, previewFileMapAtom, agentInterruptionMapAtom } from '@/atoms/preview-atoms'
 import type { NotificationSoundType } from '@/types/settings'
 import { toast } from 'sonner'
 import type { AgentStreamEvent, AgentStreamCompletePayload, AgentEvent, AgentStreamPayload, SDKAssistantMessage, SDKUserMessage, SDKSystemMessage, SDKContentBlock, SDKUserContentBlock, SDKResultMessage, SDKBackgroundTaskSummary, ProferEvent, AgentSessionMeta, TodoAgentSessionActivation } from '@profer/shared'
 import { inferContextWindow, resolveContextWindowFromModelUsage } from '@profer/shared'
 import { buildExternalAgentRunActivation } from '@/lib/external-agent-run'
 import { buildTodoAgentPrompt } from '@/lib/todo-agent-prompt'
-import { upsertAgentSession, mergeFetchedAgentSessions } from '@/lib/agent-session-list'
+import { deleteAgentSessionProjection, mergeFetchedAgentSessions, upsertAgentSession, upsertAgentSessionProjection } from '@/lib/agent-session-list'
 import { upsertLiveMessageByUuid } from '@/lib/agent-live-message-upsert'
 
 import { getAgentCompletionMarkers } from '@/lib/agent-completion-presence'
 import { getPlanModeChangeFromToolName, updatePlanModeSessionSet } from '@/lib/agent-plan-mode'
 import { getSessionFileChangeKind, upsertSessionFileChange } from '@/lib/session-file-changes'
+import { AgentStreamRestoreGate } from '@/lib/agent-stream-restore-gate'
 import { isAbsoluteFilePath, resolveRelativeToAbsolute } from '@/lib/file-utils'
+import { clearAuthoritativeContextWindow, getAuthoritativeContextWindow, hydrateAgentRuntimeContexts } from '@/pocket/agent-runtime-context'
 
 /** 触发右侧文件浏览器自动定位的写入类工具集合 */
 const WRITE_TOOLS = new Set(['Write', 'Edit', 'MultiEdit', 'NotebookEdit', 'Update'])
 
 /** 会改变 git 工作树状态的子命令（用于识别 Bash 中触发 diff 刷新的 git 操作） */
 const GIT_MUTATING_SUBCOMMANDS = /\bgit\s+(commit|checkout|reset|restore|stash|clean|add|rm|mv|pull|merge|rebase|cherry-pick|revert|switch|am|apply)\b/
+
+/**
+ * 允许「空闲会话（agentStreamingStatesAtom 无该 session 条目）收到事件时激活 running」的旧事件集合。
+ * 仅运行本身会产生的内容/控制事件才应凭空激活 UI 运行态（例如：平板/远端在 run 中途刷新、
+ * 或 run 已由其它端启动后才收到首个事件）。permission_mode_changed / plan_mode_changed / ask_user_resolved
+ * 等元数据事件在会话空闲时也会被广播（平板切权限模式即触发），绝不能把它们当成 run 的起点——
+ * 否则会在没有真实 run 的情况下显示假“Agent 正在运行”，且点停止无效（服务端无 run 可停）。
+ */
+const STREAM_ACTIVATING_EVENT_TYPES = new Set<AgentEvent['type']>([
+  // 文本/工具/后台任务/思考（真正的运行内容）
+  'text_delta',
+  'text_complete',
+  'thinking_tokens',
+  'tool_start',
+  'tool_result',
+  'tool_use_summary',
+  'task_backgrounded',
+  'task_started',
+  'task_progress',
+  'task_notification',
+  'shell_backgrounded',
+  'shell_killed',
+  // 控制流 / 错误 / 重试 / 用量 / 压缩
+  'complete',
+  'run_resumed',
+  'error',
+  'typed_error',
+  'retrying',
+  'retry_attempt',
+  'retry_cleared',
+  'retry_failed',
+  'usage_update',
+  'compacting',
+  'compact_complete',
+  // 模型解析只在真实 run 中发生
+  'model_resolved',
+  // 请求类事件只在 run 中产生，允许激活以支持 run 中途打开/刷新场景
+  'permission_request',
+  'ask_user_request',
+  'exit_plan_mode_request',
+])
 
 function getParentDir(path: string): string {
   const normalized = path.replace(/\\/g, '/')
@@ -110,7 +158,7 @@ function uniqueTruthyPaths(paths: Array<string | null | undefined>): string[] {
 // Phase 2 将移除此转换，直接使用 SDKMessage 渲染
 // ============================================================================
 
-function payloadToLegacyEvents(payload: AgentStreamPayload): AgentEvent[] {
+function payloadToLegacyEvents(payload: AgentStreamPayload, sessionId?: string): AgentEvent[] {
   if (payload.kind === 'profer_event') {
     const evt = payload.event
     switch (evt.type) {
@@ -133,7 +181,9 @@ function payloadToLegacyEvents(payload: AgentStreamPayload): AgentEvent[] {
       case 'model_resolved':
         return [{ type: 'model_resolved', model: evt.model }]
       case 'context_window':
-        // main 进程从 SDK result 拿到的真实 contextWindow，转成 usage_update 让 atom 合并到 streamState
+        // main 进程从 SDK result 拿到的真实 contextWindow，转成 usage_update 让 atom 合并到 streamState。
+        // 注意：usage_update 只在 contextWindow 为空时填补，因此真正的覆盖由调用方
+        // 先一步的 hydrateAgentRuntimeContexts 完成（见下方 context_window 预处理）。
         return [{ type: 'usage_update', usage: { contextWindow: evt.contextWindow } }]
       case 'permission_mode_changed':
         return [{ type: 'permission_mode_changed', mode: evt.mode }]
@@ -159,6 +209,9 @@ function payloadToLegacyEvents(payload: AgentStreamPayload): AgentEvent[] {
         return []
     }
   }
+
+  // UI Projection / Catalog 都不属于 Runtime Event Plane，不能转换为旧运行事件。
+  if (payload.kind !== 'sdk_message') return []
 
   // sdk_message → 转换为对应的 AgentEvent
   const msg = payload.message
@@ -245,7 +298,10 @@ function payloadToLegacyEvents(payload: AgentStreamPayload): AgentEvent[] {
 
     case 'result': {
       const rMsg = msg as SDKResultMessage
-      const contextWindow = resolveContextWindowFromModelUsage(rMsg.modelUsage, rMsg._channelModelId)
+      // 主端/SDK 确认的权威窗口优先于 modelUsage 推断：部分渠道（如智谱）不返回实测 contextWindow，
+      // resolveContextWindowFromModelUsage 会退化为按模型名推断的 200K，不得把权威值改回去。
+      const authoritativeWindow = sessionId ? getAuthoritativeContextWindow(sessionId) : undefined
+      const contextWindow = authoritativeWindow ?? resolveContextWindowFromModelUsage(rMsg.modelUsage, rMsg._channelModelId)
       // result.usage 是整个 query 内所有模型调用的累计求和，不能当成当前上下文占用，
       // 否则进度环会虚高、冲破 100%（PR #821 修的正是这个问题）。
       //
@@ -399,8 +455,13 @@ export function useGlobalAgentListeners(): void {
         // 快照进来；若整体覆盖 agentSessionsAtom，后 resolve 的回调会用自己那份可能
         // 缺失了刚结束 turn 的父会话的快照把父会话冲掉——父会话从列表消失后其子会话
         // 因找不到父而浮到根层。改为单条 upsert 后每个回调只负责自己那一个会话。
+        // 老服务端可能把 projection 塞进 external_run_started；先按 projection 规则收敛，
+        // 再以当前安全会话或最小占位状态激活真实 Runtime Event Plane。
+        if (event.session) {
+          store.set(agentSessionsAtom, (previous) => upsertAgentSessionProjection(previous, event.session!))
+        }
         const sessionMeta = sessions.find((item) => item.id === event.sessionId)
-        const upserted: AgentSessionMeta = event.session ?? sessionMeta ?? {
+        const upserted: AgentSessionMeta = sessionMeta ?? {
           id: event.sessionId,
           title: event.title ?? '未命名会话',
           workspaceId: event.workspaceId,
@@ -619,15 +680,90 @@ export function useGlobalAgentListeners(): void {
         unstable_batchedUpdates(() => {
         const { sessionId, payload } = streamEvent
 
+        // UI Projection Plane 只收敛持久化 UI 状态，绝不能经过下方 runtime
+        // legacy conversion，否则元数据同步会凭空激活 running。
+        if (payload.kind === 'session_projection') {
+          if (payload.operation === 'upsert') {
+            const tombstoneRevision = store.get(agentSessionTombstoneRevisionsAtom).get(payload.session.id) ?? -1
+            if (payload.session.revision > tombstoneRevision) {
+              store.set(agentSessionsAtom, (previous) => upsertAgentSessionProjection(previous, payload.session, tombstoneRevision))
+              store.set(tabsAtom, (tabs) => updateTabTitle(tabs, payload.session.id, payload.session.title))
+              if (tombstoneRevision >= 0) {
+                store.set(agentSessionTombstoneRevisionsAtom, (previous) => {
+                  const next = new Map(previous)
+                  next.delete(payload.session.id)
+                  return next
+                })
+              }
+            }
+          } else {
+            store.set(agentSessionTombstoneRevisionsAtom, (previous) => {
+              const current = previous.get(payload.sessionId) ?? -1
+              if (current >= payload.revision) return previous
+              const next = new Map(previous)
+              next.set(payload.sessionId, payload.revision)
+              return next
+            })
+            store.set(agentSessionsAtom, (previous) => deleteAgentSessionProjection(previous, payload.sessionId, payload.revision))
+          }
+          return
+        }
+
+        if (payload.kind === 'catalog_invalidation') {
+          const scopeKey = `${payload.catalog}:${payload.workspaceSlug ?? '*'}`
+          const previousRevision = store.get(agentCatalogRevisionsAtom).get(scopeKey) ?? 0
+          if (payload.revision <= previousRevision) return
+          store.set(agentCatalogRevisionsAtom, (previous) => {
+            const next = new Map(previous)
+            next.set(scopeKey, payload.revision)
+            return next
+          })
+
+          // 失效通知只触发已有安全读取命令；每个请求在回包时再次检查 revision，
+          // 防止弱网下旧目录响应覆盖较新的目录状态。
+          if (payload.catalog === 'channels') {
+            void window.electronAPI.listChannels().then((channels) => {
+              if ((store.get(agentCatalogRevisionsAtom).get(scopeKey) ?? 0) !== payload.revision) return
+              store.set(channelsAtom, channels)
+              store.set(channelsLoadedAtom, true)
+            }).catch(console.error)
+          } else if (payload.catalog === 'workspaces') {
+            void window.electronAPI.listAgentWorkspaces().then((workspaces) => {
+              if ((store.get(agentCatalogRevisionsAtom).get(scopeKey) ?? 0) !== payload.revision) return
+              store.set(agentWorkspacesAtom, workspaces)
+            }).catch(console.error)
+          } else if (payload.catalog === 'presets') {
+            const workspace = store.get(agentWorkspacesAtom).find((item) => item.id === store.get(currentAgentWorkspaceIdAtom))
+            const slug = workspace?.slug ?? null
+            if (payload.workspaceSlug === null || payload.workspaceSlug === slug) {
+              void window.electronAPI.listAgentPresets(slug ?? undefined).then((presets) => {
+                if ((store.get(agentCatalogRevisionsAtom).get(scopeKey) ?? 0) !== payload.revision) return
+                store.set(agentPresetsAtom, (previous) => {
+                  const next = new Map(previous)
+                  if (slug) next.set(slug, presets)
+                  return next
+                })
+              }).catch(console.error)
+            }
+          } else if (payload.catalog === 'workspace_capabilities') {
+            const workspace = store.get(agentWorkspacesAtom).find((item) => item.id === store.get(currentAgentWorkspaceIdAtom))
+            if (payload.workspaceSlug === null || payload.workspaceSlug === workspace?.slug) {
+              store.set(workspaceCapabilitiesVersionAtom, (version) => version + 1)
+            }
+          }
+          return
+        }
+
         if (payload.kind === 'profer_event') {
           const proferEvent = payload.event
           if (proferEvent.type === 'external_run_started') {
             activateExternalAgentRun(proferEvent)
           } else if (proferEvent.type === 'delegation_session_updated' || proferEvent.type === 'session_updated') {
-            store.set(agentSessionsAtom, (previous) => upsertAgentSession(previous, proferEvent.session))
+            // 旧服务端事件也只携带 projection，确保不会重新引入内部 meta 泄漏路径。
+            store.set(agentSessionsAtom, (previous) => upsertAgentSessionProjection(previous, proferEvent.session))
             store.set(tabsAtom, (tabs) => updateTabTitle(tabs, proferEvent.session.id, proferEvent.session.title))
           } else if (proferEvent.type === 'session_deleted') {
-            store.set(agentSessionsAtom, (previous) => previous.filter((session) => session.id !== proferEvent.sessionId))
+            store.set(agentSessionsAtom, (previous) => deleteAgentSessionProjection(previous, proferEvent.sessionId, proferEvent.revision ?? 0))
           }
         }
 
@@ -685,8 +821,22 @@ export function useGlobalAgentListeners(): void {
           }
         }
 
+        // 主端/SDK 确认的上下文窗口是权威值：必须直接写进流状态。
+        // 只发 usage_update 是不够的 —— 该分支仅在 contextWindow 为空时填补，无法覆盖
+        // 此前按模型名推断出的 fallback（R2 根因）。这里同时登记权威值（run 结束前有效）。
+        if (payload.kind === 'profer_event' && payload.event.type === 'context_window') {
+          const authoritativeWindow = payload.event.contextWindow
+          if (typeof authoritativeWindow === 'number' && Number.isFinite(authoritativeWindow) && authoritativeWindow > 0) {
+            store.set(agentStreamingStatesAtom, (prev) => hydrateAgentRuntimeContexts(prev, [{
+              sessionId,
+              contextWindow: authoritativeWindow,
+              updatedAt: Date.now(),
+            }]))
+          }
+        }
+
         // Phase 1 兼容：将新 AgentStreamPayload 转换为旧 AgentEvent[]
-        const legacyEvents = payloadToLegacyEvents(payload)
+        const legacyEvents = payloadToLegacyEvents(payload, sessionId)
 
         for (const event of legacyEvents) {
           // 会话首次进入 running 时，清除旧的完成提醒状态
@@ -705,7 +855,14 @@ export function useGlobalAgentListeners(): void {
           // 更新流式状态（prompt_suggestion 不影响流式状态，跳过以避免在 session 结束后用默认值 running:true 重新激活）
           if (event.type !== 'prompt_suggestion') {
             store.set(agentStreamingStatesAtom, (prev) => {
-              const current: AgentStreamState = prev.get(sessionId) ?? {
+              const existing: AgentStreamState | undefined = prev.get(sessionId)
+              // 关键：空闲会话（无 streaming 状态）收到 permission_mode_changed 等与运行无关的
+              // 元数据事件时，不能用默认 running:true 凭空激活。平板/远端切权限模式会给自己广播
+              // permission_mode_changed → 该事件经 legacyEvents 到这里 → 若不加拦截会把空闲会话
+              // 误显示成“正在运行”，且服务端没有真实 run，点停止无效、刷新后才消失。
+              // 只有真正的运行类事件（见 STREAM_ACTIVATING_EVENT_TYPES）才允许激活。
+              if (!existing && !STREAM_ACTIVATING_EVENT_TYPES.has(event.type)) return prev
+              const current: AgentStreamState = existing ?? {
                 running: true,
                 content: '',
                 toolActivities: [],
@@ -1046,6 +1203,17 @@ export function useGlobalAgentListeners(): void {
     // 大刷新会清空 renderer Jotai，但 main 中的 Agent run 仍可能继续执行。
     // listener 已安装后再请求重连：main 会先绑定新 webContents 并按顺序回放本轮事件。
     // 若 run 尚未产出任何事件，也先写入 running 占位，保留停止和追加消息能力。
+    //
+    // 恢复窗口内的终态必须先暂存：backlog 回放先于 running 占位写入，run 若恰在这个窗口内
+    // 结束，专用 handler 的竞态保护会因「本会话还没有流式状态」判定为迟到终态并丢弃，
+    // 表现为刷新后残留 spinner。闸门负责延后到占位写入后再派发。
+    // ⚠️ 移动端平台差异：pocket 的 restoreActiveAgentStreams 是 stub（无 Electron IPC 重连，
+    // 状态由 WS 快照/resume 建立），占位窗口目前为空，因此闸门实际不拦截任何事件；
+    // 保留同样的接线是为了与桌面渲染层保持同构，后续若移动端引入真实恢复窗口即自动生效。
+    const restoreTerminalGate = new AgentStreamRestoreGate(
+      (sessionId) => store.get(agentStreamingStatesAtom).get(sessionId) !== undefined,
+    )
+
     window.electronAPI.restoreActiveAgentStreams()
       .then((sessionIds) => {
         store.set(agentStreamingStatesAtom, (prev) => {
@@ -1063,12 +1231,16 @@ export function useGlobalAgentListeners(): void {
           }
           return next ?? prev
         })
+        // 占位已写好，此时派发暂存的终态才能通过竞态保护并完成收尾副作用。
+        restoreTerminalGate.settle()
       })
-      .catch((error) => console.error('[Agent] 刷新后恢复活跃流失败:', error))
+      .catch((error) => {
+        console.error('[Agent] 刷新后恢复活跃流失败:', error)
+        restoreTerminalGate.settle()
+      })
 
     // ===== 2. 流式完成 =====
-    const cleanupComplete = window.electronAPI.onAgentStreamComplete(
-      (data: AgentStreamCompletePayload) => {
+    const handleStreamComplete = (data: AgentStreamCompletePayload): void => {
         unstable_batchedUpdates(() => {
         // 后台任务等待态：turn 主体结束但仍有后台任务在飞行，UI 进入"空闲可输入"。
         // 不发"任务已完成"通知（任务并未真正完成）、不清后台任务列表、不重载消息——
@@ -1150,8 +1322,34 @@ export function useGlobalAgentListeners(): void {
           })
         }
 
+        // 中断说明 chip：非正常结束置位、正常完成清除；后台任务续轮（backgroundTasksPending）不置位。
+        // 主进程 owner finally 统一归一化后透传 endReason，此处仅同步到会话级 atom。
+        // 参照物：archive/tablet-line-pre-reset-20260911:...useGlobalAgentListeners.ts:1388-1401。
+        const endReason = data.endReason
+        const endReasonLabel = data.endReasonLabel
+        if (endReason && !backgroundTasksPending) {
+          store.set(agentInterruptionMapAtom, (prev) => {
+            const map = new Map(prev)
+            if (endReason === 'completed') {
+              map.delete(data.sessionId)
+            } else {
+              map.set(data.sessionId, {
+                reason: endReason,
+                label: endReasonLabel ?? '任务中断',
+                at: Date.now(),
+              })
+            }
+            return map
+          })
+        }
+
         // 非正常结束时显示截断提示
-        if (data.resultSubtype && data.resultSubtype !== 'success' && !data.stoppedByUser) {
+        // 主路径（orchestrator）已透传 endReason/endReasonLabel，优先用 label 拼 toast（与 chip 文案一致）；
+        // 其他 STREAM_COMPLETE 发起点不传 endReason 时回退原 resultSubtype 逻辑，向后兼容。
+        if (data.endReason && data.endReason !== 'completed' && !data.stoppedByUser) {
+          const detail = data.resultErrors?.find((e) => typeof e === 'string' && e.trim().length > 0)?.trim()
+          toast.warning(detail ? `任务执行出错：${detail}` : (data.endReasonLabel ?? '任务中断'), { duration: 8000 })
+        } else if (data.resultSubtype && data.resultSubtype !== 'success' && !data.stoppedByUser) {
           const messages: Record<string, string> = {
             error_max_turns: '任务被中断：已达到轮次上限。继续对话可让 Agent 接着完成。',
             error_max_budget_usd: '任务被中断：已达到预算上限。',
@@ -1195,6 +1393,11 @@ export function useGlobalAgentListeners(): void {
           // 等任务完成 Agent 自动唤醒续轮后再走真正的完成路径。
           if (backgroundTasksPending) return
 
+          // run 已真正结束：清除权威窗口登记。
+          // 否则下次切换模型（AgentView 会把 contextWindow 置空）后，旧分母会顶住新推断值，
+          // 让圆环丢失「上下文 x/y」。
+          clearAuthoritativeContextWindow(data.sessionId)
+
           // 清理后台任务
           store.set(backgroundTasksAtomFamily(data.sessionId), [])
 
@@ -1235,12 +1438,17 @@ export function useGlobalAgentListeners(): void {
         }
         finalize()
         }) // unstable_batchedUpdates
+    }
+
+    const cleanupComplete = window.electronAPI.onAgentStreamComplete(
+      (data: AgentStreamCompletePayload) => {
+        if (restoreTerminalGate.defer(data.sessionId, () => handleStreamComplete(data))) return
+        handleStreamComplete(data)
       }
     )
 
     // ===== 3. 流式错误 =====
-    const cleanupError = window.electronAPI.onAgentStreamError(
-      (data: { sessionId: string; error: string }) => {
+    const handleStreamError = (data: { sessionId: string; error: string }): void => {
         unstable_batchedUpdates(() => {
         console.error('[GlobalAgentListeners] 流式错误:', data.error)
 
@@ -1261,6 +1469,12 @@ export function useGlobalAgentListeners(): void {
           })
         }
         }) // unstable_batchedUpdates
+    }
+
+    const cleanupError = window.electronAPI.onAgentStreamError(
+      (data: { sessionId: string; error: string }) => {
+        if (restoreTerminalGate.defer(data.sessionId, () => handleStreamError(data))) return
+        handleStreamError(data)
       }
     )
 

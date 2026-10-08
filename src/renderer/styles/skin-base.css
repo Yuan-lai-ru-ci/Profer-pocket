@@ -101,9 +101,13 @@ html[class*="skin-"] .scroll-progress-thumb-active {
   background-color: var(--scroll-thumb-active) !important;
 }
 
-/* ===== 计划模式虚线描边（深色皮肤加亮） ===== */
+/* ===== 计划模式虚线描边（深色皮肤加亮） =====
+ * 当前各 skin 未必定义 --plan-mode-stroke-color；var() 无 fallback 时整条 stroke 声明
+ * 会在计算阶段失效并回落为 SVG 默认 none，导致 skin-* 主题的计划模式虚线完全不可见。
+ * 使用 --primary 作为统一兜底；皮肤后续可按需定义专用 token 覆盖。
+ */
 html[class*="skin-"] .plan-mode-border .plan-mode-stroke {
-  stroke: var(--plan-mode-stroke-color);
+  stroke: var(--plan-mode-stroke-color, hsl(var(--primary) / 0.45));
 }
 
 /* ===== ui-classic（经典界面）TabBar 下缘阴影 =====

@@ -50,6 +50,7 @@ import type {
   ConversationMeta,
   CreateAutomationInput,
   CreateCalendarEventInput,
+  CreateExplorationSessionInput,
   CreatePlanningGroupInput,
   CreatePlanningTagInput,
   CreateTodoInput,
@@ -583,8 +584,17 @@ export interface ElectronAPI {
   /** 更新 Agent 会话标题 */
   updateAgentSessionTitle: (id: string, title: string) => Promise<AgentSessionMeta>
 
+  /** 手动重新生成 Agent 会话标题 */
+  regenerateAgentSessionTitle: (id: string, channelId?: string, modelId?: string) => Promise<AgentSessionMeta | null>
+
+  /** 标记 Agent 会话为未读（权威字段 completedButUnconfirmed） */
+  setAgentCompletionState: (id: string) => Promise<AgentSessionMeta>
+
+  /** 标记 Agent 会话为已读（权威字段 completedButUnconfirmed） */
+  clearAgentCompletionState: (id: string) => Promise<AgentSessionMeta>
+
   /** 更新空闲 Agent 会话的渠道与模型 */
-  updateAgentSessionModel: (id: string, channelId?: string, modelId?: string) => Promise<AgentSessionMeta>
+  updateAgentSessionModel: (id: string, channelId?: string, modelId?: string, expectedRevision?: number) => Promise<AgentSessionMeta>
 
   /** 删除 Agent 会话 */
   deleteAgentSession: (id: string) => Promise<void>
@@ -617,6 +627,12 @@ export interface ElectronAPI {
 
   /** 分叉 Agent 会话 */
   forkAgentSession: (input: ForkSessionInput) => Promise<AgentSessionMeta>
+
+  /**
+   * 创建 Pi `/tree` 探索分支（WS 命令 `create_exploration_session`）。
+   * 与 forkAgentSession 的区别：不重建顶层会话，而是挂在主线血缘下并继承源会话模型。
+   */
+  createExplorationSession: (input: CreateExplorationSessionInput) => Promise<AgentSessionMeta>
 
   /** 快照回退（同一会话内回退到指定点，恢复文件 + 截断对话） */
   rewindSession: (input: RewindSessionInput) => Promise<RewindSessionResult>
@@ -756,7 +772,7 @@ export interface ElectronAPI {
   respondPermission: (response: PermissionResponse) => Promise<void>
 
   /** 热切换指定会话的权限模式（运行中生效，仅影响该 session） */
-  updateSessionPermissionMode: (sessionId: string, mode: ProferPermissionMode) => Promise<void>
+  updateSessionPermissionMode: (sessionId: string, mode: ProferPermissionMode, expectedRevision?: number) => Promise<AgentSessionMeta>
 
   // ===== Agent 预设（工作区级，数据与电脑端共享） =====
 
@@ -767,7 +783,7 @@ export interface ElectronAPI {
   getDefaultAgentPreset: (workspaceSlug?: string) => Promise<string>
 
   /** 更新会话绑定的预设 */
-  updateAgentSessionPreset: (sessionId: string, presetId: string) => Promise<AgentSessionMeta>
+  updateAgentSessionPreset: (sessionId: string, presetId: string, expectedRevision?: number) => Promise<AgentSessionMeta>
 
   /** 设置指定工作区默认预设 */
   setDefaultAgentPreset: (workspaceSlug: string, presetId: string) => Promise<string>
@@ -803,7 +819,7 @@ export interface ElectronAPI {
   getPiReasoningCapability: (provider: ProviderType, modelId: string | undefined) => Promise<ReasoningCapability | undefined>
 
   /** 切换空闲会话的 Agent runtime；跨 runtime 时清除旧 SDK session ID。 */
-  updateSessionAgentRuntime: (sessionId: string, runtime: AgentRuntime) => Promise<AgentSessionMeta>
+  updateSessionAgentRuntime: (sessionId: string, runtime: AgentRuntime, expectedRevision?: number) => Promise<AgentSessionMeta>
 
   /** 获取工作区记忆摘要 */
   getWorkspaceMemorySummary: (workspaceSlug: string) => Promise<WorkspaceMemorySummary>
@@ -870,6 +886,20 @@ export interface ElectronAPI {
 
   /** 获取所有待处理的交互请求快照（渲染进程重载后恢复状态） */
   getPendingRequests: () => Promise<PendingRequestsSnapshot>
+
+  /**
+   * 判定某个交互请求是否仍待处理（仅移动端 stub 提供；桌面端为 undefined）。
+   *
+   * 三个交互横幅在「X 关闭 / 提交」前用它确认请求是否已被其它端处理：
+   * - 'pending'：主端仍待处理 → 沿用原行为（X = 关闭并终止 Agent）
+   * - 'resolved'：已被其它端处理 → 只本地移除 + 轻提示，绝不停止运行中的会话
+   * - 'unknown'：连接未就绪 / 旧服务端不支持 / 判定失败 → 保留原有行为
+   */
+  getPendingInteractionVerdict?: (query: {
+    kind: 'permission' | 'askUser' | 'exitPlan'
+    requestId: string
+    sessionId?: string
+  }) => Promise<'pending' | 'resolved' | 'unknown'>
 
   // ===== Project Graph =====
 
@@ -976,11 +1006,11 @@ export interface ElectronAPI {
   /** 在系统文件管理器中显示文件（无工作区限制，支持候选基础目录） */
   showItemInFolder: (filePath: string, candidateBasePaths?: string[]) => Promise<boolean>
 
-  /** 解析文件路径并读取内容（供内联预览使用） */
-  resolveAndReadFile: (filePath: string, access?: import('@profer/shared').FileAccessOptions) => Promise<{ resolvedPath: string; content: string } | null>
+  /** 解析文件路径并读取内容（供内联预览使用）；version 是桌面端内容版本，禁止缓存跨版本复用。 */
+  resolveAndReadFile: (filePath: string, access?: import('@profer/shared').FileAccessOptions) => Promise<{ resolvedPath: string; content: string; version: { revision: string; mtimeMs: number; size: number; hash: string } } | null>
 
-  /** 读取文件为 base64 data URL（Pocket 特有扩展：移动端无法加载 profer-file://，图片预览经 WS 拿 data URL） */
-  readFileAsDataUrl: (filePath: string, access?: import('@profer/shared').FileAccessOptions) => Promise<{ resolvedPath: string; dataUrl: string } | null>
+  /** 读取文件为 base64 data URL（Pocket 特有扩展：移动端无法加载 profer-file://，图片预览经 WS 拿 data URL）；同样携带内容版本。 */
+  readFileAsDataUrl: (filePath: string, access?: import('@profer/shared').FileAccessOptions) => Promise<{ resolvedPath: string; dataUrl: string; version: { revision: string; mtimeMs: number; size: number; hash: string } } | null>
 
   /** 写入文本文件（供 Markdown 内联编辑使用） */
   writeTextFile: (filePath: string, content: string, access?: import('@profer/shared').FileAccessOptions) => Promise<boolean>
@@ -1036,8 +1066,14 @@ export interface ElectronAPI {
   /** 获取拖拽文件的本地路径（替代已废弃的 File.path） */
   getPathForFile: (file: File) => string
 
-  /** 搜索工作区文件（用于 @ 引用，支持附加目录） */
-  searchWorkspaceFiles: (rootPath: string, query: string, limit?: number, additionalPaths?: string[], sessionPaths?: string[]) => Promise<FileSearchResult>
+  /** 搜索工作区文件（用于 @ 引用，支持附加目录）
+   *
+   *  首参语义按端而异：桌面端承载工作区根路径（`rootPath`）；pocket（平板远端）无本地
+   *  文件系统，首参承载 **sessionId**，搜索 roots 由服务端按会话授权推导
+   *  （见 `src/renderer/pocket/electronapi-stub.ts` 的 `searchWorkspaceFiles`）。
+   *  故此处取中性形参名。形参名不参与 TS 类型兼容判断，两端实现可各自命名。
+   */
+  searchWorkspaceFiles: (rootPathOrSessionId: string, query: string, limit?: number, additionalPaths?: string[], sessionPaths?: string[]) => Promise<FileSearchResult>
 
   // ===== 系统提示词管理 =====
 

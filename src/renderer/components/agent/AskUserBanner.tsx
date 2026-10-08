@@ -10,9 +10,16 @@ import { useAtom } from 'jotai'
 import { Send, X } from 'lucide-react'
 import Markdown, { defaultUrlTransform } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
+import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { allPendingAskUserRequestsAtom, askUserAnswersAtom, type AskUserQuestionAnswer } from '@/atoms/agent-atoms'
 import { isEditableTarget } from '@/lib/navigation-controller'
+import {
+  runDismissFlow,
+  runSubmitFlow,
+  useInteractionGuardWatch,
+  type InteractionGuard,
+} from '@/lib/interaction-guard'
 import type { AskUserQuestion } from '@profer/shared'
 
 const EMPTY_ANSWER: AskUserQuestionAnswer = { selected: [], customText: '', showCustom: false }
@@ -28,9 +35,14 @@ function safeUrlTransform(url: string): string {
 interface AskUserBannerProps {
   sessionId: string
   onRequestStop: () => void
+  /**
+   * 交互守卫（仅移动端注入）：关闭/提交前先用主端快照判定请求是否仍待处理。
+   * 未注入（桌面端）或判定失败时恒为 unknown → 完全保留原有行为。
+   */
+  interactionGuard?: InteractionGuard
 }
 
-export function AskUserBanner({ sessionId, onRequestStop }: AskUserBannerProps): React.ReactElement | null {
+export function AskUserBanner({ sessionId, onRequestStop, interactionGuard }: AskUserBannerProps): React.ReactElement | null {
   const [allRequests, setAllRequests] = useAtom(allPendingAskUserRequestsAtom)
   const [answersByRequest, setAnswersByRequest] = useAtom(askUserAnswersAtom)
   const requests = allRequests.get(sessionId) ?? []
@@ -48,6 +60,35 @@ export function AskUserBanner({ sessionId, onRequestStop }: AskUserBannerProps):
     () => (requestId ? (answersByRequest.get(requestId) ?? new Map()) : new Map()),
     [answersByRequest, requestId],
   )
+
+  /** 本地移除某个请求（不动 run）：过期横幅收敛、提交成功、X 关闭共用。 */
+  const removeRequest = React.useCallback((targetRequestId: string): void => {
+    setAnswersByRequest((prev) => {
+      if (!prev.has(targetRequestId)) return prev
+      const map = new Map(prev)
+      map.delete(targetRequestId)
+      return map
+    })
+    setAllRequests((prev) => {
+      const current = prev.get(sessionId) ?? []
+      const next = current.filter((r) => r.requestId !== targetRequestId)
+      const map = new Map(prev)
+      if (next.length === 0) map.delete(sessionId)
+      else map.set(sessionId, next)
+      return map
+    })
+  }, [sessionId, setAllRequests, setAnswersByRequest])
+
+  // 另一端已作答/已关闭时的低频收敛：判定为过期就本地移除横幅并提示，绝不触碰 run（R8-P0）。
+  useInteractionGuardWatch({
+    guard: interactionGuard,
+    kind: 'askUser',
+    requestId,
+    onResolved: (resolvedRequestId) => {
+      removeRequest(resolvedRequestId)
+      toast.info('该询问已在其它端处理', { description: '已自动收起横幅，未停止 Agent。' })
+    },
+  })
 
   // 写入当前请求的答案草稿（支持函数式更新；无请求则不写）
   const setAnswers = React.useCallback(
@@ -167,14 +208,21 @@ export function AskUserBanner({ sessionId, onRequestStop }: AskUserBannerProps):
     return () => document.removeEventListener('keydown', handleKeyDown)
   }, [request?.requestId])
 
-  /** 关闭问题，并经统一入口请求停止 Agent。 */
+  /**
+   * 关闭问题：本地先收起横幅，再按主端快照决定是否停止 Agent。
+   *
+   * R8-P0：仅当该 requestId **仍在主端待处理**（或无法判定）时才沿用「关闭并终止 Agent」语义；
+   * 快照显示已被另一端处理时只做本地移除 + 轻提示，**不调用 onRequestStop**，
+   * 避免误点过期横幅把另一端正在运行的 turn 打断。
+   */
   const handleDismiss = (): void => {
-    // 清理当前请求的答案草稿（随请求关闭失效）
-    if (requestId) {
+    const targetRequestId = requestId
+    // 先本地收起（清理答案草稿 + 该会话队列），保证视觉即时反馈、避免重复点击
+    if (targetRequestId) {
       setAnswersByRequest((prev) => {
-        if (!prev.has(requestId)) return prev
+        if (!prev.has(targetRequestId)) return prev
         const map = new Map(prev)
-        map.delete(requestId)
+        map.delete(targetRequestId)
         return map
       })
     }
@@ -183,7 +231,17 @@ export function AskUserBanner({ sessionId, onRequestStop }: AskUserBannerProps):
       map.delete(sessionId)
       return map
     })
-    onRequestStop()
+    if (!targetRequestId) {
+      onRequestStop()
+      return
+    }
+    void runDismissFlow({
+      guard: interactionGuard,
+      kind: 'askUser',
+      requestId: targetRequestId,
+      requestStop: onRequestStop,
+      notifyResolved: () => toast.info('该询问已在其它端处理', { description: '未停止 Agent。' }),
+    })
   }
 
   if (!request) return null
@@ -214,6 +272,7 @@ export function AskUserBanner({ sessionId, onRequestStop }: AskUserBannerProps):
   const handleSubmit = async (): Promise<void> => {
     if (submitting) return
     setSubmitting(true)
+    const targetRequestId = request.requestId
     try {
       const answersRecord: Record<string, string> = {}
       for (let i = 0; i < questions.length; i++) {
@@ -227,21 +286,21 @@ export function AskUserBanner({ sessionId, onRequestStop }: AskUserBannerProps):
           answersRecord[key] = answer.selected.join(', ')
         }
       }
-      await window.electronAPI.respondAskUser({ requestId: request.requestId, answers: answersRecord })
-      setAllRequests((prev) => {
-        const map = new Map(prev)
-        const current = map.get(sessionId) ?? []
-        const newValue = current.filter((r) => r.requestId !== request.requestId)
-        if (newValue.length === 0) map.delete(sessionId)
-        else map.set(sessionId, newValue)
-        return map
-      })
-      // 提交成功：清理该请求的答案草稿
-      setAnswersByRequest((prev) => {
-        if (!prev.has(request.requestId)) return prev
-        const map = new Map(prev)
-        map.delete(request.requestId)
-        return map
+      // R8-P0：另一端已处理时不再回传（回传只会拿到「提问请求不存在或已处理」）。
+      // 提交路径本身不会停止 Agent。
+      await runSubmitFlow({
+        guard: interactionGuard,
+        kind: 'askUser',
+        requestId: targetRequestId,
+        submit: async () => {
+          await window.electronAPI.respondAskUser({ requestId: targetRequestId, answers: answersRecord })
+          // 提交成功：出队并清理该请求的答案草稿
+          removeRequest(targetRequestId)
+        },
+        onStale: () => {
+          removeRequest(targetRequestId)
+          toast.info('该询问已在其它端处理', { description: '无需重复提交。' })
+        },
       })
     } catch (error) {
       console.error('[AskUserBanner] 响应失败:', error)

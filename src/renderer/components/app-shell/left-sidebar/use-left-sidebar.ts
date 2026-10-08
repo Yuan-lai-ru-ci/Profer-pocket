@@ -105,13 +105,15 @@ import {
   getNextWorkspaceSortMode,
 } from './sidebar-utils'
 import {
-  getDirectDelegatedChildren,
+  getDirectRelatedChildren,
   getSyncableDelegatedChildren,
   hasPinnedVisibleParent,
   PROJECT_SESSION_EXPAND_STEP,
   type AgentSessionTreeItem,
 } from './session-tree'
 import { focusEnterableViewItem } from './navigation-items'
+import { remoteStoreAtom } from '@/atoms/remote-store-atoms'
+import { selectRemoteSessions } from '@/pocket/remote-store'
 import type { AgentProjectGroup } from './session-items'
 
 
@@ -235,8 +237,8 @@ export function useLeftSidebar(pocketMode?: boolean) {
   const [expandedExtraCountMap, setExpandedExtraCountMap] = React.useState<Map<string, number>>(new Map())
   /** 记录被用户手动折叠的工作区 ID（点击当前工作区标题时折叠/展开）。刻意不持久化：折叠被视为临时查看行为，刷新/重启后恢复默认展开 */
   const [collapsedWorkspaceIds, setCollapsedWorkspaceIds] = React.useState<Set<string>>(new Set())
-  /** 记录已展开的委派母会话；默认收起，避免批量派遣后撑满侧栏 */
-  const [expandedDelegationParentIds, setExpandedDelegationParentIds] = React.useState<Set<string>>(new Set())
+  /** 记录已展开的关联会话母行（委派子会话 / 探索分支共用）；默认收起，避免批量派遣后撑满侧栏 */
+  const [expandedRelatedParentIds, setExpandedRelatedParentIds] = React.useState<Set<string>>(new Set())
   /** 项目拖拽排序状态 */
   const [dragProjectId, setDragProjectId] = React.useState<string | null>(null)
   const [projectDropIndicator, setProjectDropIndicator] = React.useState<{ id: string; position: 'before' | 'after' } | null>(null)
@@ -261,7 +263,12 @@ export function useLeftSidebar(pocketMode?: boolean) {
   const isClassic = interfaceVariant === 'classic'
 
   // Agent 模式状态
-  const [agentSessions, setAgentSessions] = useAtom(agentSessionsAtom)
+  const legacyAgentSessions = useAtomValue(agentSessionsAtom)
+  const remoteStore = useAtomValue(remoteStoreAtom)
+  const remoteSessions = selectRemoteSessions(remoteStore)
+  // 新会话目录优先来自 Remote Store；旧 atom 仍作为兼容写桥，最终状态由 projection 回流。
+  const agentSessions = remoteSessions.length > 0 ? remoteSessions : legacyAgentSessions
+  const setAgentSessions = useSetAtom(agentSessionsAtom)
   const [currentAgentSessionId, setCurrentAgentSessionId] = useAtom(currentAgentSessionIdAtom)
   const agentIndicatorMap = useAtomValue(agentSessionIndicatorMapAtom)
   const unviewedCompletedSessionIds = useAtomValue(unviewedCompletedSessionIdsAtom)
@@ -504,7 +511,7 @@ export function useLeftSidebar(pocketMode?: boolean) {
   const pinnedAgentSessionTrees = React.useMemo<AgentSessionTreeItem[]>(
     () => pinnedAgentSessions.map((session) => ({
       session,
-      childSessions: getDirectDelegatedChildren(agentSessions, session.id).filter((child) => (
+      childSessions: getDirectRelatedChildren(agentSessions, session.id).filter((child) => (
         !child.archived
         && !child.draft
         && !draftSessionIds.has(child.id)
@@ -744,7 +751,7 @@ export function useLeftSidebar(pocketMode?: boolean) {
 
     // 清理 per-conversation/session Map atoms 条目
     cleanupMapAtoms(pendingDeleteId)
-    setExpandedDelegationParentIds((prev) => deleteSetEntry(prev, pendingDeleteId))
+    setExpandedRelatedParentIds((prev) => deleteSetEntry(prev, pendingDeleteId))
 
     if (mode === 'agent') {
       // Agent 模式：删除 Agent 会话
@@ -953,7 +960,7 @@ export function useLeftSidebar(pocketMode?: boolean) {
       })
 
       setCollapsedWorkspaceIds((prev) => deleteSetEntry(prev, workspaceId))
-      setExpandedDelegationParentIds((prev) => {
+      setExpandedRelatedParentIds((prev) => {
         let changed = false
         const next = new Set(prev)
         for (const sessionId of deletedSessionIds) {
@@ -1178,6 +1185,40 @@ export function useLeftSidebar(pocketMode?: boolean) {
     })
   }, [openSession, setActiveView, setUnviewedCompleted])
 
+  /** 标记 Agent 会话为「未读」并等待权威 projection 回流 */
+  const handleMarkUnread = React.useCallback(async (id: string): Promise<void> => {
+    try {
+      const updated = await window.electronAPI.setAgentCompletionState(id)
+      setAgentSessions((prev) => upsertAgentSession(prev, updated))
+      setUnviewedCompleted((prev) => new Set(prev).add(id))
+    } catch (error) {
+      console.error('[侧边栏] 标记 Agent 会话未读失败:', error)
+    }
+  }, [setAgentSessions, setUnviewedCompleted])
+
+  /** 正在重新生成标题的会话 ID，驱动会话行首图标状态 */
+  const [regeneratingTitleIds, setRegeneratingTitleIds] = React.useState<Set<string>>(new Set())
+
+  /** 手动重新生成 Agent 会话标题 */
+  const handleAgentRegenerateTitle = React.useCallback(async (id: string): Promise<void> => {
+    setRegeneratingTitleIds((prev) => new Set(prev).add(id))
+    try {
+      const updated = await window.electronAPI.regenerateAgentSessionTitle(id)
+      if (!updated) {
+        toast.error('重新生成标题失败：缺少可用模型或有效消息')
+        return
+      }
+      setAgentSessions((prev) => replaceAgentSessionInFreshnessOrder(prev, updated))
+      setTabs((prev) => updateTabTitle(prev, id, updated.title))
+      toast.success(`标题已更新：${updated.title}`)
+    } catch (error) {
+      console.error('[侧边栏] 重新生成 Agent 会话标题失败:', error)
+      toast.error('重新生成标题失败')
+    } finally {
+      setRegeneratingTitleIds((prev) => { const next = new Set(prev); next.delete(id); return next })
+    }
+  }, [setAgentSessions, setTabs])
+
   /** 重命名工作区（项目）名称 */
   const handleWorkspaceRename = React.useCallback(async (workspaceId: string, newName: string): Promise<void> => {
     try {
@@ -1323,8 +1364,8 @@ export function useLeftSidebar(pocketMode?: boolean) {
     setMoveTargetId(id)
   }, [])
 
-  const handleToggleDelegationParent = React.useCallback((sessionId: string): void => {
-    setExpandedDelegationParentIds((prev) => toggleSetEntry(prev, sessionId))
+  const handleToggleRelatedParent = React.useCallback((sessionId: string): void => {
+    setExpandedRelatedParentIds((prev) => toggleSetEntry(prev, sessionId))
   }, [])
 
   /** 迁移会话到另一个项目后的回调 */
@@ -1596,11 +1637,14 @@ export function useLeftSidebar(pocketMode?: boolean) {
     archivedAgentSessionCount,
     handleSelectAgentSession,
     handleAgentRename,
+    handleAgentRegenerateTitle,
+    handleMarkUnread,
+    regeneratingTitleIds,
     handleTogglePinAgent,
     handleToggleArchiveAgent,
     handleRequestMove,
-    handleToggleDelegationParent,
-    expandedDelegationParentIds,
+    handleToggleRelatedParent,
+    expandedRelatedParentIds,
 
     // workspaces / projects
     workspaces,
