@@ -626,8 +626,13 @@ export class WsClient {
 
   /** Pi 推理档位能力（对齐桌面 IPC getPiReasoningCapability）：
    *  档位由服务端 resolvePiReasoningCapability 计算（renderer 无 pi-ai 目录，无法本地推导）。 */
-  getPiReasoningCapability(provider: string, modelId: string): Promise<unknown> {
-    return this.sendCommand({ type: 'get_pi_reasoning_capability', provider, modelId })
+  getPiReasoningCapability(provider: string, modelId: string, baseUrl?: string): Promise<unknown> {
+    return this.sendCommand({
+      type: 'get_pi_reasoning_capability',
+      provider,
+      modelId,
+      ...(baseUrl ? { baseUrl } : {}),
+    })
   }
 
   /** 搜索会话可引用的工作区文件（@ 引用）：roots 由服务端按会话授权推导，

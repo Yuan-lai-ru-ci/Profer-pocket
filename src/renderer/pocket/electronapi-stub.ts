@@ -143,8 +143,8 @@ interface PocketRemoteClient extends HeatmapRemoteClient {
     opts?: { before?: number; targetMessages?: number },
   ): Promise<unknown>
   sendMessage(payload: { sessionId: string; userMessage: string; channelId: string; modelId?: string; workspaceId?: string; permissionMode?: 'auto' | 'plan' | 'bypassPermissions'; uuid?: string; startedAt?: number }): Promise<unknown>
-  /** Pi 推理档位能力（服务端 resolvePiReasoningCapability） */
-  getPiReasoningCapability(provider: string, modelId: string): Promise<unknown>
+  /** Pi 推理档位能力（服务端 resolvePiReasoningCapability）；baseUrl 用于 DeepSeek/Ollama 协议判定。 */
+  getPiReasoningCapability(provider: string, modelId: string, baseUrl?: string): Promise<unknown>
   /** 远程搜索会话可引用的工作区文件（roots 由服务端按会话授权推导） */
   searchWorkspaceFiles(sessionId: string, query: string, limit?: number): Promise<unknown>
   /** 向正在运行的 Agent 注入消息（对齐桌面 queueAgentMessage：interrupt 软打断 / uuid 幂等） */
@@ -1096,10 +1096,10 @@ export function installElectronApiStub(): void {
     // 给出与桌面不同的档位集合 → 等于把双端漂移换个地方复现。
     // 旧服务端不认识该命令 → sendCommand 拒绝或 ok:false → 这里返回 undefined，
     // 与改动前「恒 undefined」的降级完全等价（调用方 AgentView:733 已带 .catch 兜底）。
-    getPiReasoningCapability: async (provider: string, modelId?: string) => {
+    getPiReasoningCapability: async (provider: string, modelId?: string, baseUrl?: string) => {
       if (!remoteClient || !provider) return undefined
       try {
-        const result = (await remoteClient.getPiReasoningCapability(provider, modelId ?? '')) as
+        const result = (await remoteClient.getPiReasoningCapability(provider, modelId ?? '', baseUrl)) as
           | { levels?: unknown }
           | null
           | undefined

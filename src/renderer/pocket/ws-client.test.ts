@@ -35,6 +35,25 @@ describe('WsClient.getWorkspaceHeatmapDaily', () => {
   })
 })
 
+describe('WsClient.getPiReasoningCapability', () => {
+  test('Given endpoint URL When querying Then forwards baseUrl for variable-protocol providers', async () => {
+    const client = new WsClient({ url: 'ws://127.0.0.1/ws', token: 'test-token' })
+    let payload: Record<string, unknown> | undefined
+    client.sendCommand = async (command): Promise<unknown> => {
+      payload = command
+      return { levels: ['off', 'high'], defaultLevel: 'high' }
+    }
+
+    await expect(client.getPiReasoningCapability('deepseek', 'deepseek-v4-pro', 'https://gateway.example/v1'))
+      .resolves.toEqual({ levels: ['off', 'high'], defaultLevel: 'high' })
+    expect(payload).toEqual({
+      type: 'get_pi_reasoning_capability',
+      provider: 'deepseek',
+      modelId: 'deepseek-v4-pro',
+      baseUrl: 'https://gateway.example/v1',
+    })
+  })
+})
 describe('WsClient.getAgentRuntimeContexts', () => {
   test('Given 指定会话 When 查询权威上下文窗口 Then 带上 sessionIds', async () => {
     const client = new WsClient({ url: 'ws://127.0.0.1/ws', token: 'test-token' })
