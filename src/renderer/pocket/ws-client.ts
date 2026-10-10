@@ -905,6 +905,10 @@ export class WsClient {
     return this.sendCommand({ type: 'update_conversation_title', conversationId, title })
   }
 
+  regenerateConversationTitle(conversationId: string, channelId?: string, modelId?: string): Promise<unknown> {
+    return this.sendCommand({ type: 'regenerate_conversation_title', conversationId, channelId, modelId })
+  }
+
   updateConversationModel(conversationId: string, modelId?: string, channelId?: string): Promise<unknown> {
     return this.sendCommand({ type: 'update_conversation_model', conversationId, modelId, channelId })
   }
@@ -959,6 +963,10 @@ export class WsClient {
 
   chatUpdateContextDividers(conversationId: string, dividers: string[]): Promise<unknown> {
     return this.sendCommand({ type: 'chat_update_context_dividers', conversationId, dividers })
+  }
+
+  chatAutoTitle(input: { conversationId: string; channelId: string; modelId: string }): Promise<unknown> {
+    return this.sendCommand({ type: 'chat_auto_title', ...input })
   }
 
   chatGenerateTitle(input: { userMessage: string; channelId: string; modelId?: string }): Promise<unknown> {

@@ -172,6 +172,7 @@ interface PocketRemoteClient extends HeatmapRemoteClient {
   getConversationMessages(conversationId: string): Promise<unknown>
   getRecentMessages(conversationId: string, limit: number): Promise<unknown>
   updateConversationTitle(conversationId: string, title: string): Promise<unknown>
+  regenerateConversationTitle(conversationId: string, channelId?: string, modelId?: string): Promise<unknown>
   updateConversationModel(conversationId: string, modelId?: string, channelId?: string): Promise<unknown>
   deleteConversation(conversationId: string): Promise<unknown>
   toggleConversationPin(conversationId: string): Promise<unknown>
@@ -195,6 +196,7 @@ interface PocketRemoteClient extends HeatmapRemoteClient {
   chatDeleteMessage(conversationId: string, messageId: string): Promise<unknown>
   chatTruncateMessagesFrom(conversationId: string, messageId: string, preserveFirstMessageAttachments?: boolean): Promise<unknown>
   chatUpdateContextDividers(conversationId: string, dividers: string[]): Promise<unknown>
+  chatAutoTitle(input: { conversationId: string; channelId: string; modelId: string }): Promise<unknown>
   chatGenerateTitle(input: GenerateTitleInput): Promise<unknown>
   chatSaveAttachment(input: { conversationId: string; filename: string; mediaType: string; data: string }): Promise<unknown>
   chatDeleteAttachment(localPath: string): Promise<unknown>
@@ -949,6 +951,10 @@ export function installElectronApiStub(): void {
       if (!remoteClient) return Promise.reject(new Error('移动端连接未就绪'))
       return remoteClient.updateConversationTitle(conversationId, title)
     },
+    regenerateConversationTitle: (conversationId: string, channelId?: string, modelId?: string) => {
+      if (!remoteClient) return Promise.reject(new Error('移动端连接未就绪'))
+      return remoteClient.regenerateConversationTitle(conversationId, channelId, modelId)
+    },
     updateConversationModel: (conversationId: string, modelId?: string, channelId?: string) => {
       if (!remoteClient) return Promise.reject(new Error('移动端连接未就绪'))
       return remoteClient.updateConversationModel(conversationId, modelId, channelId)
@@ -1017,6 +1023,10 @@ export function installElectronApiStub(): void {
     updateContextDividers: (conversationId: string, dividers: string[]) => {
       if (!remoteClient) return Promise.reject(new Error('移动端连接未就绪'))
       return remoteClient.chatUpdateContextDividers(conversationId, dividers)
+    },
+    autoTitleConversation: (input: { conversationId: string; channelId: string; modelId: string }) => {
+      if (!remoteClient) return Promise.reject(new Error('移动端连接未就绪'))
+      return remoteClient.chatAutoTitle(input)
     },
     generateTitle: (input: GenerateTitleInput) => {
       if (!remoteClient) return Promise.reject(new Error('移动端连接未就绪'))

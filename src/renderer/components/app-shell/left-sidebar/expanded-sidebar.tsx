@@ -40,6 +40,8 @@ export function ExpandedSidebar({ s, onCollapse }: { s: SidebarModel; onCollapse
     handleSelectConversation,
     handleRequestDelete,
     handleRename,
+    handleRegenerateConversationTitle,
+    regeneratingConversationTitleIds,
     handleTogglePin,
     handleToggleArchive,
     pinnedAgentSessionTrees,
@@ -213,6 +215,8 @@ export function ExpandedSidebar({ s, onCollapse }: { s: SidebarModel; onCollapse
                         onSelect={handleSelectConversation}
                         onRequestDelete={handleRequestDelete}
                         onRename={handleRename}
+                        onRegenerateTitle={handleRegenerateConversationTitle}
+                        regeneratingTitle={regeneratingConversationTitleIds.has(conv.id)}
                         onTogglePin={handleTogglePin}
                         onToggleArchive={handleToggleArchive}
                       />
@@ -246,6 +250,7 @@ export function ExpandedSidebar({ s, onCollapse }: { s: SidebarModel; onCollapse
                       onSelect={handleSelectConversation}
                       onRequestDelete={handleRequestDelete}
                       onRename={handleRename}
+                      onRegenerateTitle={handleRegenerateConversationTitle}
                       onTogglePin={handleTogglePin}
                       onToggleArchive={handleToggleArchive}
                     />
@@ -492,6 +497,8 @@ export function ExpandedSidebar({ s, onCollapse }: { s: SidebarModel; onCollapse
                         onSelect={handleSelectConversation}
                         onRequestDelete={handleRequestDelete}
                         onRename={handleRename}
+                        onRegenerateTitle={handleRegenerateConversationTitle}
+                        regeneratingTitle={regeneratingConversationTitleIds.has(conv.id)}
                         onTogglePin={handleTogglePin}
                         onToggleArchive={handleToggleArchive}
                       />

@@ -326,6 +326,9 @@ export interface ElectronAPI {
   /** 更新对话标题 */
   updateConversationTitle: (id: string, title: string) => Promise<ConversationMeta>
 
+  /** 手动重新生成对话标题 */
+  regenerateConversationTitle: (id: string, channelId?: string, modelId?: string) => Promise<ConversationMeta | null>
+
   /** 更新对话使用的模型/渠道 */
   updateConversationModel: (id: string, modelId?: string, channelId?: string) => Promise<ConversationMeta>
 
@@ -373,6 +376,8 @@ export interface ElectronAPI {
   /** 更新上下文分隔线 */
   updateContextDividers: (conversationId: string, dividers: string[]) => Promise<ConversationMeta>
 
+  /** 自动命名对话标题（由主进程状态机决定是否写入） */
+  autoTitleConversation: (input: { conversationId: string; channelId: string; modelId: string }) => Promise<ConversationMeta | null>
   /** 生成对话标题 */
   generateTitle: (input: GenerateTitleInput) => Promise<string | null>
 

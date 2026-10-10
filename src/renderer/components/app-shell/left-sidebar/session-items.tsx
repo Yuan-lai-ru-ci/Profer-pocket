@@ -451,6 +451,8 @@ interface ConversationItemProps {
   onRename: (id: string, newTitle: string) => Promise<void>
   onTogglePin: (id: string) => Promise<void>
   onToggleArchive: (id: string) => Promise<void>
+  onRegenerateTitle?: (id: string) => Promise<void>
+  regeneratingTitle?: boolean
 }
 
 export const ConversationItem = React.memo(function ConversationItem({
@@ -465,6 +467,8 @@ export const ConversationItem = React.memo(function ConversationItem({
   onRename,
   onTogglePin,
   onToggleArchive,
+  onRegenerateTitle,
+  regeneratingTitle,
 }: ConversationItemProps): React.ReactElement {
   const interfaceVariant = useAtomValue(interfaceVariantAtom)
   const isClassic = interfaceVariant === 'classic'
@@ -549,6 +553,12 @@ export const ConversationItem = React.memo(function ConversationItem({
         <Pencil size={14} />
         重命名
       </MenuItem>
+      {onRegenerateTitle && (
+        <MenuItem disabled={regeneratingTitle} className="text-xs py-1 [&>svg]:size-3.5" onSelect={() => { if (!regeneratingTitle) void onRegenerateTitle(conversation.id) }}>
+          {regeneratingTitle ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />}
+          {regeneratingTitle ? '正在生成标题…' : '重新生成标题'}
+        </MenuItem>
+      )}
       <MenuItem className="text-xs py-1 [&>svg]:size-3.5" onSelect={() => onToggleArchive(conversation.id)}>
         {conversation.archived ? <ArchiveRestore size={14} /> : <Archive size={14} />}
         {conversation.archived ? '取消归档' : '归档'}
@@ -627,6 +637,12 @@ export const ConversationItem = React.memo(function ConversationItem({
                 {showPinIcon && (
                   <Pin size={11} className="flex-shrink-0 text-primary/60" />
                 )}
+                {regeneratingTitle ? (
+                  <>
+                    <Loader2 size={11} className="flex-shrink-0 text-info animate-spin" aria-label="正在重新生成标题" />
+                    <span className="flex-shrink-0 text-[11px] text-info">正在生成标题…</span>
+                  </>
+                ) : null}
                 {/* 对话名占满剩余空间 */}
                 <span className="flex-1 min-w-0 truncate">{conversation.title}</span>
                 {/* 草稿标记：输入框有未发送内容 */}
@@ -853,9 +869,9 @@ export const AgentSessionItem = React.memo(function AgentSessionItem({
         重命名
       </MenuItem>
       {onRegenerateTitle && (
-        <MenuItem className="text-xs py-1 [&>svg]:size-3.5" onSelect={() => { void onRegenerateTitle(session.id) }}>
-          <Sparkles size={14} />
-          重新生成标题
+        <MenuItem disabled={regeneratingTitle} className="text-xs py-1 [&>svg]:size-3.5" onSelect={() => { if (!regeneratingTitle) void onRegenerateTitle(session.id) }}>
+          {regeneratingTitle ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />}
+          {regeneratingTitle ? '正在生成标题…' : '重新生成标题'}
         </MenuItem>
       )}
       <MenuItem className="text-xs py-1 [&>svg]:size-3.5" onSelect={() => onToggleArchive(session.id)}>
@@ -946,7 +962,10 @@ export const AgentSessionItem = React.memo(function AgentSessionItem({
                 ) : null}
                 {/* 该会话有活动浏览器会话/标签：在会话行上标识，便于从侧边栏识别哪个会话在用浏览器 */}
                 {regeneratingTitle ? (
-                  <Loader2 size={11} className="flex-shrink-0 text-foreground/40 animate-spin" aria-label="正在重新生成标题" />
+                  <>
+                    <Loader2 size={11} className="flex-shrink-0 text-info animate-spin" aria-label="正在重新生成标题" />
+                    <span className="flex-shrink-0 text-[11px] text-info">正在生成标题…</span>
+                  </>
                 ) : hasBrowser ? (
                   <Globe size={11} className="flex-shrink-0 text-foreground/40" aria-label="该会话正在使用浏览器" />
                 ) : null}
