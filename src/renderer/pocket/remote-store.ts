@@ -78,6 +78,21 @@ export const initialRemoteStoreState: RemoteStoreState = {
   commands: {},
 }
 
+/** 无 eventId 的运行时事件去重上限：只保留最近窗口，避免长会话里每个事件都复制一份不断增长的表。 */
+const RUNTIME_EVENT_KEY_LIMIT = 512
+
+/** 按 sessions 引用缓存排序结果；sessions 未变时（如仅 runtime 变化）不重新排序。 */
+const sortedSessionsCache = new WeakMap<Record<string, AgentSessionMeta>, AgentSessionMeta[]>()
+
+function withRuntimeEventKey(keys: Record<string, true>, key: string): Record<string, true> {
+  const next: Record<string, true> = { ...keys, [key]: true }
+  const overflow = Object.keys(next).length - RUNTIME_EVENT_KEY_LIMIT
+  if (overflow > 0) {
+    for (const stale of Object.keys(next).slice(0, overflow)) delete next[stale]
+  }
+  return next
+}
+
 function revisionOf(session: AgentSessionMeta): number {
   return session.revision ?? 0
 }
@@ -253,7 +268,7 @@ export function reduceRemoteStore(
       return {
         ...state,
         runtime: { ...state.runtime, [action.event.sessionId]: next },
-        runtimeEventKeys: { ...state.runtimeEventKeys, [eventKey]: true },
+        runtimeEventKeys: withRuntimeEventKey(state.runtimeEventKeys, eventKey),
         runtimeLastEventId: action.eventId ?? state.runtimeLastEventId,
       }
     }
@@ -304,7 +319,11 @@ export function reduceRemoteStore(
 }
 
 export function selectRemoteSessions(state: RemoteStoreState): AgentSessionMeta[] {
-  return Object.values(state.sessions).sort((a, b) => b.updatedAt - a.updatedAt)
+  const cached = sortedSessionsCache.get(state.sessions)
+  if (cached) return cached
+  const sorted = Object.values(state.sessions).sort((a, b) => b.updatedAt - a.updatedAt)
+  sortedSessionsCache.set(state.sessions, sorted)
+  return sorted
 }
 
 export function selectRemoteSession(state: RemoteStoreState, sessionId: string): AgentSessionMeta | undefined {

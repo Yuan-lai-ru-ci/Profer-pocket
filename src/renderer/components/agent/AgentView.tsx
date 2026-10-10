@@ -3080,7 +3080,7 @@ export function AgentView({ sessionId, pocketMode = false, hideAgentHeader = fal
   return (
     <>
     <AgentSessionProvider sessionId={sessionId}>
-      <div data-profer-navigation-region="conversation" tabIndex={-1} className="flex h-full min-w-0 w-full flex-1 flex-col max-w-[min(72rem,100%)] mx-auto">
+      <div data-profer-navigation-region="conversation" tabIndex={-1} className="flex min-h-0 min-w-0 w-full flex-1 flex-col max-w-[min(72rem,100%)] mx-auto">
         {/* Agent Header（平板竖屏由外部顶栏承担标题时隐藏，避免双标题） */}
         {!hideAgentHeader && <AgentHeader sessionId={sessionId} />}
 
@@ -3125,7 +3125,13 @@ export function AgentView({ sessionId, pocketMode = false, hideAgentHeader = fal
 
         {/* 输入区域 — 交互横幅显示时隐藏，由横幅替代 */}
         {!hasBannerOverlay && (
-        <div className="px-2.5 pb-2.5 md:px-[18px] md:pb-[18px]" data-input-mode="agent">
+        <div
+          className={cn(
+            'shrink-0 px-2.5 pb-2.5 md:px-[18px] md:pb-[18px]',
+            pocketMode && streaming && persistedSDKMessages.length > 0 && 'pocket-composer-running',
+          )}
+          data-input-mode="agent"
+        >
           {knowledgeReferences.length > 0 && <div className="mb-2 flex flex-wrap gap-1.5 px-1">{knowledgeReferences.map((reference) => {
             const unavailable = availableKnowledgeIds !== null && !availableKnowledgeIds.has(reference.itemId)
             return <span key={reference.itemId} className={cn('inline-flex h-7 max-w-[260px] items-center gap-1 rounded border border-border/70 bg-background/60 px-2 text-xs text-foreground/80', unavailable && 'border-destructive/25 bg-destructive/5 text-destructive')}><button type="button" disabled={unavailable} onClick={() => openKnowledgePreview(reference)} className="inline-flex min-w-0 items-center gap-1 hover:underline disabled:no-underline"><Library className="size-3.5 shrink-0 text-muted-foreground"/><span className="truncate">{unavailable ? `${reference.title}（已删除）` : reference.title}</span></button><button type="button" aria-label={`撤销资料 ${reference.title} 的访问授权`} className="shrink-0 rounded hover:bg-accent" onClick={() => void window.electronAPI.removeAgentKnowledgeReference(sessionId, reference.itemId).then(setKnowledgeReferences).catch((error) => toast.error(error instanceof Error ? error.message : '撤销资料授权失败'))}><X className="size-3.5"/></button></span>

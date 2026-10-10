@@ -2615,6 +2615,83 @@
   }
 }
 
+/* ===== Pocket 移动端线条层级 =====
+ * 线条只承担结构和交互反馈：主壳/输入框/设置卡片使用 1.5px 强边界，
+ * 列表分隔线保持 1px，避免聊天正文被过度切碎；所有颜色仍走主题 token。
+ */
+@media (orientation: portrait) {
+  body.pocket-mode {
+    --pocket-border-strong: hsl(var(--border) / 0.88);
+    --pocket-border-soft: hsl(var(--border) / 0.58);
+  }
+
+  body.pocket-mode .pocket-mobile-conversation-frame {
+    border: 0;
+  }
+
+  body.pocket-mode .pocket-mobile-conversation-frame-open {
+    border: 1.5px solid var(--pocket-border-strong);
+    box-shadow: 0 12px 32px -20px rgb(0 0 0 / 0.38);
+  }
+
+  body.pocket-mode .profer-scroll-region {
+    min-height: 0;
+    min-width: 0;
+    overscroll-behavior-y: contain;
+  }
+
+  body.pocket-mode .agent-input-surface {
+    border-width: 1.5px;
+    border-color: var(--pocket-border-strong);
+    box-shadow: 0 1px 0 hsl(var(--foreground) / 0.04);
+  }
+
+  body.pocket-mode .pocket-composer-running {
+    --pocket-input-h: 40px;
+  }
+
+  body.pocket-mode .pocket-composer-running .rich-text-input {
+    transition-duration: 160ms;
+  }
+
+  body.pocket-mode .pocket-composer-running .rich-text-input .ProseMirror {
+    padding-top: 4px;
+  }
+
+
+  body.pocket-mode .agent-input-surface:focus-within {
+    border-color: hsl(var(--primary) / 0.82);
+    box-shadow: 0 0 0 2px hsl(var(--primary) / 0.16), 0 1px 0 hsl(var(--foreground) / 0.05);
+  }
+
+  body.pocket-mode .pocket-settings-dialog {
+    border: 0;
+  }
+
+  body.pocket-mode .pocket-settings-shell .border-b {
+    border-bottom-width: 1.5px;
+    border-bottom-color: var(--pocket-border-strong);
+  }
+
+  body.pocket-mode .pocket-settings-list {
+    border-width: 1.5px;
+    border-color: var(--pocket-border-strong);
+  }
+
+  body.pocket-mode .pocket-settings-row {
+    border-color: var(--pocket-border-soft);
+  }
+
+  body.pocket-mode .pocket-settings-row:active {
+    box-shadow: inset 0 0 0 1.5px hsl(var(--primary) / 0.22);
+  }
+
+  body.pocket-mode :is(input, textarea, select, button):focus-visible {
+    outline: 2px solid hsl(var(--primary) / 0.72);
+    outline-offset: 2px;
+  }
+}
+
 /* ===== 平板 App 状态栏安全区（Capacitor WebView 沉浸式） =====
  * App 内 WebView 延伸到系统状态栏后面，顶部内容会被状态栏遮挡。
  * 该 class 由 main.tsx 无条件挂在 App 根容器与侧边抽屉上（浏览器 env() 为 0，不影响）。

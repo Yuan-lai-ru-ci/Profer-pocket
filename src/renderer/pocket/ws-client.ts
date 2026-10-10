@@ -12,6 +12,7 @@
  */
 
 import type { AgentPreset, CommandResult, CreateExplorationSessionInput } from '@profer/shared'
+import { slimSdkMessagesPayload } from './sdk-message-slim'
 
 /**
  * 预设列表回包归一化。
@@ -650,11 +651,12 @@ export class WsClient {
     sessionId: string,
     opts?: { before?: number; targetMessages?: number },
   ): Promise<unknown> {
+    // 移动端在接收边界截断超长工具输出，避免整段结果常驻内存（见 sdk-message-slim.ts）。
     return this.sendCommand({
       type: 'get_sdk_messages',
       sessionId,
       ...(opts ?? {}),
-    })
+    }).then(slimSdkMessagesPayload)
   }
 
   getPendingInteractions(sessionId?: string): Promise<unknown> {
@@ -768,12 +770,16 @@ export class WsClient {
     return this.sendCommand({ type: 'ensure_project_draft_session', ...payload })
   }
 
-  sendMessage(payload: { sessionId: string; userMessage: string; channelId: string; modelId?: string; workspaceId?: string; permissionMode?: 'auto' | 'plan' | 'bypassPermissions'; uuid?: string; startedAt?: number }): Promise<unknown> {
+  sendMessage(payload: { sessionId: string; userMessage: string; channelId: string; modelId?: string; workspaceId?: string; permissionMode?: 'auto' | 'plan' | 'bypassPermissions'; uuid?: string; startedAt?: number; additionalDirectories?: string[] }): Promise<unknown> {
     // 幂等去重键既要覆盖同一 WebView 的 WS 重连，也要覆盖“服务端已接收但 WebView
     // 被系统杀掉、未收到 accepted”的跨进程恢复窗口。
     const clientMessageId = claimPendingSendId(payload, WsClient.newClientMessageId)
     const frame = { type: 'send_message', ...payload, clientMessageId }
     return this.queueMessageOrSend(frame)
+  }
+
+  saveFilesToAgentSession(input: { workspaceSlug: string; sessionId: string; files: Array<{ filename: string; data: string }> }): Promise<unknown> {
+    return this.sendCommand({ type: 'save_agent_session_files', ...input })
   }
 
   /**

@@ -28,6 +28,8 @@ import {
   Database,
   Network,
   MonitorSmartphone,
+  ChevronLeft,
+  ChevronRight,
   } from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { settingsTabAtom, channelFormDirtyAtom, settingsCloseRequestedAtom, settingsOpenAtom } from "@/atoms/settings-tab";
@@ -184,6 +186,84 @@ function renderTabContent(tab: SettingsTab, pocketMode = false): React.ReactElem
   }
 }
 
+/**
+ * 移动端设置壳（仅 tabsOverride 存在时使用，即 Pocket 平板/手机）。
+ * 采用系统设置式的分组列表 → 二级页 + 返回键，取代桌面的左侧导航，避免窄屏上横向标签挤压。
+ * 标签切换仍同步 settingsTabAtom，保证子页面内部读取的 tab 状态一致。
+ */
+function PocketSettingsShell({
+  tabs,
+  onSelectTab,
+  onClose,
+}: {
+  tabs: SettingsTabItem[];
+  onSelectTab: (tabId: SettingsTab) => void;
+  onClose?: () => void;
+}): React.ReactElement {
+  const [detailTab, setDetailTab] = React.useState<SettingsTab | null>(null);
+  const detailLabel = tabs.find((t) => t.id === detailTab)?.label ?? "";
+
+  const openDetail = (tabId: SettingsTab): void => {
+    onSelectTab(tabId);
+    setDetailTab(tabId);
+  };
+
+  return (
+    <div className="pocket-settings-shell flex h-full flex-col">
+      <div className="flex h-14 flex-shrink-0 items-center gap-1 border-b border-border/50 px-3">
+        {!detailTab && onClose && (
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="关闭设置"
+            className="-ml-1 flex size-10 items-center justify-center rounded-full text-muted-foreground active:bg-muted"
+          >
+            <X size={20} />
+          </button>
+        )}
+        {detailTab ? (
+          <button
+            type="button"
+            onClick={() => setDetailTab(null)}
+            aria-label="返回设置列表"
+            className="-ml-1 flex size-10 items-center justify-center rounded-full text-foreground/80 active:bg-muted"
+          >
+            <ChevronLeft size={22} />
+          </button>
+        ) : null}
+        <h2 className="flex-1 text-[17px] font-semibold text-foreground">
+          {detailTab ? detailLabel : "设置"}
+        </h2>
+      </div>
+
+      <ScrollArea className="flex-1 min-h-0">
+        {detailTab ? (
+          <div className="px-5 py-4">{renderTabContent(detailTab, true)}</div>
+        ) : (
+          <div className="px-4 py-5">
+            <div className="pocket-settings-list overflow-hidden rounded-2xl border border-border/50 bg-card divide-y divide-border/50">
+              {tabs.map((tab) => (
+                <button
+                  key={tab.id}
+                  type="button"
+                  onClick={() => openDetail(tab.id)}
+                  className="pocket-settings-row flex min-h-[56px] w-full items-center gap-3 px-4 text-left active:bg-muted/60"
+                >
+                  <span className="flex size-8 flex-shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
+                    {tab.icon}
+                  </span>
+                  <span className="flex-1 text-[15px] text-foreground">{tab.label}</span>
+                  <ChevronRight size={18} className="flex-shrink-0 text-muted-foreground/50" />
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+      </ScrollArea>
+    </div>
+  );
+}
+
 interface SettingsPanelProps {
   onClose?: () => void;
   /** 受限环境（如平板）传入的 tab 白名单；不传时按 appMode 推导完整列表 */
@@ -300,6 +380,17 @@ export function SettingsPanel({
       setCloseRequested(false)
     }
   }, [closeRequested, effectiveTab, setCloseRequested])
+
+  // 移动端（tabsOverride）：使用系统设置式壳，不渲染桌面的顶部标题栏与左侧导航
+  if (tabsOverride) {
+    return (
+      <PocketSettingsShell
+        tabs={tabs}
+        onSelectTab={(tabId) => setActiveTab(tabId)}
+        onClose={onClose}
+      />
+    );
+  }
 
   // 当前 tab 标题
   const activeTabLabel = tabs.find((t) => t.id === effectiveTab)?.label ?? "设置";
