@@ -99,6 +99,12 @@ export interface AgentPreset {
   description: string
   /** 是否为内置预设（不可编辑/删除） */
   isBuiltin: boolean
+  /** 预设是否在当前工作区启用；缺失表示启用（兼容旧服务端）。 */
+  enabledInWorkspace?: boolean
+  /** 预设列表的可选版本标识，用于跨设备引用校验。 */
+  version?: string
+  /** 预设列表的可选实体 revision。 */
+  revision?: number
   /** 追加到标准系统提示词之后的预设专属提示词段 */
   promptSections?: string[]
   /** [方案 1] 隐藏与预设矛盾的内置提示词段落 key（见 AGENT_PRESET_SUPPRESS_KEYS）：'subagents' | 'memory' | 'task-graph' | 'automation'；用于极简类预设消除矛盾指令 */

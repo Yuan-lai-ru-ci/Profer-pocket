@@ -2878,7 +2878,7 @@ export function AgentView({ sessionId, pocketMode = false, hideAgentHeader = fal
     },
     */
     { key: 'permission-mode', node: <PermissionModeSelector sessionId={sessionId} /> },
-    { key: 'preset', node: <PresetSelector sessionId={sessionId} persistedPresetId={sessionMeta?.presetId} pocketMode={pocketMode} workspaceSlug={sessionMeta?.workspaceId ? workspaces.find((w) => w.id === sessionMeta.workspaceId)?.slug : undefined} /> },
+    { key: 'preset', node: <PresetSelector sessionId={sessionId} persistedPresetId={sessionMeta?.presetId} persistedPresetReference={sessionMeta?.presetReference} persistedRevision={sessionMeta?.revision} pocketMode={pocketMode} workspaceSlug={sessionMeta?.workspaceId ? workspaces.find((w) => w.id === sessionMeta.workspaceId)?.slug : undefined} /> },
     {
       key: 'thinking',
       node: (

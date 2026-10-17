@@ -34,7 +34,7 @@ import { useGlobalChatListeners } from '@/hooks/useGlobalChatListeners'
 import { userProfileAtom } from '@/atoms/user-profile'
 import { authStatusAtom } from '@/atoms/identity-atoms'
 import { channelsAtom, channelsLoadedAtom, conversationsAtom, currentConversationIdAtom, chatMessageRefreshAtom } from '@/atoms/chat-atoms'
-import { agentSessionsAtom, agentWorkspacesAtom, currentAgentSessionIdAtom, currentAgentWorkspaceIdAtom, agentChannelIdAtom, agentModelIdAtom, agentChannelIdsAtom, agentStreamingStatesAtom, agentMessageRefreshAtom, pocketSessionReloadAtom, agentDefaultPermissionModeAtom, allPendingPermissionRequestsAtom, allPendingAskUserRequestsAtom, allPendingExitPlanRequestsAtom, settleInactiveAgentStreamState, shouldClearInactiveAgentStreamState } from '@/atoms/agent-atoms'
+import { agentSessionsAtom, agentWorkspacesAtom, currentAgentSessionIdAtom, currentAgentWorkspaceIdAtom, agentChannelIdAtom, agentModelIdAtom, agentChannelIdsAtom, agentRuntimeAtom, agentStreamingStatesAtom, agentMessageRefreshAtom, pocketSessionReloadAtom, agentDefaultPermissionModeAtom, allPendingPermissionRequestsAtom, allPendingAskUserRequestsAtom, allPendingExitPlanRequestsAtom, settleInactiveAgentStreamState, shouldClearInactiveAgentStreamState } from '@/atoms/agent-atoms'
 import { remoteStoreAtom } from '@/atoms/remote-store-atoms'
 import { reduceRemoteStore } from './remote-store'
 import { appModeAtom } from '@/atoms/app-mode'
@@ -892,9 +892,12 @@ function App({ onReady }: { onReady: () => void }): React.ReactElement {
     if (!client || !client.isOpen()) return
     try {
       const permissionMode = pocketStore.get(agentDefaultPermissionModeAtom)
-      const data = await client.createSession({ title: '新会话', permissionMode }) as { sessionId: string; title: string; permissionMode?: string }
-      if (data?.sessionId) {
-        await openSession(data.sessionId, data.title)
+      const workspaceId = pocketStore.get(currentAgentWorkspaceIdAtom) ?? undefined
+      const agentRuntime = pocketStore.get(agentRuntimeAtom)
+      const data = await client.createSession({ title: '新会话', workspaceId, agentRuntime, permissionMode }) as { id?: string; sessionId?: string; title: string; permissionMode?: string }
+      const sessionId = data?.id ?? data?.sessionId
+      if (sessionId) {
+        await openSession(sessionId, data.title)
         void loadSessions(client)
       }
     } catch (e) { setErrMsg('创建会话失败: ' + String(e)) }

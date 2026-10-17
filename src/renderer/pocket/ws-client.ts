@@ -749,7 +749,7 @@ export class WsClient {
     return this.sendCommand({ type: 'mark_session_read', sessionId })
   }
 
-  createSession(payload: { title?: string; channelId?: string; workspaceId?: string; modelId?: string; permissionMode?: 'auto' | 'plan' | 'bypassPermissions' }): Promise<unknown> {
+  createSession(payload: { title?: string; channelId?: string; workspaceId?: string; modelId?: string; presetId?: string; agentRuntime?: 'claude' | 'pi'; permissionMode?: 'auto' | 'plan' | 'bypassPermissions' }): Promise<unknown> {
     return this.sendCommand({ type: 'create_session', ...payload })
   }
 

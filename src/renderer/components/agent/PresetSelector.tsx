@@ -14,14 +14,14 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
-import { agentSessionPresetMapAtom, workspacePresetsAtom, presetOf } from '@/atoms/agent-preset-atoms'
+import { agentPresetsLoadedAtom, agentSessionPresetMapAtom, presetCacheKey, workspacePresetsAtom, presetOf } from '@/atoms/agent-preset-atoms'
 import { mergeAuthoritativeAgentSession } from '@/lib/agent-session-settings'
 import { useSessionSettingMutation } from '@/lib/use-session-setting-mutation'
 import { agentSessionsAtom, workspaceCapabilitiesVersionAtom } from '@/atoms/agent-atoms'
 import { remoteStoreAtom } from '@/atoms/remote-store-atoms'
 import { reduceRemoteStore, selectRemoteSession } from '@/pocket/remote-store'
-import { DEFAULT_PRESET_ID } from '@profer/shared'
-import type { AgentEffort, ProferPermissionMode } from '@profer/shared'
+import { DEFAULT_PRESET_ID, BUILTIN_AGENT_PRESETS } from '@profer/shared'
+import type { AgentEffort, PresetReference, ProferPermissionMode } from '@profer/shared'
 import { cn } from '@/lib/utils'
 import { resolvePresetCompactMode, resolvePresetListClassName } from './pocket-ui-switches'
 
@@ -50,13 +50,17 @@ interface PresetSelectorProps {
   sessionId: string
   /** 会话 meta 上持久化的预设 ID（跨重启真源） */
   persistedPresetId?: string
+  /** 会话 meta 上持久化的稳定预设引用（跨作用域/版本解析） */
+  persistedPresetReference?: PresetReference
+  /** 会话投影 revision；跨设备更新后用于收敛本地映射 */
+  persistedRevision?: number
   /** 会话所属工作区 slug（预设为工作区级配置） */
   workspaceSlug?: string
   /** 平板远程模式：恒定极简紧凑 + 弹层限高内滚（桌面端不受影响） */
   pocketMode?: boolean
 }
 
-export function PresetSelector({ sessionId, persistedPresetId, workspaceSlug, pocketMode = false }: PresetSelectorProps): React.ReactElement | null {
+export function PresetSelector({ sessionId, persistedPresetId, persistedPresetReference, persistedRevision, workspaceSlug, pocketMode = false }: PresetSelectorProps): React.ReactElement | null {
   const [presets, setPresets] = useAtom(workspacePresetsAtom(workspaceSlug))
   const [presetMap, setPresetMap] = useAtom(agentSessionPresetMapAtom)
   const setAgentSessions = useSetAtom(agentSessionsAtom)
@@ -73,17 +77,33 @@ export function PresetSelector({ sessionId, persistedPresetId, workspaceSlug, po
   // 平板：恒定极简紧凑（用户要求预设二级菜单直接等同桌面端开启「极简」后的效果），
   // 仍不写回 localStorage，避免平板切换影响桌面端偏好。
   const effectiveCompactMode = resolvePresetCompactMode(pocketMode, compactMode)
-  // 与 Skills 相同的刷新信号：技能页增删改/导入预设后，这里立即重拉最新列表
   const capabilitiesVersion = useAtomValue(workspaceCapabilitiesVersionAtom)
+  const loadedPresets = useAtomValue(agentPresetsLoadedAtom)
+  const setLoadedPresets = useSetAtom(agentPresetsLoadedAtom)
+  const cacheKey = presetCacheKey(workspaceSlug)
+  const availablePresets = React.useMemo(
+    () => presets.filter((preset) => preset.enabledInWorkspace !== false),
+    [presets],
+  )
 
   React.useEffect(() => {
+    let cancelled = false
     void window.electronAPI.listAgentPresets(workspaceSlug)
-      .then(setPresets)
-      .catch((error) => console.error('[PresetSelector] 加载工作区预设失败:', error))
-  }, [workspaceSlug, capabilitiesVersion, setPresets])
+      .then((next) => {
+        if (cancelled) return
+        setPresets(next.length > 0 || workspaceSlug ? next : BUILTIN_AGENT_PRESETS)
+        setLoadedPresets((previous) => new Set(previous).add(cacheKey))
+      })
+      .catch((error) => {
+        if (cancelled) return
+        console.error('[PresetSelector] 加载工作区预设失败:', error)
+        setLoadedPresets((previous) => new Set(previous).add(cacheKey))
+      })
+    return () => { cancelled = true }
+  }, [cacheKey, capabilitiesVersion, setLoadedPresets, setPresets, workspaceSlug])
 
-  const effectiveId = presetMap.get(sessionId) ?? persistedPresetId ?? DEFAULT_PRESET_ID
-  const current = presetOf(presets, effectiveId)
+  const effectiveId = presetMap.get(sessionId) ?? persistedPresetReference?.presetId ?? persistedPresetId ?? DEFAULT_PRESET_ID
+  const current = presetOf(availablePresets, effectiveId)
 
   const selectPreset = React.useCallback(async (presetId: string) => {
     if (pending) return
@@ -118,17 +138,25 @@ export function PresetSelector({ sessionId, persistedPresetId, workspaceSlug, po
   // 避免 agentSessionPresetMapAtom 的陈旧值长期盖过会话元数据（“预设切换后双端不同步”）。
   // meta 尚未携带预设（persistedPresetId 为空）时不覆盖，保留本地乐观更新/回滚语义。
   React.useEffect(() => {
-    if (!persistedPresetId) return
+    const authoritativePresetId = persistedPresetReference?.presetId ?? persistedPresetId
+    if (!authoritativePresetId) return
     setPresetMap((prev: Map<string, string>) => {
       const current = prev.get(sessionId)
-      if (current === persistedPresetId) return prev
+      if (current === authoritativePresetId) return prev
       const next = new Map(prev)
-      next.set(sessionId, persistedPresetId)
+      next.set(sessionId, authoritativePresetId)
       return next
     })
-  }, [persistedPresetId, sessionId, setPresetMap])
+  }, [persistedPresetId, persistedPresetReference?.presetId, persistedRevision, sessionId, setPresetMap])
 
-  if (presets.length === 0) return null
+  if (!loadedPresets.has(cacheKey)) {
+    return (
+      <Button type="button" variant="ghost" size="icon" disabled aria-label="预设加载中" className="size-[36px] rounded-full text-foreground/40">
+        <BriefcaseBusiness className="size-5 animate-pulse" />
+      </Button>
+    )
+  }
+  if (availablePresets.length === 0) return null
 
   return (
     <TooltipProvider delayDuration={300}>
@@ -137,7 +165,10 @@ export function PresetSelector({ sessionId, persistedPresetId, workspaceSlug, po
           // 打开时刷新，保证技能页导入/编辑后的最新预设可见
           if (open) {
             void window.electronAPI.listAgentPresets(workspaceSlug)
-              .then(setPresets)
+              .then((next) => {
+                setPresets(next.length > 0 || workspaceSlug ? next : BUILTIN_AGENT_PRESETS)
+                setLoadedPresets((previous) => new Set(previous).add(cacheKey))
+              })
               .catch((error) => console.error('[PresetSelector] 刷新工作区预设失败:', error))
           }
         }}
@@ -179,7 +210,7 @@ export function PresetSelector({ sessionId, persistedPresetId, workspaceSlug, po
               )}
             </div>
             <div className={resolvePresetListClassName(pocketMode)}>
-              {presets.map((preset) => (
+              {availablePresets.map((preset) => (
                 <button
                   key={preset.id}
                   type="button"

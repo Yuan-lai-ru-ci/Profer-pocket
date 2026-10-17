@@ -10,26 +10,42 @@
 import { atom } from 'jotai'
 import { atomFamily } from 'jotai/utils'
 import type { AgentPreset } from '@profer/shared'
-import { DEFAULT_PRESET_ID } from '@profer/shared'
+import { BUILTIN_AGENT_PRESETS, DEFAULT_PRESET_ID } from '@profer/shared'
+
+export const NO_WORKSPACE_PRESET_CACHE_KEY = '__no_workspace__'
 
 /** 按工作区缓存的预设列表（预设为工作区级配置） */
 export const agentPresetsAtom = atom<Map<string, AgentPreset[]>>(new Map())
 
-/** 会话 ID → 预设 ID 的内存映射（乐观更新） */
-export const agentSessionPresetMapAtom = atom<Map<string, string>>(new Map())
+/** 区分尚未请求与“确实没有可用预设”，避免空列表把工具栏静默隐藏。 */
+const agentPresetsLoadedStateAtom = atom<Set<string>>(new Set<string>())
+export const agentPresetsLoadedAtom = atom<Set<string>, [Set<string> | ((previous: Set<string>) => Set<string>)], void>(
+  (get) => get(agentPresetsLoadedStateAtom),
+  (get, set, update) => set(agentPresetsLoadedStateAtom, typeof update === 'function' ? update(get(agentPresetsLoadedStateAtom)) : update),
+)
 
-/** 某工作区的预设缓存读写原子；无工作区时返回内置兜底空列表（由 UI 兑底） */
+/** 某工作区的预设缓存读写原子；无工作区使用内置预设缓存键。 */
 export const workspacePresetsAtom = atomFamily((workspaceSlug: string | undefined) =>
   atom<AgentPreset[], [AgentPreset[]], void>(
-    (get) => (workspaceSlug ? get(agentPresetsAtom).get(workspaceSlug) ?? [] : []),
+    (get) => {
+      const key = workspaceSlug ?? NO_WORKSPACE_PRESET_CACHE_KEY
+      return get(agentPresetsAtom).get(key) ?? (workspaceSlug ? [] : BUILTIN_AGENT_PRESETS)
+    },
     (get, set, presets: AgentPreset[]) => {
-      if (!workspaceSlug) return
+      const key = workspaceSlug ?? NO_WORKSPACE_PRESET_CACHE_KEY
       const next = new Map(get(agentPresetsAtom))
-      next.set(workspaceSlug, presets)
+      next.set(key, Array.isArray(presets) ? presets : [])
       set(agentPresetsAtom, next)
     },
   ),
 )
+
+export function presetCacheKey(workspaceSlug: string | undefined): string {
+  return workspaceSlug ?? NO_WORKSPACE_PRESET_CACHE_KEY
+}
+
+/** 会话 ID → 预设 ID 的内存映射（乐观更新） */
+export const agentSessionPresetMapAtom = atom<Map<string, string>>(new Map())
 
 /**
  * 在预设列表中解析预设。

@@ -572,8 +572,8 @@ export interface ElectronAPI {
   /** 获取 Agent 会话列表 */
   listAgentSessions: () => Promise<AgentSessionMeta[]>
 
-  /** 创建 Agent 会话 */
-  createAgentSession: (title?: string, channelId?: string, workspaceId?: string, modelId?: string) => Promise<AgentSessionMeta>
+  /** 第五参是 presetId；权限模式单独传入，避免把 permissionMode 冒充预设。 */
+  createAgentSession: (title?: string, channelId?: string, workspaceId?: string, modelId?: string, presetId?: string, permissionMode?: import('@profer/shared').ProferPermissionMode) => Promise<AgentSessionMeta>
 
   /** 为项目创建或复用隐藏的 Agent 草稿会话 */
   ensureProjectDraftAgentSession: (workspaceId: string, channelId?: string, modelId?: string) => Promise<AgentSessionMeta>

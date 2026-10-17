@@ -131,7 +131,7 @@ interface PocketRemoteClient extends HeatmapRemoteClient {
    *  旧版桌面端不识别该命令时返回 ok:false，调用方静默降级。 */
   getAgentRuntimeContexts(sessionIds?: string[]): Promise<unknown>
   listChannels(): Promise<unknown>
-  createSession(payload: { title?: string; channelId?: string; workspaceId?: string; modelId?: string; permissionMode?: 'auto' | 'plan' | 'bypassPermissions' }): Promise<unknown>
+  createSession(payload: { title?: string; channelId?: string; workspaceId?: string; modelId?: string; presetId?: string; agentRuntime?: 'claude' | 'pi'; permissionMode?: 'auto' | 'plan' | 'bypassPermissions' }): Promise<unknown>
   migrateChatToAgent(conversationId: string, agentSessionId: string): Promise<unknown>
   ensureProjectDraftSession(payload: { workspaceId: string; channelId?: string; modelId?: string }): Promise<unknown>
   renameSession(sessionId: string, title: string): Promise<unknown>
@@ -791,9 +791,9 @@ export function installElectronApiStub(): void {
     },
     // ---- 命令映射：LeftSidebar 会话管理（已在 WebSocket 建连后注入） ----
     listAgentSessions: () => remoteClient?.listSessions() ?? Promise.resolve([]),
-    createAgentSession: async (title?: string, channelId?: string, workspaceId?: string, modelId?: string, permissionMode?: 'auto' | 'plan' | 'bypassPermissions') => {
+    createAgentSession: async (title?: string, channelId?: string, workspaceId?: string, modelId?: string, presetId?: string, permissionMode?: 'auto' | 'plan' | 'bypassPermissions') => {
       if (!remoteClient) throw new Error('移动端连接未就绪')
-      const created = await remoteClient.createSession({ title, channelId, workspaceId, modelId, permissionMode }) as Record<string, unknown>
+      const created = await remoteClient.createSession({ title, channelId, workspaceId, modelId, presetId, permissionMode }) as Record<string, unknown>
       const sessionId = typeof created.id === 'string' ? created.id : String(created.sessionId || '')
       if (!sessionId) throw new Error('远端创建会话未返回 sessionId')
       return resolveAuthoritativeAgentSession(remoteClient, sessionId, created)
