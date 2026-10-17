@@ -65,10 +65,18 @@ function buildModelOptions(
       if (!model.enabled) continue
       const protocol = getChannelProtocol(channel.provider)
       const source = getChannelSource(channel)
-      const key = `${source}:${model.id}`
+      // 官方托管渠道的同名模型合并为一个代表渠道；用户自配渠道按 channel + model
+      // 独立展示，避免两个不同网关上的同名模型互相覆盖（例如两个渠道都配置了
+      // gpt-6.1-sol 时，后一个渠道的模型在列表里消失）。
+      const key = source === 'official'
+        ? `${source}:${model.id}`
+        : `${source}:${channel.id}:${model.id}`
       const existing = optionsByModel.get(key)
-      // 同名模型优先选当前运行时需要的协议；同协议重复保留第一个作为代表渠道。
-      if (existing && existing.protocol === preferredProtocol) continue
+      if (existing) {
+        existing.channelCount = (existing.channelCount ?? 0) + 1
+        // 官方同名模型优先选当前运行时需要的协议；同协议重复保留第一个作为代表渠道。
+        if (existing.protocol === preferredProtocol) continue
+      }
 
       optionsByModel.set(key, {
         channelId: channel.id,
@@ -78,7 +86,7 @@ function buildModelOptions(
         provider: channel.provider,
         multiplier: model.multiplier,
         protocol,
-        channelCount: (existing?.channelCount ?? 0) + 1,
+        channelCount: existing ? existing.channelCount : 1,
       })
     }
   }

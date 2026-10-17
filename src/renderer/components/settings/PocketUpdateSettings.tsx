@@ -24,7 +24,7 @@ export function PocketUpdateSettings(): React.ReactElement {
   }
 
   return <div className="space-y-6">
-    <SettingsSection title="软件更新" description="仅从 Profer-pocket 的 GitHub Releases 获取经校验的 APK。">
+    <SettingsSection title="软件更新" description="默认从 GitHub Releases 获取经校验的 APK。">
       <SettingsCard>
         <SettingsRow label="当前版本"><span className="font-mono text-sm text-muted-foreground">{native ? `${native.versionName} (${native.versionCode})` : '正在读取 Android 版本…'}</span></SettingsRow>
         <SettingsRow label="更新状态"><span className="text-sm text-muted-foreground">{checking ? '正在检查…' : status.status === 'not-available' ? '已是最新版本' : status.status === 'available' ? `v${update?.versionName} 可下载` : status.status === 'downloading' ? `正在下载 v${update?.versionName}` : status.status === 'downloaded' ? `v${update?.versionName} 已验证` : status.status === 'error' ? status.message : '尚未检查'}</span></SettingsRow>
