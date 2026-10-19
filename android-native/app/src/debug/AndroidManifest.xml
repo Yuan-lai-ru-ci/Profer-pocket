@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- 仅 debug：通过 adb broadcast 驱动数据层，release 不包含该组件。 -->
+    <application>
+        <receiver
+            android:name=".debug.DebugCommandReceiver"
+            android:enabled="true"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.profer.pocket.DEBUG" />
+            </intent-filter>
+        </receiver>
+    </application>
+</manifest>
