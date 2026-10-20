@@ -218,9 +218,9 @@ fun ConversationScreen(
             },
         ) { padding ->
             Column(modifier = Modifier.padding(padding)) {
-                if (state.offline) {
+                state.offlineLabel?.let { label ->
                     ProferConnectionBanner(
-                        text = "未连接 · 正在等待 Mac 回到网络",
+                        text = label,
                         actionLabel = "重连",
                         onAction = onRetryConnection,
                     )
@@ -361,7 +361,7 @@ private fun ConversationTopBar(
         modifier = Modifier
             .fillMaxWidth()
             .statusBarsPadding()
-            .heightIn(min = 44.dp)
+            .heightIn(min = ProferSizes.minTouchTarget)
             .padding(start = 2.dp, end = 2.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -369,7 +369,6 @@ private fun ConversationTopBar(
             icon = Icons.Outlined.Menu,
             contentDescription = "打开对话列表",
             onClick = onOpenDrawer,
-            size = 44.dp,
         )
         Text(
             text = title,
@@ -385,7 +384,6 @@ private fun ConversationTopBar(
             icon = Icons.Outlined.Add,
             contentDescription = "新建对话",
             onClick = onNewConversation,
-            size = 44.dp,
         )
     }
 }

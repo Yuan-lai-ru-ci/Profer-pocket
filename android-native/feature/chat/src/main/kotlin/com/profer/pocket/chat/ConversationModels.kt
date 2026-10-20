@@ -17,6 +17,8 @@ data class ConversationUiState(
     val error: String? = null,
     val draft: String = "",
     val offline: Boolean = false,
+    /** 离线条文案（含原因与待发条数）；在线时为 null。 */
+    val offlineLabel: String? = null,
 )
 
 @Immutable

@@ -2,6 +2,7 @@ package com.profer.pocket.data
 
 import com.profer.pocket.data.protocol.AgentPayload
 import com.profer.pocket.data.protocol.ChatReducer
+import com.profer.pocket.data.protocol.ImageRef
 import com.profer.pocket.data.protocol.ProferEventView
 import com.profer.pocket.data.protocol.SdkMessageView
 import com.profer.pocket.data.protocol.SessionSignal
@@ -30,6 +31,7 @@ class ChatReducerTest {
         partial: Boolean,
         uuid: String = "a1",
         tools: List<ToolUseView> = emptyList(),
+        reasoning: String? = null,
     ) = AgentPayload.SdkMessage(
         SdkMessageView(
             type = "assistant",
@@ -41,8 +43,40 @@ class ChatReducerTest {
             model = null,
             isError = false,
             errorMessage = null,
+            reasoning = reasoning,
         ),
     )
+
+    @Test
+    fun `只有思考的 partial 也先进入消息列表`() {
+        val next = reducer.reduce(chat(), "s1", 1, assistant("", partial = true, reasoning = "先想一下"))
+        val entry = next.chat.messages.single() as ChatEntry.Assistant
+        assertEquals("", entry.text)
+        assertEquals("先想一下", entry.thinking)
+        assertTrue(entry.streaming)
+    }
+
+    @Test
+    fun `partial 与 final 的思考按更完整的一份合并`() {
+        val partial = reducer.reduce(chat(), "s1", 1, assistant("", partial = true, reasoning = "…后半段推理"))
+        val final = reducer.reduce(
+            partial.chat,
+            "s1",
+            2,
+            assistant("结论", partial = false, reasoning = "完整的前半段推理，后半段推理"),
+        )
+        val entry = final.chat.messages.single() as ChatEntry.Assistant
+        assertEquals("完整的前半段推理，后半段推理", entry.thinking)
+        assertEquals("结论", entry.text)
+        assertFalse(entry.streaming)
+    }
+
+    @Test
+    fun `final 思考为空时保留 partial 已收到的内容`() {
+        val partial = reducer.reduce(chat(), "s1", 1, assistant("", partial = true, reasoning = "已收到的思考"))
+        val final = reducer.reduce(partial.chat, "s1", 2, assistant("回答", partial = false, reasoning = null))
+        assertEquals("已收到的思考", (final.chat.messages.single() as ChatEntry.Assistant).thinking)
+    }
 
     @Test
     fun `partial 累计正文覆盖同一条助手消息`() {
@@ -222,6 +256,51 @@ class ChatReducerTest {
         assertEquals("你好", (second.chat.messages.single() as ChatEntry.User).text)
     }
 
+    @Test
+    fun `工具结果里的图片挂到助手消息上并按路径去重`() {
+        val started = reducer.reduce(
+            chat(),
+            "s1",
+            1,
+            assistant("图做好了", partial = false),
+        )
+        val image = ImageRef(
+            path = "/Users/mac/ws/s1/.context/agent-output-images/a.png",
+            filename = "a.png",
+            mediaType = "image/png",
+        )
+        val applied = reducer.reduce(
+            started.chat,
+            "s1",
+            2,
+            user(results = listOf(ToolResultView("t1", images = listOf(image)))),
+        )
+        val entry = applied.chat.messages.single() as ChatEntry.Assistant
+        assertEquals(listOf("a.png"), entry.images.map { it.filename })
+
+        // 重放/重复帧不重复追加。
+        val replay = reducer.reduce(
+            applied.chat,
+            "s1",
+            3,
+            user(results = listOf(ToolResultView("t1", images = listOf(image)))),
+        )
+        assertEquals(1, (replay.chat.messages.single() as ChatEntry.Assistant).images.size)
+    }
+
+    @Test
+    fun `图片之后的助手帧不会把图片冲掉`() {
+        val started = reducer.reduce(chat(), "s1", 1, assistant("图做好了", partial = false))
+        val withImage = reducer.reduce(
+            started.chat,
+            "s1",
+            2,
+            user(results = listOf(ToolResultView("t1", images = listOf(ImageRef("/x/a.png", "a.png", "image/png"))))),
+        )
+        val final = reducer.reduce(withImage.chat, "s1", 3, assistant("图做好了", partial = false))
+        assertEquals(1, (final.chat.messages.single() as ChatEntry.Assistant).images.size)
+    }
+
     private fun user(
         text: String = "",
         results: List<ToolResultView> = emptyList(),
@@ -240,6 +319,48 @@ class ChatReducerTest {
             errorMessage = null,
         ),
     )
+
+    @Test
+    fun `工具调用按发生顺序逐条记录，并由 tool_result 标记完成与失败`() {
+        val read = ToolUseView(id = "t1", name = "Read", filePath = "/repo/a.ts")
+        val bash = ToolUseView(id = "t2", name = "Bash")
+        val started = reducer.reduce(
+            chat(),
+            "s1",
+            1,
+            assistant("", partial = true, tools = listOf(read, bash)),
+        )
+        assertEquals(listOf("t1", "t2"), started.chat.toolCalls.map { it.id })
+        assertEquals("Read", started.chat.toolCalls.first().name)
+        assertEquals("/repo/a.ts", started.chat.toolCalls.first().path)
+        assertTrue(started.chat.completedToolIds.isEmpty())
+
+        val finished = reducer.reduce(
+            started.chat,
+            "s1",
+            2,
+            user(results = listOf(ToolResultView("t1"), ToolResultView("t2", isError = true))),
+        )
+        assertEquals(setOf("t1", "t2"), finished.chat.completedToolIds)
+        assertEquals(setOf("t2"), finished.chat.failedToolIds)
+    }
+
+    @Test
+    fun `partial 重复携带同一工具时不会重复创建卡片`() {
+        val read = ToolUseView(id = "t1", name = "Read", filePath = "/repo/a.ts")
+        val first = reducer.reduce(chat(), "s1", 1, assistant("", partial = true, tools = listOf(read)))
+        val second = reducer.reduce(first.chat, "s1", 2, assistant("读到一半", partial = true, tools = listOf(read)))
+        assertEquals(1, second.chat.toolCalls.size)
+    }
+
+    @Test
+    fun `新用户回合清空上一轮工具调用`() {
+        val read = ToolUseView(id = "t1", name = "Read")
+        val started = reducer.reduce(chat(), "s1", 1, assistant("", partial = true, tools = listOf(read)))
+        val next = reducer.reduce(started.chat, "s1", 2, user(text = "继续"))
+        assertTrue(next.chat.toolCalls.isEmpty())
+        assertTrue(next.chat.completedToolIds.isEmpty())
+    }
 
     @Test
     fun `修改类工具的文件进入回合汇总，失败结果会剔除`() {

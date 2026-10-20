@@ -16,6 +16,8 @@ data class ChatUiState(
     val messages: List<ChatMessage>,
     val streaming: Boolean,
     val offline: Boolean,
+    /** 离线条文案（含原因与待发条数）；在线时为 null。 */
+    val offlineLabel: String? = null,
     val pendingPermission: PermissionRequest?,
     /** Agent 追问：问题列表与请求 id，用于表单回答。 */
     val pendingQuestionId: String? = null,
@@ -31,6 +33,8 @@ data class ChatUiState(
     val contextWindow: Int? = null,
     /** 本轮修改过的文件（桌面 TurnFileChangesSummary 的移动端对应物）。 */
     val turnFiles: List<String> = emptyList(),
+    /** 本轮工具调用：按发生顺序逐条渲染，每条用自己的图标与状态。 */
+    val toolCalls: List<ToolBlock> = emptyList(),
 )
 
 @Immutable
@@ -59,6 +63,8 @@ sealed interface ChatMessage {
         val tools: List<ToolBlock> = emptyList(),
         val blocks: List<ContentBlock> = emptyList(),
         val streaming: Boolean = false,
+        /** 本回合工具产出的图片；缩略图由宿主注入的 loader 拉取。 */
+        val images: List<com.profer.pocket.model.ChatImage> = emptyList(),
     ) : ChatMessage
 }
 
@@ -91,7 +97,7 @@ data class ToolBlock(
 
 enum class NoticeTone { Info, Success, Warning }
 
-enum class ToolKind { Read, Search, Bash, Edit }
+enum class ToolKind { Read, Search, Bash, Edit, Other }
 
 @Immutable
 sealed interface ContentBlock {

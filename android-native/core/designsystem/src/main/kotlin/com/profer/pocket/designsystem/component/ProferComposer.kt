@@ -5,10 +5,12 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
@@ -45,7 +47,9 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import com.profer.pocket.designsystem.theme.ProferSizes
 import com.profer.pocket.designsystem.theme.ProferSpacing
 
 /**
@@ -88,39 +92,53 @@ fun ProferComposer(
             .imePadding()
             .navigationBarsPadding()
             .padding(horizontal = ProferSpacing.md)
-            .padding(top = ProferSpacing.xs, bottom = ProferSpacing.sm),
-        verticalArrangement = Arrangement.spacedBy(6.dp),
+            .padding(top = ProferSpacing.xxs, bottom = ProferSpacing.xs),
+        verticalArrangement = Arrangement.spacedBy(2.dp),
     ) {
         if (showSelectors) {
-            Row(
+            // 永远一行：放不下就省略文字，绝不换行。
+            // 预设名可能很长（「移动版连接开发（Android）」），设成弹性项，
+            // 先压缩它、再省略；模型与权限胶囊保持完整。
+            BoxWithConstraints(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 2.dp),
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                verticalAlignment = Alignment.CenterVertically,
             ) {
-                ComposerSelector(
-                    text = modelLabel,
-                    icon = Icons.Outlined.Bolt,
-                    iconRes = modelIconRes,
-                    onClick = onModelClick,
-                    labelMaxWidth = if (presetLabel != null) 104.dp else 150.dp,
-                )
-                if (presetLabel != null && onPresetClick != null) {
-                    ComposerSelector(
-                        text = presetLabel,
-                        icon = Icons.Outlined.WorkOutline,
-                        onClick = onPresetClick,
-                        labelMaxWidth = 96.dp,
-                    )
+                // 模型名最多占 45% 行宽；字号放大时同样的字符更宽，所以按 fontScale 折算，
+                // 保证预设胶囊始终留得下一块可点区域。
+                val fontScale = LocalDensity.current.fontScale.coerceAtLeast(1f)
+                val modelLabelMax = if (presetLabel != null) {
+                    (maxWidth * 0.45f).coerceAtMost(240.dp) / fontScale
+                } else {
+                    240.dp
                 }
-                if (showModeSelector) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
                     ComposerSelector(
-                        text = modeLabel,
-                        icon = Icons.Outlined.Tune,
-                        onClick = onModeClick,
-                        labelMaxWidth = if (presetLabel != null) 76.dp else 150.dp,
+                        text = modelLabel,
+                        icon = Icons.Outlined.Bolt,
+                        iconRes = modelIconRes,
+                        onClick = onModelClick,
+                        labelMaxWidth = modelLabelMax,
                     )
+                    if (presetLabel != null && onPresetClick != null) {
+                        ComposerSelector(
+                            text = presetLabel,
+                            icon = Icons.Outlined.WorkOutline,
+                            onClick = onPresetClick,
+                            modifier = Modifier.weight(1f, fill = false),
+                        )
+                    }
+                    if (showModeSelector) {
+                        ComposerSelector(
+                            text = modeLabel,
+                            icon = Icons.Outlined.Tune,
+                            onClick = onModeClick,
+                        )
+                    }
                 }
             }
         }
@@ -163,7 +181,7 @@ fun ProferComposer(
                     onValueChange = onValueChange,
                     modifier = Modifier
                         .weight(1f)
-                        .heightIn(min = 40.dp)
+                        .heightIn(min = 38.dp)
                         .then(
                             if (focusRequester != null) {
                                 Modifier.focusRequester(focusRequester)
@@ -171,7 +189,7 @@ fun ProferComposer(
                                 Modifier
                             },
                         )
-                        .padding(horizontal = 10.dp, vertical = 8.dp),
+                        .padding(horizontal = 10.dp, vertical = 6.dp),
                     textStyle = MaterialTheme.typography.bodyLarge.copy(
                         color = MaterialTheme.colorScheme.onSurface,
                     ),
@@ -240,7 +258,7 @@ fun ProferComposer(
 }
 
 /**
- * 发送栏的轻量选择器：26dp 视觉、36dp 热区。
+ * 发送栏的轻量选择器：胶囊视觉保持 36dp 左右，热区撑到 48dp。
  * 只显示当前值，点开由 ChatScreen 的底部弹层完成选择。
  */
 @Composable
@@ -248,16 +266,20 @@ private fun ComposerSelector(
     text: String,
     icon: androidx.compose.ui.graphics.vector.ImageVector,
     onClick: () -> Unit,
-    labelMaxWidth: androidx.compose.ui.unit.Dp = 150.dp,
     iconRes: Int? = null,
+    modifier: Modifier = Modifier,
+    labelMaxWidth: Dp = 240.dp,
 ) {
-    Box(
-        modifier = Modifier
-            .height(36.dp)
+    BoxWithConstraints(
+        modifier = modifier
+            .height(ProferSizes.minTouchTarget)
             .clip(CircleShape)
             .clickable(onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
+        // 空间被挤到放不下文字时，退化成「图标 + 下拉箭头」的紧凑胶囊，
+        // 而不是留一个只剩图标的空壳。
+        val compact = maxWidth < 72.dp
         Surface(
             shape = CircleShape,
             color = MaterialTheme.colorScheme.surfaceContainerLow,
@@ -288,14 +310,16 @@ private fun ComposerSelector(
                         modifier = Modifier.size(12.dp),
                     )
                 }
-                Text(
-                    text = text,
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.widthIn(max = labelMaxWidth),
-                )
+                if (!compact) {
+                    Text(
+                        text = text,
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.widthIn(max = labelMaxWidth),
+                    )
+                }
                 Icon(
                     imageVector = Icons.Outlined.ExpandMore,
                     contentDescription = null,

@@ -135,7 +135,7 @@ fun SettingsScreen(
                         }
                     }
                     Text(
-                        text = "浅色是暖纸底色，深色是石墨黑；两套都用同一支墨色主操作。",
+                        text = "浅色是云朵舞者的暖纸底，深色是同色相的暖墨；两套都用同一支砖红主操作。",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(top = ProferSpacing.sm, start = 2.dp, end = 2.dp),
@@ -164,7 +164,7 @@ fun SettingsScreen(
             SettingsCard {
                 SettingsSwitchRow(
                     title = "自动重连",
-                    subtitle = "网络恢复后立即重试，最长等 30 秒",
+                    subtitle = "断网或网络恢复时立即重试；连不上电脑时最长隔 60 秒重试一次",
                     checked = autoReconnect,
                     onCheckedChange = onAutoReconnectChange,
                 )

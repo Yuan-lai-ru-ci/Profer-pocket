@@ -4,7 +4,8 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
@@ -80,8 +81,10 @@ fun ProferEmptyState(
             Box(modifier = Modifier.padding(top = ProferSpacing.lg)) {
                 androidx.compose.material3.Button(
                     onClick = onPrimary,
-                    modifier = Modifier.height(44.dp),
-                    shape = RoundedCornerShape(22.dp),
+                    // 固定高度会在 2.0× 字号下把字裁掉；给最小高度 + 内边距让它自己长。
+                    modifier = Modifier.heightIn(min = 48.dp),
+                    shape = RoundedCornerShape(24.dp),
+                    contentPadding = PaddingValues(horizontal = 24.dp, vertical = 6.dp),
                 ) {
                     Text(text = primaryLabel)
                 }

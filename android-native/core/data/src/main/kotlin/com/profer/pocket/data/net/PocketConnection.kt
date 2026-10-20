@@ -2,6 +2,7 @@ package com.profer.pocket.data.net
 
 import com.profer.pocket.data.protocol.FrameCodec
 import com.profer.pocket.data.protocol.InboundFrame
+import com.profer.pocket.data.store.OutgoingQueueStore
 import com.profer.pocket.data.store.ResumeStateStore
 import com.profer.pocket.model.ConnectionStatus
 import com.profer.pocket.model.OfflineCause
@@ -73,6 +74,8 @@ class PocketConnection(
     private val backoff: BackoffPolicy = BackoffPolicy(),
     private val requestTimeoutMs: Long = 15_000,
     private val newId: () -> String = ::defaultId,
+    /** 待发队列落盘：进程被杀后仍能重放；为空时只保留内存队列（单测默认如此）。 */
+    private val queueStore: OutgoingQueueStore? = null,
 ) {
 
     private val lock = Any()
@@ -97,6 +100,20 @@ class PocketConnection(
     @Volatile
     var autoReconnect: Boolean = true
 
+    /** 待发送队列长度：界面用它表达「N 条消息等待发送」。 */
+    private val _pendingSendCount = MutableStateFlow(0)
+    val pendingSendCount: StateFlow<Int> = _pendingSendCount.asStateFlow()
+
+    /** 最近一次 ping/pong 的往返时间；没测到就是 null，不编造「在线」。 */
+    private val _latencyMs = MutableStateFlow<Int?>(null)
+    val latencyMs: StateFlow<Int?> = _latencyMs.asStateFlow()
+
+    /**
+     * 宿主（ConnectivityManager）推来的网络可用性。连接层不自己监听系统，只做决策：
+     * 断网立刻进入 Offline，不再等 75s 心跳假死；恢复后立刻重连，跳过剩余退避。
+     */
+    private var networkAvailable = true
+
     private var transport: SocketTransport? = null
     private var endpoint: String? = null
     private var token: String? = null
@@ -106,10 +123,12 @@ class PocketConnection(
     private var cursor = 0L
     private var serverInstanceId: String? = null
     private var lastInboundAt = 0L
+    private var pingSentAt: Long? = null
 
     private var reconnectJob: Job? = null
     private var heartbeatJob: Job? = null
     private var persistJob: Job? = null
+    private var queuePersistJob: Job? = null
 
     private data class PendingCommand(
         val deferred: CompletableDeferred<InboundFrame.CommandResult>,
@@ -122,7 +141,8 @@ class PocketConnection(
 
     fun connect(endpoint: String, token: String) {
         synchronized(lock) {
-            val changed = this.endpoint != endpoint || this.token != token
+            val previousEndpoint = this.endpoint
+            val changed = previousEndpoint != endpoint || this.token != token
             this.endpoint = endpoint
             this.token = token
             shouldReconnect = true
@@ -139,7 +159,16 @@ class PocketConnection(
             }
             requeueInflightSendsLocked()
             failPendingLocked(PocketDisconnectedException("连接已切换"))
-            if (changed) queue.clear()
+            if (previousEndpoint != null && previousEndpoint != endpoint) {
+                // 换了一台电脑：旧队列不能投到新地址上。
+                queue.clear()
+                queuePersistJob?.cancel()
+                queuePersistJob = null
+                queueStore?.clear()
+            } else if (queue.isEmpty()) {
+                restoreQueueLocked(endpoint)
+            }
+            publishQueueLocked()
 
             val saved = resumeState.load(endpoint)
             if (changed || saved == null) {
@@ -171,6 +200,12 @@ class PocketConnection(
             failPendingLocked(PocketDisconnectedException("连接已关闭"))
             inflightSends.clear()
             queue.clear()
+            queuePersistJob?.cancel()
+            queuePersistJob = null
+            queueStore?.clear()
+            publishQueueLocked()
+            pingSentAt = null
+            _latencyMs.value = null
             persistCursorLocked()
             _status.value = ConnectionStatus.Offline(OfflineCause.UserDisconnected)
         }
@@ -191,15 +226,85 @@ class PocketConnection(
             }
             failPendingLocked(PocketDisconnectedException(message ?: "连接未配置"))
             queue.clear()
+            queuePersistJob?.cancel()
+            queuePersistJob = null
+            queueStore?.clear()
+            publishQueueLocked()
+            pingSentAt = null
+            _latencyMs.value = null
             _status.value = ConnectionStatus.Offline(cause, message)
         }
     }
 
-    /** 页面回前台、用户点重连时调用；已连接/连接中不打断现有链路。 */
-    fun reconnectNow() {
+    /**
+     * 网络可用性变更（由宿主 ConnectivityManager 推送）。
+     *
+     * - 断网：立即关掉半死链路并进入 Offline，不再等 75s 心跳超时；
+     * - 恢复：跳过剩余退避立刻重建，用户不用等到 60s 上限。
+     */
+    fun onNetworkChanged(available: Boolean) {
+        synchronized(lock) {
+            if (networkAvailable == available) return
+            networkAvailable = available
+            if (!available) {
+                reconnectJob?.cancel()
+                reconnectJob = null
+                heartbeatJob?.cancel()
+                heartbeatJob = null
+                generation += 1
+                transport?.let { old ->
+                    transport = null
+                    old.close(1000, "network lost")
+                }
+                requeueInflightSendsLocked()
+                failPendingLocked(PocketDisconnectedException("手机网络已断开"))
+                pingSentAt = null
+                _latencyMs.value = null
+                when {
+                    !shouldReconnect -> Unit
+                    _status.value is ConnectionStatus.Idle -> Unit
+                    else -> _status.value =
+                        ConnectionStatus.Offline(OfflineCause.Unreachable, "手机网络已断开")
+                }
+                return
+            }
+            if (!shouldReconnect) return
+            if (!autoReconnect) return
+            if (transport != null && _status.value is ConnectionStatus.Connected) return
+            reconnectJob?.cancel()
+            reconnectJob = null
+            attempt = 0
+            _status.value = ConnectionStatus.Connecting
+            openSocketLocked(generation)
+        }
+    }
+
+    /**
+     * 页面回前台、用户点重连、网络恢复时调用。
+     *
+     * [force] 为 true 时，已连接但超过心跳死阈值的链路会被判为半死并重建：
+     * 从 Doze/后台回来时 socket 往往已经断开但回调还没到，等心跳要 25~75s。
+     */
+    fun reconnectNow(force: Boolean = false) {
         synchronized(lock) {
             if (!shouldReconnect) return
-            if (transport != null) return
+            val socket = transport
+            if (socket != null) {
+                if (!force) return
+                if (_status.value is ConnectionStatus.Connecting) return
+                if (_status.value is ConnectionStatus.Connected &&
+                    clock() - lastInboundAt <= heartbeat.deadThresholdMs
+                ) {
+                    return
+                }
+                generation += 1
+                transport = null
+                heartbeatJob?.cancel()
+                heartbeatJob = null
+                socket.close(1001, "stale link")
+                requeueInflightSendsLocked()
+                failPendingLocked(PocketDisconnectedException("连接已刷新"))
+            }
             reconnectJob?.cancel()
             reconnectJob = null
             attempt = 0
@@ -251,6 +356,8 @@ class PocketConnection(
             val socket = transport
             if (socket == null || _status.value !is ConnectionStatus.Connected) {
                 queue.addLast(message)
+                publishQueueLocked()
+                schedulePersistQueueLocked()
                 sendOutcomeChannel.trySend(SendOutcome.Queued(message.clientMessageId))
                 return
             }
@@ -280,6 +387,9 @@ class PocketConnection(
             reconnectJob?.cancel()
             reconnectJob = null
             startHeartbeatLocked(gen)
+            // 连上就测一次 RTT：连接页不必等第一个心跳周期才有数字。
+            pingSentAt = clock()
+            transport?.send(FrameCodec.ping())
             shouldFlush = true
         }
         if (shouldFlush) flushQueue()
@@ -292,7 +402,7 @@ class PocketConnection(
             lastInboundAt = clock()
             when (frame) {
                 is InboundFrame.Hello -> handleHelloLocked(frame)
-                is InboundFrame.Pong -> Unit
+                is InboundFrame.Pong -> handlePongLocked()
                 is InboundFrame.AgentEvent -> handleAgentEventLocked(frame)
                 is InboundFrame.AgentEventsResumed -> handleResumedLocked(frame)
                 is InboundFrame.CommandResult -> handleCommandResultLocked(frame)
@@ -322,6 +432,12 @@ class PocketConnection(
         _status.value = ConnectionStatus.Connected(endpoint.orEmpty(), serverInstanceId)
         sendResumeLocked()
         persistCursorLocked()
+    }
+
+    private fun handlePongLocked() {
+        val sentAt = pingSentAt ?: return
+        pingSentAt = null
+        _latencyMs.value = ((clock() - sentAt).coerceAtLeast(0)).toInt()
     }
 
     private fun handleAgentEventLocked(frame: InboundFrame.AgentEvent) {
@@ -367,6 +483,8 @@ class PocketConnection(
     private fun markDisconnectedLocked(code: Int, reason: String) {
         heartbeatJob?.cancel()
         heartbeatJob = null
+        pingSentAt = null
+        _latencyMs.value = null
         requeueInflightSendsLocked()
         failPendingLocked(PocketDisconnectedException("连接已关闭"))
         if (code == 4001) {
@@ -390,9 +508,20 @@ class PocketConnection(
             return
         }
         attempt += 1
+        if (!networkAvailable) {
+            // 没网时不用指数退避刷重试；保留一个 60s 兜底，网络回调到了会立即重连。
+            _status.value = ConnectionStatus.Offline(OfflineCause.Unreachable, "手机网络已断开")
+            reconnectJob?.cancel()
+            scheduleReconnectJobLocked(backoff.maxMs)
+            return
+        }
         val delayMs = backoff.delayFor(attempt)
         _status.value = ConnectionStatus.Reconnecting(attempt, delayMs, reason)
         reconnectJob?.cancel()
+        scheduleReconnectJobLocked(delayMs)
+    }
+
+    private fun scheduleReconnectJobLocked(delayMs: Long) {
         val gen = generation
         reconnectJob = scope.launch {
             delay(delayMs)
@@ -437,6 +566,7 @@ class PocketConnection(
                     if (clock() - lastInboundAt > heartbeat.deadThresholdMs) {
                         dead = true
                     } else {
+                        pingSentAt = clock()
                         transport?.send(FrameCodec.ping())
                     }
                 }
@@ -468,8 +598,10 @@ class PocketConnection(
             var remaining = queue.size
             while (queue.isNotEmpty() && remaining-- > 0) {
                 val message = queue.removeFirst()
+                publishQueueLocked()
                 if (!transmitSendLocked(socket, message)) break
             }
+            schedulePersistQueueLocked()
         }
     }
 
@@ -480,6 +612,8 @@ class PocketConnection(
             pending.remove(message.cmdId)?.timeoutJob?.cancel()
             inflightSends.remove(message.cmdId)
             queue.addFirst(message)
+            publishQueueLocked()
+            schedulePersistQueueLocked()
             sendOutcomeChannel.trySend(SendOutcome.Queued(message.clientMessageId))
             return false
         }
@@ -506,16 +640,50 @@ class PocketConnection(
             queue.addFirst(message)
             sendOutcomeChannel.trySend(SendOutcome.Queued(message.clientMessageId))
         }
+        publishQueueLocked()
+        schedulePersistQueueLocked()
     }
 
     private fun onSendTimeoutLocked(cmdId: String) {
         val message = inflightSends.remove(cmdId) ?: return
         if (shouldReconnect) {
             queue.addFirst(message)
+            publishQueueLocked()
+            schedulePersistQueueLocked()
             sendOutcomeChannel.trySend(SendOutcome.Queued(message.clientMessageId))
         } else {
             sendOutcomeChannel.trySend(SendOutcome.Rejected(message.clientMessageId, "发送超时"))
         }
+    }
+
+    // ===== 队列持久化 =====
+
+    private fun publishQueueLocked() {
+        _pendingSendCount.value = queue.size
+    }
+
+    /** 小文件 + 防抖：连续发多条消息时只写一次，且不占主线程。 */
+    private fun schedulePersistQueueLocked() {
+        val store = queueStore ?: return
+        val target = endpoint ?: return
+        queuePersistJob?.cancel()
+        val snapshot = queue.toList()
+        queuePersistJob = scope.launch {
+            delay(150)
+            store.save(target, snapshot)
+        }
+    }
+
+    private fun restoreQueueLocked(targetEndpoint: String) {
+        val store = queueStore ?: return
+        val stored = store.load() ?: return
+        if (stored.endpoint != targetEndpoint) {
+            // 上一次连的是另一台电脑：旧消息不会投到新地址。
+            if (stored.items.isNotEmpty()) store.clear()
+            return
+        }
+        if (stored.items.isEmpty()) return
+        queue.addAll(stored.items)
     }
 
     // ===== pending 管理 =====

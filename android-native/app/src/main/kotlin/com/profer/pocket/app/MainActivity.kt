@@ -108,6 +108,8 @@ fun ProferApp(viewModel: PocketViewModel) {
     ApplySystemBarStyle(darkTheme = darkTheme)
 
     ProferTheme(darkTheme = darkTheme) {
+        // 首帧完成后才允许启动前台服务：冷启动期间主线程排不进服务回调。
+        LaunchedEffect(Unit) { viewModel.onUiReady() }
         val navController = rememberNavController()
         val context = LocalContext.current
         val debuggable = (context.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE) != 0
@@ -305,6 +307,15 @@ fun ProferApp(viewModel: PocketViewModel) {
                         onRewriteMessage = viewModel::rewriteAndResend,
                         onRetrySend = viewModel::retrySend,
                         onOpenAttachment = { previewFile = it },
+                        onOpenImage = { image ->
+                            previewFile = com.profer.pocket.model.AgentAttachment(
+                                filename = image.filename,
+                                path = image.path,
+                            )
+                        },
+                        imageLoader = { path ->
+                            chatState.sessionId?.let { viewModel.loadMessageImage(it, path) }
+                        },
                         lastReadMessageId = chatState.sessionId?.let { readPositions[it] },
                         onReadLatest = { messageId ->
                             chatState.sessionId?.let { viewModel.markReadUpTo(it, messageId) }

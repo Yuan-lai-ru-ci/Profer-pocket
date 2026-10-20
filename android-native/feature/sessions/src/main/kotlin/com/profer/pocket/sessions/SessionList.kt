@@ -324,7 +324,7 @@ private fun SessionListHeader(
         modifier = Modifier
             .fillMaxWidth()
             .statusBarsPadding()
-            .heightIn(min = 52.dp)
+            .heightIn(min = ProferSizes.minTouchTarget)
             .padding(start = 16.dp, end = 6.dp, top = 2.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -355,7 +355,7 @@ private fun SessionListHeader(
             contentDescription = if (searchOpen) "关闭搜索" else "搜索会话",
             active = searchOpen,
             onClick = onToggleSearch,
-            size = 44.dp,
+            size = ProferSizes.minTouchTarget,
         )
         NewSessionButton(onClick = onNewSession)
     }
@@ -397,7 +397,7 @@ private fun HeaderIconButton(
 private fun NewSessionButton(onClick: () -> Unit) {
     Box(
         modifier = Modifier
-            .size(44.dp)
+            .size(ProferSizes.minTouchTarget)
             .clip(CircleShape)
             .clickable(onClick = onClick),
         contentAlignment = Alignment.Center,
@@ -438,7 +438,7 @@ private fun SearchField(
     ) {
         Row(
             modifier = Modifier
-                .heightIn(min = 44.dp)
+                .heightIn(min = ProferSizes.minTouchTarget)
                 .padding(start = 14.dp, end = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -509,7 +509,7 @@ private fun ProjectHeader(
             modifier = Modifier
                 .fillMaxWidth()
                 .clickable(onClick = onToggle)
-                .heightIn(min = 40.dp)
+                .heightIn(min = ProferSizes.minTouchTarget)
                 .padding(start = 2.dp, end = 2.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
@@ -572,7 +572,7 @@ private fun ProjectHeader(
             if (onCreateSession != null) {
                 Box(
                     modifier = Modifier
-                        .size(40.dp)
+                        .size(ProferSizes.minTouchTarget)
                         .clip(CircleShape)
                         .clickable(onClick = onCreateSession),
                     contentAlignment = Alignment.Center,
@@ -650,7 +650,7 @@ private fun SessionRow(
                         Color.Transparent
                     },
                 )
-                .heightIn(min = 44.dp)
+                .heightIn(min = ProferSizes.minTouchTarget)
                 .padding(start = 18.dp, end = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
@@ -868,7 +868,7 @@ private fun SessionListDock(
             }
             Box(
                 modifier = Modifier
-                    .size(44.dp)
+                    .size(48.dp)
                     .clip(CircleShape)
                     .clickable(onClick = onOpenSettings),
                 contentAlignment = Alignment.Center,

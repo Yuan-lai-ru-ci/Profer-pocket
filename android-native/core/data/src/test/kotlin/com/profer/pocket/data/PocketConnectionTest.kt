@@ -30,6 +30,7 @@ class PocketConnectionTest {
         factory: FakeSocketFactory,
         store: FakeResumeStateStore = FakeResumeStateStore(),
         scope: kotlinx.coroutines.CoroutineScope,
+        queueStore: com.profer.pocket.data.store.OutgoingQueueStore? = null,
     ): PocketConnection = PocketConnection(
         transports = factory,
         scope = scope,
@@ -39,6 +40,7 @@ class PocketConnectionTest {
         backoff = BackoffPolicy(initialMs = 2_000, maxMs = 60_000),
         requestTimeoutMs = 15_000,
         newId = { "cmd-${sequence++}" },
+        queueStore = queueStore,
     )
 
     private fun hello(instance: String = "srv-1", latest: Long = 1): String =
@@ -175,6 +177,21 @@ class PocketConnectionTest {
     }
 
     @Test
+    fun `pong 到达后记录真实往返延迟`() = runTest {
+        val factory = FakeSocketFactory()
+        val connection = connection(factory, scope = backgroundScope)
+        connection.connect("ws://host/ws", "t")
+        val socket = factory.created.single()
+        socket.open()
+        assertTrue(socket.sent.any { it.contains("\"ping\"") })
+
+        now = 42
+        socket.receive("""{"kind":"pong"}""")
+        runCurrent()
+        assertEquals(42, connection.latencyMs.value)
+    }
+
+    @Test
     fun `指令超时后抛 PocketTimeoutException`() = runTest {
         val factory = FakeSocketFactory()
         val connection = connection(factory, scope = backgroundScope)
@@ -265,5 +282,146 @@ class PocketConnectionTest {
         advanceTimeBy(2_000)
         runCurrent()
         assertEquals(2, factory.created.size)
+    }
+
+    @Test
+    fun `断网立即离线且不再按 2s 退避狂刷`() = runTest {
+        val factory = FakeSocketFactory()
+        val connection = connection(factory, scope = backgroundScope)
+        connection.connect("ws://host/ws", "t")
+        val socket = factory.created.single()
+        socket.open()
+        socket.receive(hello())
+
+        connection.onNetworkChanged(false)
+        val offline = connection.status.value as ConnectionStatus.Offline
+        assertEquals(OfflineCause.Unreachable, offline.cause)
+        assertEquals("手机网络已断开", offline.message)
+        assertEquals(1000, socket.closedWith?.first)
+
+        // 没网时不该继续每 2s 建一次 socket。
+        advanceTimeBy(3_000)
+        runCurrent()
+        assertEquals(1, factory.created.size)
+    }
+
+    @Test
+    fun `网络恢复立即重连并跳过剩余退避`() = runTest {
+        val factory = FakeSocketFactory()
+        val connection = connection(factory, scope = backgroundScope)
+        connection.connect("ws://host/ws", "t")
+        factory.created.single().fail("连接被拒绝")
+        assertTrue(connection.status.value is ConnectionStatus.Reconnecting)
+
+        connection.onNetworkChanged(false)
+        connection.onNetworkChanged(true)
+        runCurrent()
+
+        assertEquals(2, factory.created.size)
+        assertTrue(connection.status.value is ConnectionStatus.Connecting)
+    }
+
+    @Test
+    fun `回前台时半死链路立即重建`() = runTest {
+        val factory = FakeSocketFactory()
+        val connection = connection(factory, scope = backgroundScope)
+        connection.connect("ws://host/ws", "t")
+        val socket = factory.created.single()
+        socket.open()
+        socket.receive(hello())
+
+        // 链路还在，但 80s 没有入站帧（Doze / 切后台后的常见状态）。
+        now = 80_000
+        connection.reconnectNow(force = true)
+
+        assertEquals(2, factory.created.size)
+        assertEquals(1001, socket.closedWith?.first)
+        assertTrue(connection.status.value is ConnectionStatus.Connecting)
+    }
+
+    @Test
+    fun `关闭自动重连后网络恢复也不自动连`() = runTest {
+        val factory = FakeSocketFactory()
+        val connection = connection(factory, scope = backgroundScope)
+        connection.autoReconnect = false
+        connection.connect("ws://host/ws", "t")
+        factory.created.single().fail("连接被拒绝")
+        assertTrue(connection.status.value is ConnectionStatus.Offline)
+
+        connection.onNetworkChanged(false)
+        connection.onNetworkChanged(true)
+        runCurrent()
+
+        assertEquals(1, factory.created.size)
+    }
+
+    @Test
+    fun `新鲜链路下回前台不打断现有连接`() = runTest {
+        val factory = FakeSocketFactory()
+        val connection = connection(factory, scope = backgroundScope)
+        connection.connect("ws://host/ws", "t")
+        val socket = factory.created.single()
+        socket.open()
+        socket.receive(hello())
+
+        now = 5_000
+        connection.reconnectNow(force = true)
+
+        assertEquals(1, factory.created.size)
+        assertTrue(connection.status.value is ConnectionStatus.Connected)
+    }
+
+    @Test
+    fun `断线队列落盘并在进程重启后重放`() = runTest {
+        val store = FakeOutgoingQueueStore()
+        val factory = FakeSocketFactory()
+        val first = connection(factory, scope = backgroundScope, queueStore = store)
+        first.connect("ws://host/ws", "t")
+        val frame = FrameCodec.sendMessage(
+            cmdId = "send-1",
+            clientMessageId = "client-1",
+            sessionId = "s1",
+            userMessage = "离线写的消息",
+            channelId = "c1",
+            modelId = null,
+            workspaceId = null,
+            uuid = "u1",
+            startedAt = 1,
+        )
+        first.sendMessage(OutgoingMessage("send-1", "client-1", frame))
+        advanceTimeBy(200)
+        runCurrent()
+        assertEquals("ws://host/ws", store.snapshot?.endpoint)
+        assertEquals(1, store.snapshot?.items?.size)
+
+        // 模拟进程被杀后重启：新的连接对象 + 同一份落盘队列。
+        val restartedFactory = FakeSocketFactory()
+        val second = connection(restartedFactory, scope = backgroundScope, queueStore = store)
+        second.connect("ws://host/ws", "t")
+        val socket = restartedFactory.created.single()
+        socket.open()
+        runCurrent()
+
+        assertTrue(socket.sent.any { it.contains("\"clientMessageId\":\"client-1\"") })
+        assertEquals(0, second.pendingSendCount.value)
+    }
+
+    @Test
+    fun `切换地址时不重放上一台电脑的队列`() = runTest {
+        val store = FakeOutgoingQueueStore()
+        store.save(
+            "ws://old/ws",
+            listOf(OutgoingMessage("c1", "m1", "{\"type\":\"send_message\"}")),
+        )
+        val factory = FakeSocketFactory()
+        val connection = connection(factory, scope = backgroundScope, queueStore = store)
+        connection.connect("ws://new/ws", "t")
+        val socket = factory.created.single()
+        socket.open()
+        runCurrent()
+
+        assertTrue(socket.sent.none { it.contains("m1") })
+        assertEquals(null, store.snapshot)
+        assertEquals(0, connection.pendingSendCount.value)
     }
 }

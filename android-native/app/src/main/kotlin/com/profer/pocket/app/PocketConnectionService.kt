@@ -28,6 +28,9 @@ class PocketConnectionService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        // startForegroundService 只给 5s：onCreate 里第一件事就是满足契约，
+        // 不能等 onStartCommand，更不能等通知渠道与仓库订阅准备好。
+        startForegroundSafely()
         PocketNotifications.ensureChannels(this)
         observeRepository()
     }
@@ -85,7 +88,15 @@ class PocketConnectionService : Service() {
         fun start(context: Context) {
             val intent = Intent(context, PocketConnectionService::class.java)
             try {
-                ContextCompat.startForegroundService(context, intent)
+                if (AppForeground.isForeground) {
+                    // 前台用 startService：startForegroundService 有 5s 内必须 startForeground
+                    // 的硬约束，冷启动主线程被首次组合占满时必然超时（系统会直接杀掉服务并抛
+                    // ForegroundServiceDidNotStartInTimeException）。服务自己在 onCreate 里
+                    // 调 startForeground，同样能升格成前台服务。
+                    context.startService(intent)
+                } else {
+                    ContextCompat.startForegroundService(context, intent)
+                }
             } catch (_: Exception) {
                 // 系统拒绝后台启动时保持静默：界面仍可用，只是切后台后不再保活。
             }

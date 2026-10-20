@@ -90,6 +90,10 @@ class PocketRepository(
     private val _sessions = MutableStateFlow<List<SessionSummary>>(emptyList())
     val sessions: StateFlow<List<SessionSummary>> = _sessions.asStateFlow()
 
+    /** 目录是否已有可信内容（本地快照或服务端列表），用于区分「还没读到」与「真的为空」。 */
+    private val _catalogLoaded = MutableStateFlow(false)
+    val catalogLoaded: StateFlow<Boolean> = _catalogLoaded.asStateFlow()
+
     private val _workspaces = MutableStateFlow<List<WorkspaceSummary>>(emptyList())
     val workspaces: StateFlow<List<WorkspaceSummary>> = _workspaces.asStateFlow()
 
@@ -134,6 +138,12 @@ class PocketRepository(
 
     val connectionStatus: StateFlow<ConnectionStatus> = connection.status
 
+    /** 待发送队列长度：断网时告诉用户还有几条消息在等。 */
+    val pendingSendCount: StateFlow<Int> = connection.pendingSendCount
+
+    /** 最近一次 ping 往返；未测到为 null，连接页据此显示「在线」还是「42ms」。 */
+    val latencyMs: StateFlow<Int?> = connection.latencyMs
+
     private val pendingPartial = mutableMapOf<String, InboundFrame.AgentEvent>()
     private val flushJobs = mutableMapOf<String, Job>()
     private val outgoingSessionIds = mutableMapOf<String, String>()
@@ -155,6 +165,7 @@ class PocketRepository(
                     _sessions.value = sortSessions(loaded.sessions.filterNot { it.isArchived })
                 }
                 if (_workspaces.value.isEmpty()) _workspaces.value = loaded.workspaces
+                _catalogLoaded.value = true
             }
         }
         connection.autoReconnect = _settings.value.autoReconnect
@@ -184,9 +195,22 @@ class PocketRepository(
         connection.connect(saved.endpoint, saved.token)
     }
 
-    /** 回前台时立即重连，不等退避定时器。 */
+    /** 回前台时立即重连，不等退避定时器；长时间无入站帧的半死链路直接重建。 */
     fun onForeground() {
-        connection.reconnectNow()
+        connection.reconnectNow(force = true)
+    }
+
+    /** 预热凭据缓存：Keystore 首次解密是跨进程调用，不能落在主线程。 */
+    fun preloadCredentials() {
+        credentials.load()
+    }
+
+    /**
+     * 系统网络可用性（ConnectivityManager）变化。
+     * 断网不再等 75s 心跳判死，恢复后也不再等退避定时器。
+     */
+    fun onNetworkChanged(available: Boolean) {
+        connection.onNetworkChanged(available)
     }
 
     /** 返回保存的地址（不含 token），供连接页回显。 */
@@ -293,6 +317,7 @@ class PocketRepository(
             // 桌面侧重命名/改模型后，快照刷新也要同步到已打开的对话页。
             _sessions.value.forEach(::updateChatMetaLocked)
             serverCatalogLoaded = true
+            _catalogLoaded.value = true
             scheduleSnapshotSaveLocked()
         }
         return true
@@ -396,11 +421,21 @@ class PocketRepository(
                 if (history != null) {
                     val historyIds = history.entries.map { it.id }.toSet()
                     val live = next.messages.filter { it.id !in historyIds }
-                    val tools = if (next.countedToolIds.isEmpty()) history.tools else next.tools
+                    // 实时流已经产生本轮工具时以实时为准；否则用历史恢复本轮工具列表。
+                    val liveHasTools = next.countedToolIds.isNotEmpty()
+                    val tools = if (liveHasTools) next.tools else history.tools
+                    val toolCalls = if (liveHasTools) next.toolCalls else history.toolCalls
                     next = next.copy(
                         messages = history.entries + live,
                         tools = tools,
+                        toolCalls = toolCalls,
                         countedToolIds = next.countedToolIds + history.countedToolIds,
+                        completedToolIds = next.completedToolIds + history.completedToolIds,
+                        failedToolIds = next.failedToolIds + history.failedToolIds,
+                        // 历史里的 usage 是打开会话时唯一可用的上下文来源；
+                        // 拿不到就保留内存里已有的值（实时帧可能更新过）。
+                        contextUsage = history.contextUsage ?: next.contextUsage,
+                        contextWindow = history.contextWindow ?: next.contextWindow,
                     )
                 }
                 // 服务端返回的待处理列表是权威快照：为空时必须清掉重连前残留的旧审批。
@@ -618,6 +653,8 @@ class PocketRepository(
                 lastError = null,
                 tools = com.profer.pocket.model.ToolTally(),
                 countedToolIds = emptySet(),
+                toolCalls = emptyList(),
+                completedToolIds = emptySet(),
                 turnFiles = emptyList(),
                 failedToolIds = emptySet(),
             ))

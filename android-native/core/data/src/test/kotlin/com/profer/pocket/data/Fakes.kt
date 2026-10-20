@@ -4,6 +4,7 @@ import com.profer.pocket.data.net.SocketTransport
 import com.profer.pocket.data.net.SocketTransportFactory
 import com.profer.pocket.data.settings.SettingsStore
 import com.profer.pocket.data.store.CredentialStore
+import com.profer.pocket.data.store.OutgoingQueueStore
 import com.profer.pocket.data.store.ResumeStateStore
 import com.profer.pocket.data.store.SessionSnapshotStore
 import com.profer.pocket.model.PocketSettings
@@ -100,5 +101,21 @@ class FakeSettingsStore(var current: PocketSettings = PocketSettings()) : Settin
 
     override fun save(settings: PocketSettings) {
         current = settings
+    }
+}
+
+class FakeOutgoingQueueStore : OutgoingQueueStore {
+    var snapshot: OutgoingQueueStore.Snapshot? = null
+    var clears = 0
+
+    override fun load(): OutgoingQueueStore.Snapshot? = snapshot
+
+    override fun save(endpoint: String, items: List<com.profer.pocket.data.net.OutgoingMessage>) {
+        snapshot = OutgoingQueueStore.Snapshot(endpoint, items)
+    }
+
+    override fun clear() {
+        snapshot = null
+        clears += 1
     }
 }

@@ -26,8 +26,10 @@ import androidx.compose.ui.unit.sp
 fun ProferMark(
     modifier: Modifier = Modifier,
     size: Dp = 28.dp,
-    containerColor: Color = MaterialTheme.colorScheme.primary,
-    markColor: Color = MaterialTheme.colorScheme.onPrimary,
+    // 品牌标记始终用墨色（深色主题反之），不跟着主操作色走：
+    // 主色是砖红，品牌标记如果也变红，就分不清「品牌」和「可点的按钮」。
+    containerColor: Color = MaterialTheme.colorScheme.onSurface,
+    markColor: Color = MaterialTheme.colorScheme.surface,
 ) {
     Canvas(modifier.size(size)) {
         val s = this.size.minDimension
@@ -47,7 +49,7 @@ fun ProferMark(
             size = Size(s * 0.30f, s * 0.47f),
         )
         drawRect(
-            color = Color(0xFF8C8C8C),
+            color = Color(0xFF8F877C),
             topLeft = Offset(s * 0.66f, s * 0.48f),
             size = Size(s * 0.16f, s * 0.34f),
         )
@@ -71,7 +73,7 @@ fun ProferWordmark(
             color = textColor,
             fontSize = 19.sp,
             fontWeight = FontWeight.SemiBold,
-            letterSpacing = (-0.2).sp,
+            letterSpacing = 0.sp,
         )
     }
 }

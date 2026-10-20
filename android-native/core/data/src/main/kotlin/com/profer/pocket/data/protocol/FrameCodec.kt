@@ -113,6 +113,7 @@ object FrameCodec {
         val inner = message.optJSONObject("message")
         val content = inner?.opt("content") ?: message.opt("content")
         val text = StringBuilder()
+        val reasoning = StringBuilder()
         val tools = mutableListOf<ToolUseView>()
         val toolResults = mutableListOf<ToolResultView>()
         when (content) {
@@ -122,6 +123,8 @@ object FrameCodec {
                     val block = content.optJSONObject(index) ?: continue
                     when (block.optString("type")) {
                         "text" -> text.append(block.optString("text", ""))
+                        // 思考块与正文同形：Pi 的 partial 帧是累计全文，直接覆盖即可。
+                        "thinking" -> reasoning.append(block.optString("thinking", ""))
                         "tool_use" -> tools += ToolUseView(
                             id = block.optStringOrNull("id"),
                             name = block.optString("name", "").ifBlank { "tool" },
@@ -133,6 +136,23 @@ object FrameCodec {
                             toolResults += ToolResultView(
                                 toolUseId = id,
                                 isError = block.optBoolean("is_error", false),
+                                images = block.optJSONArray("images")?.let { images ->
+                                    buildList {
+                                        for (imageIndex in 0 until images.length()) {
+                                            val image = images.optJSONObject(imageIndex) ?: continue
+                                            val path = image.optString("path", "")
+                                            if (path.isBlank()) continue
+                                            add(
+                                                ImageRef(
+                                                    path = path,
+                                                    filename = image.optString("filename", "")
+                                                        .ifBlank { path.substringAfterLast('/') },
+                                                    mediaType = image.optString("mediaType", ""),
+                                                ),
+                                            )
+                                        }
+                                    }
+                                }.orEmpty(),
                             )
                         }
                     }
@@ -169,6 +189,7 @@ object FrameCodec {
                     }
                 }
             }.orEmpty(),
+            reasoning = reasoning.toString().takeIf { it.isNotBlank() },
         )
     }
 

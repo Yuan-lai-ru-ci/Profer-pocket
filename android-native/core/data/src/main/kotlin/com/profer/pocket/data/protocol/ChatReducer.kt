@@ -1,6 +1,7 @@
 package com.profer.pocket.data.protocol
 
 import com.profer.pocket.model.ChatEntry
+import com.profer.pocket.model.ChatImage
 import com.profer.pocket.model.ContextUsage
 import com.profer.pocket.model.NoticeTone
 import com.profer.pocket.model.NotificationKind
@@ -8,6 +9,7 @@ import com.profer.pocket.model.PendingInteraction
 import com.profer.pocket.model.PocketNotification
 import com.profer.pocket.model.SessionChat
 import com.profer.pocket.model.SessionSummary
+import com.profer.pocket.model.ToolCall
 import com.profer.pocket.model.ToolTally
 import com.profer.pocket.model.TurnFile
 
@@ -34,7 +36,8 @@ data class ChatReduction(
  * agent_event → 会话状态。
  *
  * 纯函数：不碰网络、不碰存储，时间由 [clock] 注入，便于单测。
- * 工具调用只累计次数（[ToolTally]），不保留工具入参与结果。
+ * 工具调用保留名称与文件路径（[ToolCall]），不保留入参与结果；
+ * 完成/失败状态由 tool_result 驱动。
  */
 class ChatReducer(
     private val clock: () -> Long = { System.currentTimeMillis() },
@@ -109,13 +112,22 @@ class ChatReducer(
         }
         if (message.type != "assistant" && message.type != "user") return ChatReduction(chat)
         if (message.type == "user") {
-            // 工具结果消息只带 tool_result：记下失败的工具，回合末尾汇总时剔除其文件。
+            // 工具结果消息只带 tool_result：记下哪些工具已返回、哪些失败，
+            // 回合末尾汇总时剔除失败文件，工具卡也能从 Running 切到 Success/Error。
             var next = chat
             if (message.toolResults.isNotEmpty()) {
+                val completed = message.toolResults.map { it.toolUseId }.toSet()
                 val failed = message.toolResults.filter { it.isError }.map { it.toolUseId }.toSet()
-                if (failed.isNotEmpty()) {
-                    next = next.copy(failedToolIds = next.failedToolIds + failed)
-                }
+                next = next.copy(
+                    completedToolIds = next.completedToolIds + completed,
+                    failedToolIds = next.failedToolIds + failed,
+                )
+                // 工具产出的图片（send_local_image / generate_image）挂在最近一条助手消息上，
+                // 帧里只有路径与文件名，字节由 UI 点开时再向电脑端拉取。
+                val images = message.toolResults
+                    .flatMap { it.images }
+                    .map { ChatImage(path = it.path, filename = it.filename, mediaType = it.mediaType) }
+                next = attachImages(next, images)
             }
             val text = message.text.trim()
             if (text.isEmpty()) return ChatReduction(next)
@@ -126,6 +138,8 @@ class ChatReducer(
                 next.append(entry).copy(
                     tools = ToolTally(),
                     countedToolIds = emptySet(),
+                    toolCalls = emptyList(),
+                    completedToolIds = emptySet(),
                     turnFiles = emptyList(),
                     failedToolIds = emptySet(),
                 ),
@@ -136,12 +150,22 @@ class ChatReducer(
         val existing = chat.messages.firstOrNull { it.id == entryId } as? ChatEntry.Assistant
 
         // 工具次数：partial 与 final 会重复携带同一批 tool_use，按 id 去重。
+        // 同时按发生顺序记录每次调用，供移动端逐条渲染（每条工具自己的图标与状态）。
         var tools = chat.tools
+        var toolCalls = chat.toolCalls
         val counted = chat.countedToolIds.toMutableSet()
         message.toolUses.forEachIndexed { index, tool ->
             val key = tool.id?.takeIf { it.isNotBlank() }
                 ?: "evt-${eventId ?: "x"}-$index-${tool.name}"
-            if (counted.add(key)) tools = tools.record(tool.name)
+            if (counted.add(key)) {
+                tools = tools.record(tool.name)
+                toolCalls = toolCalls + ToolCall(
+                    id = key,
+                    name = tool.name,
+                    path = tool.filePath,
+                    at = clock(),
+                )
+            }
         }
 
         // 修改类工具的文件进入本轮汇总；Read 只用于正文补全，不算改动。
@@ -156,21 +180,38 @@ class ChatReducer(
         }
 
         val text = message.text
+        val incomingThinking = message.reasoning?.takeIf { it.isNotBlank() }
         val streaming = message.partial
         val messages = when {
             existing != null -> {
-                // partial 是累计全文；乱序到达时不回退正文。
+                // partial 是累计全文；乱序到达时不回退正文，也不回退思考。
                 val nextText = when {
                     !streaming -> text.ifEmpty { existing.text }
                     text.length >= existing.text.length -> text
                     else -> existing.text
                 }
+                val existingThinking = existing.thinking
+                val nextThinking = when {
+                    incomingThinking == null -> existingThinking
+                    existingThinking == null -> incomingThinking
+                    // final 的思考窗口比 partial 大，按长度取更完整的一份。
+                    incomingThinking.length >= existingThinking.length -> incomingThinking
+                    else -> existingThinking
+                }
                 chat.messages.map {
-                    if (it.id == entryId) ChatEntry.Assistant(entryId, nextText, streaming, existing.at) else it
+                    if (it.id == entryId) {
+                        ChatEntry.Assistant(entryId, nextText, streaming, existing.at, nextThinking, existing.images)
+                    } else {
+                        it
+                    }
                 }
             }
 
-            text.isNotBlank() -> chat.messages + ChatEntry.Assistant(entryId, text, streaming, clock())
+            // 只有思考、还没出正文的 assistant 也必须先落在列表里，
+            // 否则移动端在模型「想」的这几秒里看不到任何变化。
+            text.isNotBlank() || incomingThinking != null ->
+                chat.messages + ChatEntry.Assistant(entryId, text, streaming, clock(), incomingThinking)
+
             else -> chat.messages
         }
 
@@ -178,6 +219,7 @@ class ChatReducer(
             chat = chat.copy(
                 messages = messages,
                 tools = tools,
+                toolCalls = toolCalls,
                 countedToolIds = counted,
                 turnFiles = turnFiles,
                 running = true,
@@ -375,6 +417,19 @@ class ChatReducer(
         } else {
             chat
         }
+    }
+
+    /** 把工具产出的图片挂到最近一条助手消息上；按路径去重，重复帧不会重复追加。 */
+    private fun attachImages(chat: SessionChat, images: List<ChatImage>): SessionChat {
+        if (images.isEmpty()) return chat
+        val index = chat.messages.indexOfLast { it is ChatEntry.Assistant }
+        if (index < 0) return chat
+        val entry = chat.messages[index] as ChatEntry.Assistant
+        val merged = (entry.images + images).distinctBy { it.path }
+        if (merged.size == entry.images.size) return chat
+        return chat.copy(
+            messages = chat.messages.toMutableList().also { it[index] = entry.copy(images = merged) },
+        )
     }
 
     private fun finishStreaming(chat: SessionChat): SessionChat {

@@ -40,6 +40,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 class PocketViewModel(application: Application) : AndroidViewModel(application) {
 
@@ -48,6 +49,9 @@ class PocketViewModel(application: Application) : AndroidViewModel(application) 
 
     private val _selectedSessionId = MutableStateFlow<String?>(null)
     val selectedSessionId: StateFlow<String?> = _selectedSessionId.asStateFlow()
+
+    /** 上次打开的会话是否已从本地读回；读回前不要用「目录第一条」抢先覆盖。 */
+    private val _selectionRestored = MutableStateFlow(false)
 
     private val _homeMode = MutableStateFlow(HomeMode.Agent)
     val homeMode: StateFlow<HomeMode> = _homeMode.asStateFlow()
@@ -59,14 +63,14 @@ class PocketViewModel(application: Application) : AndroidViewModel(application) 
     private val _conversationDrafts = MutableStateFlow<Map<String, String>>(emptyMap())
     private val _conversationsRefreshing = MutableStateFlow(false)
 
-    private val _urlInput = MutableStateFlow(repository.savedEndpoint().orEmpty())
+    private val _urlInput = MutableStateFlow("")
     private val _tokenInput = MutableStateFlow("")
     private val _sessionQuery = MutableStateFlow("")
-    private val _drafts = MutableStateFlow<Map<String, String>>(container.draftStore.load())
+    private val _drafts = MutableStateFlow<Map<String, String>>(emptyMap())
     private var draftSaveJob: Job? = null
 
     /** 本机阅读位置：sessionId → 最后一条已读消息 id。 */
-    private val _readPositions = MutableStateFlow(container.readStateStore.load())
+    private val _readPositions = MutableStateFlow<Map<String, String>>(emptyMap())
     val readPositions: StateFlow<Map<String, String>> = _readPositions.asStateFlow()
     private val _pendingNavigation = MutableStateFlow<String?>(null)
 
@@ -85,6 +89,7 @@ class PocketViewModel(application: Application) : AndroidViewModel(application) 
         val sessions: List<SessionSummary>,
         val workspaces: List<WorkspaceSummary>,
         val status: ConnectionStatus,
+        val pendingSends: Int,
     )
 
     private val chatInputs = combine(
@@ -92,21 +97,27 @@ class PocketViewModel(application: Application) : AndroidViewModel(application) 
         repository.sessions,
         repository.workspaces,
         repository.connectionStatus,
-    ) { chats, sessions, workspaces, status -> ChatInputs(chats, sessions, workspaces, status) }
+        repository.pendingSendCount,
+    ) { chats, sessions, workspaces, status, pendingSends ->
+        ChatInputs(chats, sessions, workspaces, status, pendingSends)
+    }
 
     val chatUiState: StateFlow<ChatUiState> = combine(
         chatInputs,
         _selectedSessionId,
+        _selectionRestored,
         _drafts,
         repository.presets,
-    ) { inputs, selected, drafts, presets ->
-        val id = selected ?: inputs.sessions.firstOrNull()?.id
+    ) { inputs, selected, restored, drafts, presets ->
+        // 恢复完成前不要用「目录第一条」冒充当前会话，避免启动时闪一下别的会话。
+        val id = if (restored) selected ?: inputs.sessions.firstOrNull()?.id else null
         UiMapping.chatState(
             sessionId = id,
             chat = inputs.chats[id],
             sessions = inputs.sessions,
             workspaces = inputs.workspaces,
-            online = inputs.status is ConnectionStatus.Connected,
+            status = inputs.status,
+            queuedSends = inputs.pendingSends,
             draft = drafts[id].orEmpty(),
             presets = presets,
         )
@@ -165,6 +176,7 @@ class PocketViewModel(application: Application) : AndroidViewModel(application) 
         val messages: Map<String, List<DomainChatMessage>>,
         val streams: Map<String, ChatStream>,
         val status: ConnectionStatus,
+        val pendingSends: Int,
     )
 
     private val conversationInputs = combine(
@@ -172,8 +184,9 @@ class PocketViewModel(application: Application) : AndroidViewModel(application) 
         repository.conversationMessages,
         repository.chatStreams,
         repository.connectionStatus,
-    ) { conversations, messages, streams, status ->
-        ConversationInputs(conversations, messages, streams, status)
+        repository.pendingSendCount,
+    ) { conversations, messages, streams, status, pendingSends ->
+        ConversationInputs(conversations, messages, streams, status, pendingSends)
     }
 
     val conversationListState: StateFlow<ConversationListState> = combine(
@@ -195,7 +208,8 @@ class PocketViewModel(application: Application) : AndroidViewModel(application) 
             messages = inputs.messages[active].orEmpty(),
             stream = inputs.streams[active],
             draft = drafts[active].orEmpty(),
-            offline = inputs.status !is ConnectionStatus.Connected,
+            status = inputs.status,
+            queuedSends = inputs.pendingSends,
         )
     }.stateIn(viewModelScope, SharingStarted.Eagerly, ConversationUiState())
 
@@ -258,12 +272,14 @@ class PocketViewModel(application: Application) : AndroidViewModel(application) 
         repository.connectionStatus,
         _urlInput,
         _tokenInput,
-    ) { status, url, token ->
+        repository.latencyMs,
+    ) { status, url, token, latency ->
         UiMapping.connectionState(
             status = status,
             url = url,
             token = token,
             hasSavedToken = repository.hasSavedToken(),
+            latencyMs = latency,
         )
     }.stateIn(
         viewModelScope,
@@ -277,6 +293,24 @@ class PocketViewModel(application: Application) : AndroidViewModel(application) 
     )
 
     init {
+        // 本地状态读盘放到后台：SharedPreferences / Keystore 首次访问不应该卡住首帧。
+        viewModelScope.launch(Dispatchers.IO) {
+            val saved = repository.savedEndpoint().orEmpty()
+            if (saved.isNotEmpty() && _urlInput.value.isEmpty()) _urlInput.value = saved
+        }
+        viewModelScope.launch(Dispatchers.IO) {
+            _drafts.value = container.draftStore.load()
+        }
+        viewModelScope.launch(Dispatchers.IO) {
+            _readPositions.value = container.readStateStore.load()
+        }
+        viewModelScope.launch(Dispatchers.IO) {
+            val last = runCatching { container.lastSessionStore.load() }
+                .getOrDefault(com.profer.pocket.data.store.LastSessionStore.State())
+            last.agentSessionId?.let { _selectedSessionId.value = it }
+            last.conversationId?.let { _activeConversationId.value = it }
+            _selectionRestored.value = true
+        }
         viewModelScope.launch {
             repository.connectionStatus.collect { status ->
                 if (status is ConnectionStatus.Connected) {
@@ -285,14 +319,38 @@ class PocketViewModel(application: Application) : AndroidViewModel(application) 
             }
         }
         viewModelScope.launch {
-            repository.sessions.collect { sessions ->
-                val current = _selectedSessionId.value
-                if (current == null || sessions.none { it.id == current }) {
+            // 目录加载与「上次会话」恢复是两条异步线：都到位后再决定选中项，
+            // 否则快照先到时会先用第一条会话覆盖掉用户上次打开的那条。
+            combine(
+                _selectionRestored,
+                repository.sessions,
+                repository.catalogLoaded,
+            ) { restored, sessions, loaded -> Triple(restored, sessions, loaded) }
+                .collect { (restored, sessions, loaded) ->
+                    if (!restored) return@collect
+                    val current = _selectedSessionId.value
+                    if (current != null && sessions.any { it.id == current }) {
+                        if (repository.chats.value[current]?.loaded != true) repository.openSession(current)
+                        return@collect
+                    }
+                    // 目录还没读到内容时保留恢复值，避免「加载中」被当成「会话已删除」。
+                    if (!loaded && sessions.isEmpty()) return@collect
                     val next = sessions.firstOrNull()?.id
                     _selectedSessionId.value = next
                     if (next != null) repository.openSession(next)
+                    persistLastSession()
                 }
-            }
+        }
+    }
+
+    /** 记住上次打开的 Agent 会话与 Chat 对话，供下次冷启动恢复。 */
+    private fun persistLastSession() {
+        val state = com.profer.pocket.data.store.LastSessionStore.State(
+            agentSessionId = _selectedSessionId.value,
+            conversationId = _activeConversationId.value,
+        )
+        viewModelScope.launch(Dispatchers.IO) {
+            container.lastSessionStore.save(state)
         }
     }
 
@@ -304,6 +362,7 @@ class PocketViewModel(application: Application) : AndroidViewModel(application) 
             return
         }
         _selectedSessionId.value = sessionId
+        persistLastSession()
         viewModelScope.launch {
             repository.openSession(sessionId)
             // 预设是工作区级配置：切会话时按新会话所属项目重拉。
@@ -333,6 +392,7 @@ class PocketViewModel(application: Application) : AndroidViewModel(application) 
                 repository.createSession(workspaceId)
                     .onSuccess { created ->
                         _selectedSessionId.value = created.id
+                        persistLastSession()
                         repository.openSession(created.id)
                         repository.refreshPresets(workspaceSlugFor(created.id))
                     }
@@ -387,8 +447,13 @@ class PocketViewModel(application: Application) : AndroidViewModel(application) 
                     repository.refreshConversations()
                 }
                 _conversationsRefreshing.value = false
-                if (_activeConversationId.value == null) {
-                    repository.conversations.value.firstOrNull()?.let { openConversation(it.id) }
+                // 恢复上次打开的 Chat 对话；已被删除时回落到第一条。
+                val conversations = repository.conversations.value
+                val active = _activeConversationId.value
+                when {
+                    active != null && conversations.any { it.id == active } -> openConversation(active)
+                    conversations.isNotEmpty() -> openConversation(conversations.first().id)
+                    // 还没拉到列表：保留恢复值，等下一次进入 Chat 再校验。
                 }
             }
         }
@@ -396,6 +461,7 @@ class PocketViewModel(application: Application) : AndroidViewModel(application) 
 
     fun openConversation(conversationId: String) {
         _activeConversationId.value = conversationId
+        persistLastSession()
         viewModelScope.launch {
             if (repository.conversations.value.none { it.id == conversationId }) {
                 repository.refreshConversations()
@@ -418,6 +484,7 @@ class PocketViewModel(application: Application) : AndroidViewModel(application) 
             } else {
                 _homeMode.value = HomeMode.Chat
                 _activeConversationId.value = id
+                persistLastSession()
             }
         }
     }
@@ -479,6 +546,7 @@ class PocketViewModel(application: Application) : AndroidViewModel(application) 
                 _message.value = "删除对话失败"
             } else if (_activeConversationId.value == conversationId) {
                 _activeConversationId.value = null
+                persistLastSession()
             }
         }
     }
@@ -654,6 +722,29 @@ class PocketViewModel(application: Application) : AndroidViewModel(application) 
         repository.readFilePreview(sessionId, path, filename)
 
     /**
+     * 消息内图片缩略图：只拉一次，按路径缓存。
+     * 字节不在 WS 帧里，由 `read_file_as_data_url` 按需取，桌面端二次校验会话授权范围。
+     */
+    private val messageImageCache = mutableMapOf<String, androidx.compose.ui.graphics.ImageBitmap>()
+
+    suspend fun loadMessageImage(
+        sessionId: String,
+        path: String,
+    ): androidx.compose.ui.graphics.ImageBitmap? {
+        messageImageCache[path]?.let { return it }
+        val preview = repository
+            .readFilePreview(sessionId, path, path.substringAfterLast('/'))
+            .getOrNull()
+            ?: return null
+        val dataUrl = preview.dataUrl ?: return null
+        val bitmap = withContext(Dispatchers.Default) { decodeImageDataUrl(dataUrl) } ?: return null
+        // 简单上限：会话图片不多，超过就整体清空，避免长期占用内存。
+        if (messageImageCache.size >= MAX_CACHED_MESSAGE_IMAGES) messageImageCache.clear()
+        messageImageCache[path] = bitmap
+        return bitmap
+    }
+
+    /**
      * 修改重发（对齐桌面 Agent）：回退到该用户消息之前最近的 assistant 锚点，再发送新内容。
      * 破坏性：锚点之后的对话会被截断，工作区文件按快照恢复。
      */
@@ -799,6 +890,11 @@ class PocketViewModel(application: Application) : AndroidViewModel(application) 
         _tokenInput.value = token
     }
 
+    /** 首帧完成：允许启动前台服务。 */
+    fun onUiReady() {
+        container.onUiReady()
+    }
+
     fun retryConnection() {
         if (repository.savedEndpoint() != null) {
             repository.onForeground()
@@ -861,3 +957,6 @@ class PocketViewModel(application: Application) : AndroidViewModel(application) 
         return repository.chats.value[id]
     }
 }
+
+/** 消息图片缓存上限：图片不多，超过就整体清空。 */
+private const val MAX_CACHED_MESSAGE_IMAGES = 24

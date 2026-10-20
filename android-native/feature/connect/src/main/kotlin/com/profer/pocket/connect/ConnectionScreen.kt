@@ -60,6 +60,7 @@ import com.profer.pocket.designsystem.component.ProferIconAction
 import com.profer.pocket.designsystem.component.ProferMark
 import com.profer.pocket.designsystem.component.ProferStatusDot
 import com.profer.pocket.designsystem.theme.ProferCodeTextStyle
+import com.profer.pocket.designsystem.theme.ProferSizes
 import com.profer.pocket.designsystem.theme.ProferSpacing
 import com.profer.pocket.designsystem.theme.ProferThemeExtras
 
@@ -269,8 +270,9 @@ private fun ConnectedCard(
                     color = MaterialTheme.colorScheme.error,
                     fontWeight = FontWeight.Medium,
                     modifier = Modifier
+                        .heightIn(min = ProferSizes.minTouchTarget)
                         .clickable(onClick = onDisconnect)
-                        .padding(vertical = 8.dp, horizontal = 4.dp),
+                        .padding(horizontal = 4.dp, vertical = 8.dp),
                 )
             }
         }
@@ -429,7 +431,7 @@ private fun ManualConnectPanel(
             onClick = onConnect,
             modifier = Modifier
                 .fillMaxWidth()
-                .height(48.dp),
+                .heightIn(min = 48.dp),
             shape = CircleShape,
             colors = ButtonDefaults.buttonColors(
                 containerColor = MaterialTheme.colorScheme.primary,
@@ -457,7 +459,7 @@ private fun ManualConnectPanel(
             onClick = onScan,
             modifier = Modifier
                 .fillMaxWidth()
-                .height(48.dp),
+                .heightIn(min = 48.dp),
             shape = CircleShape,
         ) {
             Icon(
@@ -494,7 +496,7 @@ private fun ConnectingPanel(onCancel: () -> Unit) {
             Spacer(modifier = Modifier.height(ProferSpacing.md))
             Box(
                 modifier = Modifier
-                    .heightIn(min = 44.dp)
+                    .heightIn(min = ProferSizes.minTouchTarget)
                     .clip(RoundedCornerShape(10.dp))
                     .clickable(onClick = onCancel)
                     .padding(horizontal = 8.dp, vertical = 12.dp),
@@ -588,6 +590,7 @@ private fun FailedPanel(message: String, onRetry: () -> Unit) {
             Row(
                 modifier = Modifier
                     .padding(top = ProferSpacing.md)
+                    .heightIn(min = ProferSizes.minTouchTarget)
                     .clickable(onClick = onRetry),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(6.dp),

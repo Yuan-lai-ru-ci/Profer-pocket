@@ -40,6 +40,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.profer.pocket.designsystem.theme.ProferHeadingSerif
+import com.profer.pocket.designsystem.theme.ProferSizes
 import com.profer.pocket.designsystem.theme.ProferSpacing
 import com.profer.pocket.designsystem.theme.ProferThemeExtras
 import com.profer.pocket.model.ContextUsage
@@ -77,8 +78,8 @@ fun ContextUsageIndicator(
 
     Row(
         modifier = modifier
-            .height(44.dp)
-            .clip(RoundedCornerShape(22.dp))
+            .height(ProferSizes.minTouchTarget)
+            .clip(RoundedCornerShape(24.dp))
             .clickable(onClickLabel = "查看上下文详情", onClick = onClick)
             .padding(horizontal = 6.dp)
             .semantics(mergeDescendants = true) { contentDescription = label },
