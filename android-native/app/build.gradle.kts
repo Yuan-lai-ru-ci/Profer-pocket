@@ -7,6 +7,29 @@ plugins {
     alias(libs.plugins.kotlin.compose)
 }
 
+/**
+ * Pocket 版本规则，详见 android-native/VERSIONING.md：
+ * versionName = <major>.<minor>.<patch>-<channel>.<build>
+ * versionCode = (major * 10000 + minor * 100 + patch) * 100 + build
+ * 例：0.1.20-native.3 -> (0 * 10000 + 1 * 100 + 20) * 100 + 3 = 12003
+ */
+fun pocketVersionCodeOf(versionName: String): Int {
+    val core = versionName.substringBefore('-')
+    val parts = core.split('.')
+    require(parts.size == 3) { "versionName 必须形如 0.1.20-native.3：$versionName" }
+    val numbers = parts.map { it.toIntOrNull() ?: error("versionName 含非数字段：$versionName") }
+    val build = versionName.substringAfterLast('.', "").toIntOrNull()
+        ?: error("versionName 缺少 build 序号：$versionName")
+    val (major, minor, patch) = numbers
+    require(major in 0..99 && minor in 0..99 && patch in 0..99 && build in 0..99) {
+        "versionName 各段必须在 0..99：$versionName"
+    }
+    return (major * 10_000 + minor * 100 + patch) * 100 + build
+}
+
+val pocketVersionName = "0.1.20-native.3"
+val pocketVersionCode = pocketVersionCodeOf(pocketVersionName)
+
 val signingProperties = Properties()
 val signingPropertiesFile = file("signing.properties")
 if (signingPropertiesFile.exists()) {
@@ -21,8 +44,8 @@ android {
         applicationId = "com.profer.pocket"
         minSdk = 26
         targetSdk = 35
-        versionCode = 12002
-        versionName = "0.1.20-native.2"
+        versionCode = pocketVersionCode
+        versionName = pocketVersionName
     }
 
     signingConfigs {

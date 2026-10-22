@@ -1,6 +1,6 @@
 package com.profer.pocket.settings
 
-import android.content.pm.ApplicationInfo
+import android.os.Build
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -81,13 +81,16 @@ fun SettingsScreen(
     val context = LocalContext.current
     val versionLabel = remember(context) {
         runCatching {
-            context.packageManager.getPackageInfo(context.packageName, 0).versionName
-        }.getOrNull().orEmpty().ifBlank { "未知" }
-    }
-    val buildLabel = if ((context.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE) != 0) {
-        "debug"
-    } else {
-        "release"
+            val info = context.packageManager.getPackageInfo(context.packageName, 0)
+            val name = info.versionName.orEmpty().ifBlank { "未知" }
+            val code = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                info.longVersionCode
+            } else {
+                @Suppress("DEPRECATION")
+                info.versionCode.toLong()
+            }
+            "$name ($code)"
+        }.getOrNull() ?: "未知"
     }
     Scaffold(
         modifier = modifier,
@@ -254,8 +257,6 @@ fun SettingsScreen(
             SectionTitle("关于")
             SettingsCard {
                 SettingsValueRow(title = "版本", value = versionLabel)
-                ProferDivider(insetStart = 16.dp)
-                SettingsValueRow(title = "构建", value = buildLabel)
                 ProferDivider(insetStart = 16.dp)
                 SettingsValueRow(title = "协议", value = "Pocket WS v1")
             }

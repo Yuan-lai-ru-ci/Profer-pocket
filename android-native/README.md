@@ -8,6 +8,7 @@
 > 移动端不搬运工具入参与结果，工具调用只保留次数统计。
 > 落点：`Profer-pocket/android-native/`；旧 Capacitor 壳 `pocket-app/` 保留为回退与协议来源。
 > 并行开发分支与交接说明见 [`HANDOFF.md`](./HANDOFF.md)。
+> 版本号规则与打包检查见 [`VERSIONING.md`](./VERSIONING.md)，改版本前先读。
 
 ## 1. 这一版想解决什么
 
