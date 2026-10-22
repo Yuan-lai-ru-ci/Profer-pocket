@@ -27,7 +27,20 @@ object FrameCodec {
                     serverInstanceId = json.optStringOrNull("serverInstanceId"),
                     latestEventId = json.optLongOrNull("latestAgentEventId"),
                     oldestEventId = json.optLongOrNull("oldestAgentEventId"),
+                    protocolVersion = json.optIntOrNull("protocolVersion"),
+                    deviceId = json.optStringOrNull("deviceId"),
+                    profileJson = json.optJSONObject("profile")?.toString(),
                 )
+
+                "remote_hello" -> InboundFrame.RemoteHello(
+                    protocolVersion = json.optIntOrNull("protocolVersion"),
+                    deviceId = json.optStringOrNull("deviceId"),
+                )
+
+                "connection_profile" -> {
+                    val profile = json.optJSONObject("profile")
+                    if (profile == null) InboundFrame.Unknown(kind) else InboundFrame.ConnectionProfile(profile.toString())
+                }
 
                 "pong" -> InboundFrame.Pong
 
@@ -567,6 +580,9 @@ internal fun JSONObject.optStringOrNull(key: String): String? =
 
 internal fun JSONObject.optLongOrNull(key: String): Long? =
     if (!has(key) || isNull(key)) null else optLong(key, 0L)
+
+internal fun JSONObject.optIntOrNull(key: String): Int? =
+    if (!has(key) || isNull(key)) null else optInt(key, 0)
 
 internal fun JSONObject.optBooleanOrNull(key: String): Boolean? =
     if (!has(key) || isNull(key)) null else optBoolean(key, false)

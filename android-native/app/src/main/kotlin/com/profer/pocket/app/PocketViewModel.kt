@@ -268,18 +268,36 @@ class PocketViewModel(application: Application) : AndroidViewModel(application) 
             emptyList(),
         )
 
+    private data class ConnectionInputs(
+        val status: ConnectionStatus,
+        val url: String,
+        val token: String,
+        val latencyMs: Int?,
+    )
+
     val connectionUiState: StateFlow<ConnectionUiState> = combine(
-        repository.connectionStatus,
-        _urlInput,
-        _tokenInput,
-        repository.latencyMs,
-    ) { status, url, token, latency ->
+        combine(
+            repository.connectionStatus,
+            _urlInput,
+            _tokenInput,
+            repository.latencyMs,
+        ) { status, url, token, latency -> ConnectionInputs(status, url, token, latency) },
+        repository.devices,
+        repository.pairingState,
+        repository.endpointFailures,
+        repository.registryError,
+    ) { inputs, devices, pairing, failures, registryError ->
         UiMapping.connectionState(
-            status = status,
-            url = url,
-            token = token,
+            status = inputs.status,
+            url = inputs.url,
+            token = inputs.token,
             hasSavedToken = repository.hasSavedToken(),
-            latencyMs = latency,
+            latencyMs = inputs.latencyMs,
+            devices = devices.devices,
+            activeDeviceId = devices.activeId,
+            pairing = pairing,
+            endpointFailures = failures,
+            registryError = registryError,
         )
     }.stateIn(
         viewModelScope,
@@ -289,6 +307,11 @@ class PocketViewModel(application: Application) : AndroidViewModel(application) 
             url = _urlInput.value,
             token = "",
             hasSavedToken = repository.hasSavedToken(),
+            devices = repository.devices.value.devices,
+            activeDeviceId = repository.devices.value.activeId,
+            pairing = repository.pairingState.value,
+            endpointFailures = repository.endpointFailures.value,
+            registryError = repository.registryError.value,
         ),
     )
 
@@ -905,6 +928,28 @@ class PocketViewModel(application: Application) : AndroidViewModel(application) 
 
     fun disconnect() {
         repository.disconnect()
+        container.syncBackgroundService()
+    }
+
+    // ===== 扫码配对与多设备 =====
+
+    /** 扫码结果交给仓库：解析 → 配对 → 保存凭据 → 立即连接。 */
+    fun pairWithQr(text: String) {
+        repository.pairWithQr(text)
+        container.syncBackgroundService()
+    }
+
+    fun dismissPairing() {
+        repository.consumePairingState()
+    }
+
+    fun selectDevice(deviceId: String) {
+        repository.selectDevice(deviceId)
+        container.syncBackgroundService()
+    }
+
+    fun removeDevice(deviceId: String) {
+        repository.removeDevice(deviceId)
         container.syncBackgroundService()
     }
 

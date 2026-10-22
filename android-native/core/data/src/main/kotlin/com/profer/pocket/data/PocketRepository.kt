@@ -17,6 +17,12 @@ import com.profer.pocket.data.protocol.SessionSignal
 import com.profer.pocket.data.settings.SettingsStore
 import com.profer.pocket.data.store.CredentialStore
 import com.profer.pocket.data.store.SessionSnapshotStore
+import com.profer.pocket.remote.DeviceRegistry
+import com.profer.pocket.remote.PairingClient
+import com.profer.pocket.remote.PairingException
+import com.profer.pocket.remote.RemoteDevice
+import com.profer.pocket.remote.RemoteRegistryException
+import com.profer.pocket.remote.TransportMode
 import com.profer.pocket.model.AgentPresetSummary
 import com.profer.pocket.model.AgentAttachment
 import com.profer.pocket.model.ChannelSummary
@@ -67,7 +73,10 @@ import java.util.UUID
  */
 class PocketRepository(
     private val connection: PocketConnection,
+    /** 旧版单 endpoint + token 存储：只作为迁移来源，新连接一律走 [registry]。 */
     private val credentials: CredentialStore,
+    private val registry: DeviceRegistry,
+    private val pairing: PairingClient,
     private val snapshots: SessionSnapshotStore,
     private val settingsStore: SettingsStore,
     private val scope: CoroutineScope,
@@ -133,6 +142,16 @@ class PocketRepository(
     private val _settings = MutableStateFlow(settingsStore.load())
     val settings: StateFlow<PocketSettings> = _settings.asStateFlow()
 
+    private val _devices = MutableStateFlow(DeviceRegistry.Snapshot())
+    val devices: StateFlow<DeviceRegistry.Snapshot> = _devices.asStateFlow()
+
+    /** 注册表损坏 / 凭据不可用：UI 提示重新扫码，不静默清空。 */
+    private val _registryError = MutableStateFlow<String?>(null)
+    val registryError: StateFlow<String?> = _registryError.asStateFlow()
+
+    private val _pairingState = MutableStateFlow<PairingState>(PairingState.Idle)
+    val pairingState: StateFlow<PairingState> = _pairingState.asStateFlow()
+
     private val notificationChannel = Channel<PocketNotification>(Channel.UNLIMITED)
     val notifications: Flow<PocketNotification> = notificationChannel.receiveAsFlow()
 
@@ -143,6 +162,9 @@ class PocketRepository(
 
     /** 最近一次 ping 往返；未测到为 null，连接页据此显示「在线」还是「42ms」。 */
     val latencyMs: StateFlow<Int?> = connection.latencyMs
+
+    /** 多端点最近一次失败原因（端点 URL → 原因），供连接页排障。 */
+    val endpointFailures: StateFlow<Map<String, String>> = connection.endpointFailures
 
     private val pendingPartial = mutableMapOf<String, InboundFrame.AgentEvent>()
     private val flushJobs = mutableMapOf<String, Job>()
@@ -169,6 +191,17 @@ class PocketRepository(
             }
         }
         connection.autoReconnect = _settings.value.autoReconnect
+        // 服务端连接资料刷新：信任断言在连接层已经通过，这里只负责落盘。
+        scope.launch {
+            connection.profileUpdates.collect { updated ->
+                try {
+                    _devices.value = registry.updateProfile(updated)
+                    _registryError.value = null
+                } catch (error: Exception) {
+                    _registryError.value = error.message
+                }
+            }
+        }
         scope.launch { connection.events.collect(::onAgentEvent) }
         scope.launch { connection.chatEvents.collect(::onChatEvent) }
         scope.launch { connection.resumeResults.collect(::onResumeResult) }
@@ -185,14 +218,28 @@ class PocketRepository(
 
     // ===== 生命周期 =====
 
-    /** 应用启动时调用：有保存的凭据就自动连接，没有则保持 Idle。 */
+    /**
+     * 应用启动时调用：先迁移旧版单连接，再连当前设备；都没有则保持 Idle。
+     *
+     * 迁移失败不丢原配置：旧 CredentialStore 原样保留，仍可手动连接。
+     */
     fun start() {
-        val saved = credentials.load()
-        if (saved == null) {
-            connection.reportConfigurationError(OfflineCause.MissingCredentials, "还没有配置连接")
+        refreshDevices()
+        if (_devices.value.devices.isEmpty()) migrateLegacyConnection()
+        val active = _devices.value.active()
+        if (active == null) {
+            val legacy = credentials.load()
+            if (legacy != null) {
+                connection.connect(legacy.endpoint, legacy.token)
+                return
+            }
+            connection.reportConfigurationError(
+                OfflineCause.MissingCredentials,
+                _registryError.value ?: "还没有配置连接",
+            )
             return
         }
-        connection.connect(saved.endpoint, saved.token)
+        connectDevice(active)
     }
 
     /** 回前台时立即重连，不等退避定时器；长时间无入站帧的半死链路直接重建。 */
@@ -202,6 +249,8 @@ class PocketRepository(
 
     /** 预热凭据缓存：Keystore 首次解密是跨进程调用，不能落在主线程。 */
     fun preloadCredentials() {
+        refreshDevices()
+        runCatching { _devices.value.devices.forEach { registry.credential(it.profile.deviceId) } }
         credentials.load()
     }
 
@@ -213,12 +262,19 @@ class PocketRepository(
         connection.onNetworkChanged(available)
     }
 
-    /** 返回保存的地址（不含 token），供连接页回显。 */
-    fun savedEndpoint(): String? = credentials.load()?.endpoint
+    /** 返回当前设备的首个地址（不含 token），供连接页回显。 */
+    fun savedEndpoint(): String? = _devices.value.active()?.profile?.endpoints?.firstOrNull()?.url
 
-    /** 是否已有保存的 token（只返回布尔值，不把凭据暴露给 UI）。 */
-    fun hasSavedToken(): Boolean = !credentials.load()?.token.isNullOrBlank()
+    /** 是否已有当前设备的凭据（只返回布尔值，不把凭据暴露给 UI）。 */
+    fun hasSavedToken(): Boolean {
+        val active = _devices.value.active() ?: return credentials.load()?.token?.isNotBlank() == true
+        return runCatching { !registry.credential(active.profile.deviceId).isNullOrBlank() }.getOrDefault(false)
+    }
 
+    /**
+     * 手动连接（局域网地址 + token）：登记为 `legacy-<uuid>` 设备，
+     * 走旧的 `?token=` 私网路径，不改变任何已扫码绑定的信任锚。
+     */
     fun connect(endpointInput: String, tokenInput: String?): Boolean {
         val normalized = EndpointParser.normalize(
             raw = endpointInput,
@@ -227,17 +283,146 @@ class PocketRepository(
             connection.reportConfigurationError(OfflineCause.Unreachable, "地址格式不正确")
             return false
         }
-        val existing = credentials.load()
+        val existing = _devices.value.devices.firstOrNull {
+            it.transportMode == TransportMode.LEGACY_QUERY &&
+                it.profile.endpoints.firstOrNull()?.url == normalized.wsUrl
+        }
+        val legacy = credentials.load()
         val token = normalized.token
-            ?: existing?.token?.takeIf { existing.endpoint == normalized.wsUrl }
+            ?: existing?.let { runCatching { registry.credential(it.profile.deviceId) }.getOrNull() }
+            ?: legacy?.token?.takeIf { legacy.endpoint == normalized.wsUrl }
         if (token.isNullOrBlank()) {
             connection.reportConfigurationError(OfflineCause.MissingCredentials, "请填写连接 Token")
             return false
         }
-        credentials.save(normalized.wsUrl, token)
+        val profile = existing?.profile
+            ?: runCatching { registry.manualProfile(normalized.wsUrl, "legacy-${UUID.randomUUID()}") }
+                .getOrElse {
+                    connection.reportConfigurationError(OfflineCause.Unreachable, it.message)
+                    return false
+                }
+        try {
+            _devices.value = registry.save(profile, token, TransportMode.LEGACY_QUERY)
+            _registryError.value = null
+        } catch (error: RemoteRegistryException) {
+            _registryError.value = error.message
+            connection.reportConfigurationError(OfflineCause.Unreachable, error.message)
+            return false
+        }
         connection.autoReconnect = _settings.value.autoReconnect
         connection.connect(normalized.wsUrl, token)
         return true
+    }
+
+    // ===== 设备与扫码配对 =====
+
+    /**
+     * 扫码配对：解析 QR → WS 配对 → 保存凭据 → 立即连接。
+     * 结果通过 [pairingState] 上报，UI 不需要等待挂起函数。
+     */
+    fun pairWithQr(qrText: String) {
+        if (_pairingState.value is PairingState.Pairing) return
+        _pairingState.value = PairingState.Pairing
+        scope.launch {
+            try {
+                val paired = pairing.pair(qrText)
+                val snapshot = registry.save(paired.profile, paired.credential, TransportMode.V1)
+                _devices.value = snapshot
+                _registryError.value = null
+                _pairingState.value = PairingState.Succeeded(paired.profile.deviceName)
+                connection.autoReconnect = _settings.value.autoReconnect
+                connection.connect(paired.profile, paired.credential)
+            } catch (error: PairingException) {
+                _pairingState.value = PairingState.Failed(error.message ?: "配对失败")
+            } catch (error: RemoteRegistryException) {
+                _pairingState.value = PairingState.Failed(error.message ?: "保存设备失败")
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                _pairingState.value = PairingState.Failed(error.message ?: "配对失败")
+            }
+        }
+    }
+
+    fun consumePairingState() {
+        _pairingState.value = PairingState.Idle
+    }
+
+    fun selectDevice(deviceId: String) {
+        val snapshot = try {
+            registry.select(deviceId)
+        } catch (error: RemoteRegistryException) {
+            _registryError.value = error.message
+            return
+        }
+        _devices.value = snapshot
+        _registryError.value = null
+        snapshot.active()?.let(::connectDevice)
+    }
+
+    fun removeDevice(deviceId: String) {
+        val wasActive = _devices.value.activeId == deviceId
+        val snapshot = try {
+            registry.remove(deviceId)
+        } catch (error: RemoteRegistryException) {
+            _registryError.value = error.message
+            return
+        }
+        _devices.value = snapshot
+        // 移除的不是当前设备：保持现有链路，不打断正在使用的连接。
+        if (!wasActive) return
+        val next = snapshot.active()
+        if (next == null) {
+            connection.disconnect()
+        } else {
+            connectDevice(next)
+        }
+    }
+
+    private fun connectDevice(device: RemoteDevice) {
+        val credential = try {
+            registry.credential(device.profile.deviceId)
+        } catch (error: RemoteRegistryException) {
+            _registryError.value = error.message
+            null
+        }
+        if (credential.isNullOrBlank()) {
+            connection.reportConfigurationError(OfflineCause.MissingCredentials, "凭据不可用，请重新扫码")
+            return
+        }
+        connection.autoReconnect = _settings.value.autoReconnect
+        when (device.transportMode) {
+            TransportMode.V1 -> connection.connect(device.profile, credential)
+            TransportMode.LEGACY_QUERY -> {
+                val url = device.profile.endpoints.firstOrNull()?.url
+                if (url.isNullOrBlank()) {
+                    connection.reportConfigurationError(OfflineCause.Unreachable, "连接资料没有可用端点")
+                } else {
+                    connection.connect(url, credential)
+                }
+            }
+        }
+    }
+
+    private fun migrateLegacyConnection() {
+        val legacy = credentials.load() ?: return
+        try {
+            _devices.value = registry.migrateLegacy(legacy.endpoint, legacy.token)
+            _registryError.value = null
+            // 注册表已落盘才清理旧键：迁移失败时旧配置原样保留。
+            credentials.clear()
+        } catch (error: Exception) {
+            _registryError.value = error.message
+        }
+    }
+
+    private fun refreshDevices() {
+        try {
+            _devices.value = registry.load()
+            _registryError.value = null
+        } catch (error: RemoteRegistryException) {
+            _registryError.value = error.message
+        }
     }
 
     fun disconnect() {
@@ -1478,6 +1663,16 @@ class PocketRepository(
         list.sortedWith(compareByDescending<SessionSummary> { it.pinned }.thenByDescending { it.updatedAt })
 
     private fun Exception.readableMessage(): String = toPocketMessage()
+
+    sealed interface PairingState {
+        data object Idle : PairingState
+
+        data object Pairing : PairingState
+
+        data class Succeeded(val deviceName: String) : PairingState
+
+        data class Failed(val message: String) : PairingState
+    }
 
     private companion object {
         const val COMPLETION_DEDUP_WINDOW_MS = 3_000L

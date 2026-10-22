@@ -1,0 +1,570 @@
+{
+  "source": "Shared validation vectors. Mirrors Profer-pocket feat/remote-qr-frp-20261003 packages/shared/src/remote-connection.ts and src/renderer/pocket/remote-connection.test.ts (read-only reference). Copied into android-native/core/remote/src/test/resources so both ends can be checked against the same expectations.",
+  "now": 1761100000000,
+  "pin": "sha256/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+  "pairing": [
+    {
+      "name": "valid v1 lan + public system",
+      "ok": true,
+      "input": {
+        "kind": "profer-pairing",
+        "schemaVersion": 1,
+        "deviceId": "desktop-123",
+        "deviceName": "Test",
+        "updatedAt": 1,
+        "endpoints": [
+          { "url": "ws://192.168.1.2:7788/ws", "scope": "lan" },
+          { "url": "wss://remote.example.com/ws", "scope": "public" }
+        ],
+        "pairingCode": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "issuedAt": 1761099990000,
+        "expiresAt": 1761100290000
+      }
+    },
+    {
+      "name": "valid v2 pinned public endpoint",
+      "ok": true,
+      "input": {
+        "kind": "profer-pairing",
+        "schemaVersion": 2,
+        "deviceId": "desktop-abc12345",
+        "deviceName": "Mac",
+        "updatedAt": 1,
+        "endpoints": [
+          { "url": "ws://192.168.1.5:7788/ws", "scope": "lan" },
+          {
+            "url": "wss://203.0.113.10:8443/ws",
+            "scope": "public",
+            "trustMode": "pinned",
+            "pin": { "algorithm": "spki-sha256", "value": "sha256/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=" }
+          }
+        ],
+        "pairingCode": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        "issuedAt": 1761099990000,
+        "expiresAt": 1761100290000
+      }
+    },
+    {
+      "name": "unknown qr field",
+      "ok": false,
+      "error": "未知字段",
+      "input": {
+        "kind": "profer-pairing",
+        "schemaVersion": 1,
+        "deviceId": "desktop-123",
+        "deviceName": "Test",
+        "updatedAt": 1,
+        "endpoints": [{ "url": "ws://192.168.1.2:7788/ws", "scope": "lan" }],
+        "pairingCode": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "issuedAt": 1761099990000,
+        "expiresAt": 1761100290000,
+        "authToken": "NOT_REAL"
+      }
+    },
+    {
+      "name": "expired qr",
+      "ok": false,
+      "error": "二维码已过期",
+      "input": {
+        "kind": "profer-pairing",
+        "schemaVersion": 1,
+        "deviceId": "desktop-123",
+        "deviceName": "Test",
+        "updatedAt": 1,
+        "endpoints": [{ "url": "ws://192.168.1.2:7788/ws", "scope": "lan" }],
+        "pairingCode": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "issuedAt": 1761099600000,
+        "expiresAt": 1761099900000
+      }
+    },
+    {
+      "name": "issued in the future beyond skew",
+      "ok": false,
+      "error": "二维码无效",
+      "input": {
+        "kind": "profer-pairing",
+        "schemaVersion": 1,
+        "deviceId": "desktop-123",
+        "deviceName": "Test",
+        "updatedAt": 1,
+        "endpoints": [{ "url": "ws://192.168.1.2:7788/ws", "scope": "lan" }],
+        "pairingCode": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "issuedAt": 1761100100000,
+        "expiresAt": 1761100400000
+      }
+    },
+    {
+      "name": "ttl not 300000",
+      "ok": false,
+      "error": "二维码无效",
+      "input": {
+        "kind": "profer-pairing",
+        "schemaVersion": 1,
+        "deviceId": "desktop-123",
+        "deviceName": "Test",
+        "updatedAt": 1,
+        "endpoints": [{ "url": "ws://192.168.1.2:7788/ws", "scope": "lan" }],
+        "pairingCode": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "issuedAt": 1761099990000,
+        "expiresAt": 1761100390000
+      }
+    },
+    {
+      "name": "uppercase pairing code",
+      "ok": false,
+      "error": "二维码无效",
+      "input": {
+        "kind": "profer-pairing",
+        "schemaVersion": 1,
+        "deviceId": "desktop-123",
+        "deviceName": "Test",
+        "updatedAt": 1,
+        "endpoints": [{ "url": "ws://192.168.1.2:7788/ws", "scope": "lan" }],
+        "pairingCode": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+        "issuedAt": 1761099990000,
+        "expiresAt": 1761100290000
+      }
+    },
+    {
+      "name": "wrong kind",
+      "ok": false,
+      "error": "二维码无效",
+      "input": {
+        "kind": "profer-other",
+        "schemaVersion": 1,
+        "deviceId": "desktop-123",
+        "deviceName": "Test",
+        "updatedAt": 1,
+        "endpoints": [{ "url": "ws://192.168.1.2:7788/ws", "scope": "lan" }],
+        "pairingCode": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "issuedAt": 1761099990000,
+        "expiresAt": 1761100290000
+      }
+    },
+    {
+      "name": "v1 with pin",
+      "ok": false,
+      "error": "v1 不支持 pin",
+      "input": {
+        "kind": "profer-pairing",
+        "schemaVersion": 1,
+        "deviceId": "desktop-123",
+        "deviceName": "Test",
+        "updatedAt": 1,
+        "endpoints": [
+          {
+            "url": "wss://203.0.113.10:8443/ws",
+            "scope": "public",
+            "trustMode": "pinned",
+            "pin": { "algorithm": "spki-sha256", "value": "sha256/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=" }
+          }
+        ],
+        "pairingCode": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "issuedAt": 1761099990000,
+        "expiresAt": 1761100290000
+      }
+    },
+    {
+      "name": "v2 public without trust mode",
+      "ok": false,
+      "error": "v2 公网端点必须指定信任模式",
+      "input": {
+        "kind": "profer-pairing",
+        "schemaVersion": 2,
+        "deviceId": "desktop-123",
+        "deviceName": "Test",
+        "updatedAt": 1,
+        "endpoints": [
+          { "url": "ws://192.168.1.2:7788/ws", "scope": "lan" },
+          { "url": "wss://remote.example.com/ws", "scope": "public" }
+        ],
+        "pairingCode": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "issuedAt": 1761099990000,
+        "expiresAt": 1761100290000
+      }
+    },
+    {
+      "name": "unsupported schema version",
+      "ok": false,
+      "error": "不支持的连接资料版本",
+      "input": {
+        "kind": "profer-pairing",
+        "schemaVersion": 3,
+        "deviceId": "desktop-123",
+        "deviceName": "Test",
+        "updatedAt": 1,
+        "endpoints": [{ "url": "ws://192.168.1.2:7788/ws", "scope": "lan" }],
+        "pairingCode": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "issuedAt": 1761099990000,
+        "expiresAt": 1761100290000
+      }
+    }
+  ],
+  "profile": [
+    {
+      "name": "valid v1 profile",
+      "ok": true,
+      "input": {
+        "schemaVersion": 1,
+        "deviceId": "desktop-123",
+        "deviceName": "Test",
+        "updatedAt": 1,
+        "endpoints": [
+          { "url": "ws://192.168.1.2:7788/ws", "scope": "lan" },
+          { "url": "wss://remote.example.com/ws", "scope": "public" }
+        ]
+      }
+    },
+    {
+      "name": "unknown profile field",
+      "ok": false,
+      "error": "未知字段",
+      "input": {
+        "schemaVersion": 1,
+        "deviceId": "desktop-123",
+        "deviceName": "Test",
+        "updatedAt": 1,
+        "endpoints": [{ "url": "ws://192.168.1.2:7788/ws", "scope": "lan" }],
+        "secret": "NOT_REAL"
+      }
+    },
+    {
+      "name": "device id too short",
+      "ok": false,
+      "error": "设备身份无效",
+      "input": {
+        "schemaVersion": 1,
+        "deviceId": "short",
+        "deviceName": "Test",
+        "updatedAt": 1,
+        "endpoints": [{ "url": "ws://192.168.1.2:7788/ws", "scope": "lan" }]
+      }
+    },
+    {
+      "name": "blank device name",
+      "ok": false,
+      "error": "设备身份无效",
+      "input": {
+        "schemaVersion": 1,
+        "deviceId": "desktop-123",
+        "deviceName": "   ",
+        "updatedAt": 1,
+        "endpoints": [{ "url": "ws://192.168.1.2:7788/ws", "scope": "lan" }]
+      }
+    },
+    {
+      "name": "empty endpoints",
+      "ok": false,
+      "error": "连接端点无效",
+      "input": {
+        "schemaVersion": 1,
+        "deviceId": "desktop-123",
+        "deviceName": "Test",
+        "updatedAt": 1,
+        "endpoints": []
+      }
+    },
+    {
+      "name": "duplicate endpoints",
+      "ok": false,
+      "error": "连接端点重复",
+      "input": {
+        "schemaVersion": 1,
+        "deviceId": "desktop-123",
+        "deviceName": "Test",
+        "updatedAt": 1,
+        "endpoints": [
+          { "url": "ws://192.168.1.2:7788/ws", "scope": "lan" },
+          { "url": "ws://192.168.1.2:7788/ws", "scope": "lan" }
+        ]
+      }
+    },
+    {
+      "name": "negative updatedAt",
+      "ok": false,
+      "error": "设备身份无效",
+      "input": {
+        "schemaVersion": 1,
+        "deviceId": "desktop-123",
+        "deviceName": "Test",
+        "updatedAt": -1,
+        "endpoints": [{ "url": "ws://192.168.1.2:7788/ws", "scope": "lan" }]
+      }
+    }
+  ],
+  "endpoint": [
+    {
+      "name": "valid lan ws",
+      "ok": true,
+      "input": { "url": "ws://192.168.1.2:7788/ws", "scope": "lan" }
+    },
+    {
+      "name": "valid pinned public",
+      "ok": true,
+      "input": {
+        "url": "wss://203.0.113.10:8443/ws",
+        "scope": "public",
+        "trustMode": "pinned",
+        "pin": { "algorithm": "spki-sha256", "value": "sha256/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=" }
+      }
+    },
+    {
+      "name": "valid system public",
+      "ok": true,
+      "input": { "url": "wss://remote.example.com/ws", "scope": "public", "trustMode": "system" }
+    },
+    {
+      "name": "query string",
+      "ok": false,
+      "error": "端点不得包含凭据或查询参数",
+      "input": { "url": "ws://192.168.1.2:7788/ws?token=x", "scope": "lan" }
+    },
+    {
+      "name": "userinfo",
+      "ok": false,
+      "error": "端点不得包含凭据或查询参数",
+      "input": { "url": "ws://user:pass@192.168.1.2:7788/ws", "scope": "lan" }
+    },
+    {
+      "name": "fragment",
+      "ok": false,
+      "error": "端点不得包含凭据或查询参数",
+      "input": { "url": "ws://192.168.1.2:7788/ws#x", "scope": "lan" }
+    },
+    {
+      "name": "wrong path",
+      "ok": false,
+      "error": "端点不得包含凭据或查询参数",
+      "input": { "url": "ws://192.168.1.2:7788/socket", "scope": "lan" }
+    },
+    {
+      "name": "lan public address",
+      "ok": false,
+      "error": "局域网端点必须是私网地址",
+      "input": { "url": "ws://8.8.8.8:7788/ws", "scope": "lan" }
+    },
+    {
+      "name": "public plain ws",
+      "ok": false,
+      "error": "公网连接必须使用可信 WSS",
+      "input": { "url": "ws://remote.example.com/ws", "scope": "public" }
+    },
+    {
+      "name": "lan with trust mode",
+      "ok": false,
+      "error": "局域网端点不能携带公网信任字段",
+      "input": { "url": "ws://192.168.1.2:7788/ws", "scope": "lan", "trustMode": "system" }
+    },
+    {
+      "name": "unknown trust mode",
+      "ok": false,
+      "error": "未知 TLS 信任模式",
+      "input": { "url": "wss://remote.example.com/ws", "scope": "public", "trustMode": "tofu" }
+    },
+    {
+      "name": "pinned hostname",
+      "ok": false,
+      "error": "Pinned 地址必须是 IP",
+      "input": {
+        "url": "wss://remote.example.com/ws",
+        "scope": "public",
+        "trustMode": "pinned",
+        "pin": { "algorithm": "spki-sha256", "value": "sha256/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=" }
+      }
+    },
+    {
+      "name": "pinned short pin",
+      "ok": false,
+      "error": "SPKI SHA256 pin 无效",
+      "input": {
+        "url": "wss://203.0.113.10:8443/ws",
+        "scope": "public",
+        "trustMode": "pinned",
+        "pin": { "algorithm": "spki-sha256", "value": "sha256/AAAA=" }
+      }
+    },
+    {
+      "name": "pinned wrong algorithm",
+      "ok": false,
+      "error": "SPKI SHA256 pin 无效",
+      "input": {
+        "url": "wss://203.0.113.10:8443/ws",
+        "scope": "public",
+        "trustMode": "pinned",
+        "pin": { "algorithm": "spki-sha1", "value": "sha256/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=" }
+      }
+    },
+    {
+      "name": "pinned non canonical base64",
+      "ok": false,
+      "error": "pin 编码无效",
+      "input": {
+        "url": "wss://203.0.113.10:8443/ws",
+        "scope": "public",
+        "trustMode": "pinned",
+        "pin": { "algorithm": "spki-sha256", "value": "sha256/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAB=" }
+      }
+    },
+    {
+      "name": "system endpoint with pin",
+      "ok": false,
+      "error": "系统可信端点不能携带 pin",
+      "input": {
+        "url": "wss://remote.example.com/ws",
+        "scope": "public",
+        "trustMode": "system",
+        "pin": { "algorithm": "spki-sha256", "value": "sha256/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=" }
+      }
+    },
+    {
+      "name": "unknown endpoint key",
+      "ok": false,
+      "error": "未知字段",
+      "input": { "url": "ws://192.168.1.2:7788/ws", "scope": "lan", "token": "NOT_REAL" }
+    },
+    {
+      "name": "pinned over plain ws",
+      "ok": false,
+      "error": "公网连接必须使用可信 WSS",
+      "input": {
+        "url": "ws://203.0.113.10:8443/ws",
+        "scope": "public",
+        "trustMode": "pinned",
+        "pin": { "algorithm": "spki-sha256", "value": "sha256/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=" }
+      }
+    }
+  ],
+  "trust": [
+    {
+      "name": "same pins ok",
+      "ok": true,
+      "previous": {
+        "schemaVersion": 2,
+        "deviceId": "desktop-123",
+        "deviceName": "Test",
+        "updatedAt": 1,
+        "endpoints": [
+          {
+            "url": "wss://203.0.113.10:8443/ws",
+            "scope": "public",
+            "trustMode": "pinned",
+            "pin": { "algorithm": "spki-sha256", "value": "sha256/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=" }
+          }
+        ]
+      },
+      "next": {
+        "schemaVersion": 2,
+        "deviceId": "desktop-123",
+        "deviceName": "Test",
+        "updatedAt": 2,
+        "endpoints": [
+          { "url": "ws://192.168.1.9:7788/ws", "scope": "lan" },
+          {
+            "url": "wss://203.0.113.10:8443/ws",
+            "scope": "public",
+            "trustMode": "pinned",
+            "pin": { "algorithm": "spki-sha256", "value": "sha256/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=" }
+          }
+        ]
+      }
+    },
+    {
+      "name": "pin rotated",
+      "ok": false,
+      "error": "TLS 信任锚变化",
+      "previous": {
+        "schemaVersion": 2,
+        "deviceId": "desktop-123",
+        "deviceName": "Test",
+        "updatedAt": 1,
+        "endpoints": [
+          {
+            "url": "wss://203.0.113.10:8443/ws",
+            "scope": "public",
+            "trustMode": "pinned",
+            "pin": { "algorithm": "spki-sha256", "value": "sha256/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=" }
+          }
+        ]
+      },
+      "next": {
+        "schemaVersion": 2,
+        "deviceId": "desktop-123",
+        "deviceName": "Test",
+        "updatedAt": 2,
+        "endpoints": [
+          {
+            "url": "wss://203.0.113.10:8443/ws",
+            "scope": "public",
+            "trustMode": "pinned",
+            "pin": { "algorithm": "spki-sha256", "value": "sha256/BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBE=" }
+          }
+        ]
+      }
+    },
+    {
+      "name": "pin removed",
+      "ok": false,
+      "error": "TLS 信任锚变化",
+      "previous": {
+        "schemaVersion": 2,
+        "deviceId": "desktop-123",
+        "deviceName": "Test",
+        "updatedAt": 1,
+        "endpoints": [
+          {
+            "url": "wss://203.0.113.10:8443/ws",
+            "scope": "public",
+            "trustMode": "pinned",
+            "pin": { "algorithm": "spki-sha256", "value": "sha256/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=" }
+          }
+        ]
+      },
+      "next": {
+        "schemaVersion": 2,
+        "deviceId": "desktop-123",
+        "deviceName": "Test",
+        "updatedAt": 2,
+        "endpoints": [
+          { "url": "wss://203.0.113.10:8443/ws", "scope": "public", "trustMode": "system" }
+        ]
+      }
+    },
+    {
+      "name": "device id changed",
+      "ok": false,
+      "error": "设备身份变化",
+      "previous": {
+        "schemaVersion": 1,
+        "deviceId": "desktop-123",
+        "deviceName": "Test",
+        "updatedAt": 1,
+        "endpoints": [{ "url": "ws://192.168.1.2:7788/ws", "scope": "lan" }]
+      },
+      "next": {
+        "schemaVersion": 1,
+        "deviceId": "desktop-456",
+        "deviceName": "Test",
+        "updatedAt": 2,
+        "endpoints": [{ "url": "ws://192.168.1.2:7788/ws", "scope": "lan" }]
+      }
+    },
+    {
+      "name": "legacy device id may change",
+      "ok": true,
+      "previous": {
+        "schemaVersion": 1,
+        "deviceId": "legacy-0d1f3c2a-1111-2222-3333-444455556666",
+        "deviceName": "手动连接",
+        "updatedAt": 1,
+        "endpoints": [{ "url": "ws://192.168.1.2:7788/ws", "scope": "lan" }]
+      },
+      "next": {
+        "schemaVersion": 1,
+        "deviceId": "desktop-456",
+        "deviceName": "Test",
+        "updatedAt": 2,
+        "endpoints": [{ "url": "ws://192.168.1.2:7788/ws", "scope": "lan" }]
+      }
+    }
+  ]
+}

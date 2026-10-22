@@ -1,8 +1,16 @@
 package com.profer.pocket.data
 
+import com.profer.pocket.data.net.ConnectTarget
 import com.profer.pocket.data.net.SocketTransport
 import com.profer.pocket.data.net.SocketTransportFactory
 import com.profer.pocket.data.settings.SettingsStore
+import com.profer.pocket.remote.DeviceRegistry
+import com.profer.pocket.remote.PairingClient
+import com.profer.pocket.remote.RegistryCipher
+import com.profer.pocket.remote.RegistryStorage
+import com.profer.pocket.remote.RemoteEndpoint
+import com.profer.pocket.remote.RemoteSocket
+import com.profer.pocket.remote.RemoteSocketFactory
 import com.profer.pocket.data.store.CredentialStore
 import com.profer.pocket.data.store.OutgoingQueueStore
 import com.profer.pocket.data.store.ResumeStateStore
@@ -13,11 +21,13 @@ class FakeSocketTransport : SocketTransport {
     private var listener: SocketTransport.Listener? = null
     val sent = mutableListOf<String>()
     var lastUrl: String? = null
+    var lastTarget: ConnectTarget? = null
     var closedWith: Pair<Int, String>? = null
     var sendResult = true
 
-    override fun connect(url: String, listener: SocketTransport.Listener) {
-        lastUrl = url
+    override fun connect(target: ConnectTarget, listener: SocketTransport.Listener) {
+        lastUrl = target.url
+        lastTarget = target
         this.listener = listener
     }
 
@@ -118,4 +128,40 @@ class FakeOutgoingQueueStore : OutgoingQueueStore {
         snapshot = null
         clears += 1
     }
+}
+
+
+/** 注册表用内存存储 + 可逆假加密：只验证逻辑，不触碰 Keystore。 */
+class FakeRegistryStorage : RegistryStorage {
+    private val values = mutableMapOf<String, String>()
+
+    override fun read(key: String): String? = values[key]
+
+    override fun write(key: String, value: String) {
+        values[key] = value
+    }
+
+    override fun remove(key: String) {
+        values.remove(key)
+    }
+}
+
+class FakeRegistryCipher : RegistryCipher {
+    override fun encrypt(plain: String): String? =
+        "enc:" + java.util.Base64.getEncoder().encodeToString(plain.toByteArray())
+
+    override fun decrypt(stored: String): String? {
+        if (!stored.startsWith("enc:")) return null
+        return String(java.util.Base64.getDecoder().decode(stored.removePrefix("enc:")))
+    }
+}
+
+fun fakeRegistry(): DeviceRegistry = DeviceRegistry(FakeRegistryStorage(), FakeRegistryCipher())
+
+/** 单测不建立真实 socket：配对流程另有 PairingClientTest 覆盖。 */
+class UnsupportedRemoteSocketFactory : RemoteSocketFactory {
+    override fun open(endpoint: RemoteEndpoint, listener: RemoteSocket.Listener): RemoteSocket =
+        throw UnsupportedOperationException("no sockets in this test")
+
+    fun client(): PairingClient = PairingClient(this)
 }

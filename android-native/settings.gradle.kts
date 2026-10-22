@@ -19,6 +19,7 @@ rootProject.name = "ProferAndroid"
 include(":app")
 include(":core:model")
 include(":core:data")
+include(":core:remote")
 include(":core:designsystem")
 include(":feature:chat")
 include(":feature:sessions")

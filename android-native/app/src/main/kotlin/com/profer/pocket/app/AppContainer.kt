@@ -10,9 +10,14 @@ import com.profer.pocket.data.store.AndroidDraftStore
 import com.profer.pocket.data.store.AndroidLastSessionStore
 import com.profer.pocket.data.store.AndroidOutgoingQueueStore
 import com.profer.pocket.data.store.AndroidReadStateStore
+import com.profer.pocket.data.store.AndroidRegistryStorage
+import com.profer.pocket.data.store.KeystoreRegistryCipher
 import com.profer.pocket.data.store.AndroidResumeStateStore
 import com.profer.pocket.data.store.AndroidSessionSnapshotStore
 import com.profer.pocket.model.ConnectionStatus
+import com.profer.pocket.remote.DeviceRegistry
+import com.profer.pocket.remote.OkHttpRemoteSocketFactory
+import com.profer.pocket.remote.PairingClient
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -42,9 +47,17 @@ class AppContainer(context: Context) {
 
     private val networkMonitor = AndroidNetworkMonitor(appContext)
 
+    /** 多设备注册表：资料与每设备凭据分开存，凭据走 Keystore AES-GCM。 */
+    private val deviceRegistry = DeviceRegistry(
+        storage = AndroidRegistryStorage(appContext),
+        cipher = KeystoreRegistryCipher(),
+    )
+
     val repository = PocketRepository(
         connection = connection,
         credentials = AndroidCredentialStore(appContext),
+        registry = deviceRegistry,
+        pairing = PairingClient(OkHttpRemoteSocketFactory()),
         snapshots = AndroidSessionSnapshotStore(appContext),
         settingsStore = settingsStore,
         scope = appScope,

@@ -72,6 +72,8 @@ fun SettingsScreen(
     modifier: Modifier = Modifier,
     showDeveloperTools: Boolean = false,
     onOpenStressTest: () -> Unit = {},
+    onCheckDeveloperUpdate: () -> Unit = {},
+    developerUpdateLabel: String? = null,
 ) {
     Scaffold(
         modifier = modifier,
@@ -141,6 +143,15 @@ fun SettingsScreen(
                         modifier = Modifier.padding(top = ProferSpacing.sm, start = 2.dp, end = 2.dp),
                     )
                 }
+            }
+
+            SectionTitle("更新")
+            SettingsCard {
+                SettingsActionRow(
+                    title = "开发者更新",
+                    subtitle = developerUpdateLabel ?: "检查原生 Android 测试版",
+                    onClick = onCheckDeveloperUpdate,
+                )
             }
 
             SectionTitle("通知")
@@ -310,6 +321,29 @@ private fun SettingsCard(content: @Composable () -> Unit) {
         border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
     ) {
         Column { content() }
+    }
+}
+
+@Composable
+private fun SettingsActionRow(
+    title: String,
+    subtitle: String,
+    onClick: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(min = 64.dp)
+            .clip(RoundedCornerShape(16.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = ProferSpacing.md, vertical = ProferSpacing.sm),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(title, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurface)
+            Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        Icon(Icons.Outlined.ChevronRight, contentDescription = null)
     }
 }
 

@@ -1,26 +1,43 @@
 package com.profer.pocket.data.net
 
+import com.profer.pocket.remote.RemoteEndpoint
+import com.profer.pocket.remote.RemoteTls
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
 import okhttp3.WebSocket
 import okhttp3.WebSocketListener
-import java.util.concurrent.TimeUnit
 
 /**
  * OkHttp WebSocket 实现。
  *
- * 关键点：readTimeout 置 0。默认 10s 会误杀 25s 心跳间隔的空闲连接；
- * 假死检测交给 [PocketConnection] 的 75s 无入站判定。
+ * 关键点：
+ * - readTimeout 置 0：默认 10s 会误杀 25s 心跳间隔的空闲连接，假死检测交给
+ *   [PocketConnection] 的 75s 无入站判定；
+ * - v1 端点按 `trustMode` 取 client：pinned 只给该 client 挂自定义 TrustManager，
+ *   system 继续走系统默认校验；
+ * - v1 握手必须带 `Sec-WebSocket-Protocol: profer.remote.v1`，服务端据此区分
+ *   扫码绑定连接与旧 `?token=` 私网连接。
  */
-class OkHttpSocketTransport(
-    private val client: OkHttpClient = defaultClient(),
+class OkHttpSocketTransport internal constructor(
+    private val clientFactory: (RemoteEndpoint?) -> OkHttpClient,
 ) : SocketTransport {
+
+    /** 公开构造不暴露 OkHttp 类型，:app 不需要依赖 okhttp。 */
+    constructor() : this(RemoteTls::clientFor)
 
     private var webSocket: WebSocket? = null
 
-    override fun connect(url: String, listener: SocketTransport.Listener) {
-        val request = Request.Builder().url(url).build()
+    override fun connect(target: ConnectTarget, listener: SocketTransport.Listener) {
+        val client = clientFactory(target.endpoint)
+        val request = Request.Builder()
+            .url(target.url)
+            .apply {
+                if (target.subprotocols.isNotEmpty()) {
+                    header("Sec-WebSocket-Protocol", target.subprotocols.joinToString(", "))
+                }
+            }
+            .build()
         webSocket = client.newWebSocket(request, object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
                 listener.onOpen()
@@ -71,11 +88,5 @@ class OkHttpSocketTransport(
     companion object {
         /** 供 :app 构造传输层；OkHttp 类型不越过模块边界。 */
         fun factory(): SocketTransportFactory = SocketTransportFactory { OkHttpSocketTransport() }
-
-        fun defaultClient(): OkHttpClient = OkHttpClient.Builder()
-            .readTimeout(0, TimeUnit.MILLISECONDS)
-            .connectTimeout(10, TimeUnit.SECONDS)
-            .retryOnConnectionFailure(true)
-            .build()
     }
 }

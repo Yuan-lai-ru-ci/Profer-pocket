@@ -11,7 +11,20 @@ sealed interface InboundFrame {
         val serverInstanceId: String?,
         val latestEventId: Long?,
         val oldestEventId: Long?,
+        /** v1 鉴权后服务端附带：协议版本、设备身份与当前连接资料（原始 JSON，严格解析在连接层）。 */
+        val protocolVersion: Int? = null,
+        val deviceId: String? = null,
+        val profileJson: String? = null,
     ) : InboundFrame
+
+    /** v1 握手第一步：服务端在鉴权前只报身份与协议版本。 */
+    data class RemoteHello(
+        val protocolVersion: Int?,
+        val deviceId: String?,
+    ) : InboundFrame
+
+    /** 服务端每 15s 推送一次连接资料；pin/deviceId 变化必须断开重扫。 */
+    data class ConnectionProfile(val profileJson: String) : InboundFrame
 
     data object Pong : InboundFrame
 

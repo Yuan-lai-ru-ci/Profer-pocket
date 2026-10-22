@@ -4,6 +4,10 @@ import com.profer.pocket.data.protocol.FrameCodec
 import com.profer.pocket.data.protocol.InboundFrame
 import com.profer.pocket.data.store.OutgoingQueueStore
 import com.profer.pocket.data.store.ResumeStateStore
+import com.profer.pocket.remote.RemoteEndpoint
+import com.profer.pocket.remote.RemoteProfile
+import com.profer.pocket.remote.RemoteValidation
+import com.profer.pocket.remote.RemoteValidationException
 import com.profer.pocket.model.ConnectionStatus
 import com.profer.pocket.model.OfflineCause
 import kotlinx.coroutines.CompletableDeferred
@@ -12,8 +16,10 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.launch
@@ -130,6 +136,34 @@ class PocketConnection(
     private var persistJob: Job? = null
     private var queuePersistJob: Job? = null
 
+    /** 连接目标：手动 `?token=` 旧私网路径，或扫码绑定的 v1 资料。 */
+    private sealed interface Target {
+        data class Legacy(val url: String, val token: String) : Target
+
+        data class Paired(val profile: RemoteProfile, val credential: String) : Target
+    }
+
+    /** v1 握手阶段；只有 [Ready] 才允许发指令。legacy 模式恒为 [Ready]。 */
+    private enum class Handshake { AwaitingRemoteHello, AwaitingAuthHello, Ready }
+
+    private var target: Target? = null
+    private var profile: RemoteProfile? = null
+    private var endpoints: List<RemoteEndpoint> = emptyList()
+    private var endpointIndex = 0
+    private var round = 0
+    private var handshake = Handshake.Ready
+    private var endpointTimeoutJob: Job? = null
+
+    private val _endpointFailures = MutableStateFlow<Map<String, String>>(emptyMap())
+
+    /** 最近一轮每个端点失败的原因：连接页用它说明「为什么公网也连不上」。 */
+    val endpointFailures: StateFlow<Map<String, String>> = _endpointFailures.asStateFlow()
+
+    private val _profileUpdates = MutableSharedFlow<RemoteProfile>(extraBufferCapacity = 4)
+
+    /** 服务端 `connection_profile` 通过信任断言后的新资料，由仓库落盘。 */
+    val profileUpdates: Flow<RemoteProfile> = _profileUpdates.asSharedFlow()
+
     private data class PendingCommand(
         val deferred: CompletableDeferred<InboundFrame.CommandResult>,
         val timeoutJob: Job,
@@ -139,10 +173,17 @@ class PocketConnection(
     private val inflightSends = mutableMapOf<String, OutgoingMessage>()
     private val queue = ArrayDeque<OutgoingMessage>()
 
+    /** 手动连接（局域网地址 + `?token=`），保留为排障与旧配置回退路径。 */
     fun connect(endpoint: String, token: String) {
         synchronized(lock) {
             val previousEndpoint = this.endpoint
             val changed = previousEndpoint != endpoint || this.token != token
+            this.target = Target.Legacy(endpoint, token)
+            this.profile = null
+            this.endpoints = emptyList()
+            this.endpointIndex = 0
+            this.round = 0
+            this.handshake = Handshake.Ready
             this.endpoint = endpoint
             this.token = token
             shouldReconnect = true
@@ -153,6 +194,8 @@ class PocketConnection(
             reconnectJob = null
             heartbeatJob?.cancel()
             heartbeatJob = null
+            endpointTimeoutJob?.cancel()
+            endpointTimeoutJob = null
             transport?.let { old ->
                 transport = null
                 old.close(1000, "switching")
@@ -166,11 +209,11 @@ class PocketConnection(
                 queuePersistJob = null
                 queueStore?.clear()
             } else if (queue.isEmpty()) {
-                restoreQueueLocked(endpoint)
+                restoreQueueLocked(resumeKey())
             }
             publishQueueLocked()
 
-            val saved = resumeState.load(endpoint)
+            val saved = resumeState.load(resumeKey())
             if (changed || saved == null) {
                 cursor = saved?.lastEventId ?: 0L
                 serverInstanceId = saved?.serverInstanceId
@@ -178,6 +221,62 @@ class PocketConnection(
                 cursor = saved.lastEventId
                 serverInstanceId = saved.serverInstanceId
             }
+            _status.value = ConnectionStatus.Connecting
+            openSocketLocked(gen)
+        }
+    }
+
+    /**
+     * 扫码绑定的 v1 连接：先 `remote_hello` 校验设备身份，再 `authenticate`，
+     * 收到带 profile 的 `hello` 且信任断言通过后才进入 Connected。
+     */
+    fun connect(profile: RemoteProfile, credential: String) {
+        synchronized(lock) {
+            val previousDevice = this.profile?.deviceId
+            val nextEndpoints = profile.orderedEndpoints()
+            if (nextEndpoints.isEmpty()) {
+                shouldReconnect = false
+                _status.value = ConnectionStatus.Offline(OfflineCause.MissingCredentials, "连接资料没有可用端点")
+                return
+            }
+            this.target = Target.Paired(profile, credential)
+            this.profile = profile
+            this.endpoints = nextEndpoints
+            this.endpointIndex = 0
+            this.round = 0
+            this.handshake = Handshake.AwaitingRemoteHello
+            this.endpoint = nextEndpoints.first().url
+            this.token = credential
+            shouldReconnect = true
+            attempt = 0
+            generation += 1
+            val gen = generation
+            reconnectJob?.cancel()
+            reconnectJob = null
+            heartbeatJob?.cancel()
+            heartbeatJob = null
+            endpointTimeoutJob?.cancel()
+            endpointTimeoutJob = null
+            transport?.let { old ->
+                transport = null
+                old.close(1000, "switching")
+            }
+            requeueInflightSendsLocked()
+            failPendingLocked(PocketDisconnectedException("连接已切换"))
+            if (previousDevice != null && previousDevice != profile.deviceId) {
+                // 换了一台电脑：旧队列不能投到新设备上。
+                queue.clear()
+                queuePersistJob?.cancel()
+                queuePersistJob = null
+                queueStore?.clear()
+            } else if (queue.isEmpty()) {
+                restoreQueueLocked(resumeKey())
+            }
+            publishQueueLocked()
+            val saved = resumeState.load(resumeKey())
+            cursor = saved?.lastEventId ?: 0L
+            serverInstanceId = saved?.serverInstanceId
+            _endpointFailures.value = emptyMap()
             _status.value = ConnectionStatus.Connecting
             openSocketLocked(gen)
         }
@@ -193,6 +292,8 @@ class PocketConnection(
             heartbeatJob = null
             persistJob?.cancel()
             persistJob = null
+            endpointTimeoutJob?.cancel()
+            endpointTimeoutJob = null
             transport?.let { old ->
                 transport = null
                 old.close(1000, "client stop")
@@ -220,6 +321,8 @@ class PocketConnection(
             reconnectJob = null
             heartbeatJob?.cancel()
             heartbeatJob = null
+            endpointTimeoutJob?.cancel()
+            endpointTimeoutJob = null
             transport?.let { old ->
                 transport = null
                 old.close(1000, "config error")
@@ -274,6 +377,9 @@ class PocketConnection(
             reconnectJob?.cancel()
             reconnectJob = null
             attempt = 0
+            endpointIndex = 0
+            round = 0
+            handshake = if (target is Target.Paired) Handshake.AwaitingRemoteHello else Handshake.Ready
             _status.value = ConnectionStatus.Connecting
             openSocketLocked(generation)
         }
@@ -308,6 +414,9 @@ class PocketConnection(
             reconnectJob?.cancel()
             reconnectJob = null
             attempt = 0
+            endpointIndex = 0
+            round = 0
+            handshake = if (target is Target.Paired) Handshake.AwaitingRemoteHello else Handshake.Ready
             _status.value = ConnectionStatus.Connecting
             openSocketLocked(generation)
         }
@@ -381,6 +490,11 @@ class PocketConnection(
         var shouldFlush = false
         synchronized(lock) {
             if (gen != generation) return
+            if (target is Target.Paired) {
+                // v1：WS 建立后仍要 remote_hello → authenticate → 带 profile 的 hello，
+                // 只有信任断言通过才允许进入 Connected。
+                return
+            }
             attempt = 0
             lastInboundAt = clock()
             _status.value = ConnectionStatus.Connected(endpoint.orEmpty(), serverInstanceId)
@@ -402,6 +516,8 @@ class PocketConnection(
             lastInboundAt = clock()
             when (frame) {
                 is InboundFrame.Hello -> handleHelloLocked(frame)
+                is InboundFrame.RemoteHello -> handleRemoteHelloLocked(frame)
+                is InboundFrame.ConnectionProfile -> handleConnectionProfileLocked(frame)
                 is InboundFrame.Pong -> handlePongLocked()
                 is InboundFrame.AgentEvent -> handleAgentEventLocked(frame)
                 is InboundFrame.AgentEventsResumed -> handleResumedLocked(frame)
@@ -413,13 +529,20 @@ class PocketConnection(
     }
 
     private fun handleHelloLocked(frame: InboundFrame.Hello) {
+        if (target is Target.Paired) {
+            // v1 只认「remote_hello → authenticate」之后的 hello：
+            // - AwaitingRemoteHello 收到 hello 属于服务端顺序异常，忽略，绝不能因此进 Connected；
+            // - Ready 收到重复 hello 也忽略，避免重复 resume / 重复 flush 队列。
+            if (handshake != Handshake.AwaitingAuthHello) return
+            if (!verifyAuthenticatedHelloLocked(frame)) return
+        }
         val incomingInstance = frame.serverInstanceId?.takeIf { it.isNotBlank() }
         if (incomingInstance != null) {
             val changed = serverInstanceId != null && serverInstanceId != incomingInstance
             if (changed && cursor > 0) {
                 // 服务端进程重启后 eventId 不再连续，旧游标必须作废。
                 cursor = 0
-                resumeState.clear(endpoint.orEmpty())
+                resumeState.clear(resumeKey())
             }
             serverInstanceId = incomingInstance
         }
@@ -427,11 +550,131 @@ class PocketConnection(
         val latest = frame.latestEventId
         if (latest != null && latest < cursor) {
             cursor = latest
-            resumeState.clear(endpoint.orEmpty())
+            resumeState.clear(resumeKey())
         }
         _status.value = ConnectionStatus.Connected(endpoint.orEmpty(), serverInstanceId)
         sendResumeLocked()
         persistCursorLocked()
+        if (target is Target.Paired) flushQueue()
+    }
+
+    /**
+     * v1 鉴权前的 `remote_hello`：服务端只报身份与协议版本。
+     * 设备不匹配或协议不对时立刻换下一个端点，绝不先发 credential。
+     */
+    private fun handleRemoteHelloLocked(frame: InboundFrame.RemoteHello) {
+        if (target !is Target.Paired || handshake != Handshake.AwaitingRemoteHello) return
+        val bound = profile ?: return
+        if (frame.deviceId != bound.deviceId || frame.protocolVersion != 1) {
+            advanceEndpointLocked(generation, endpoint.orEmpty(), "设备身份不匹配")
+            return
+        }
+        val credential = (target as? Target.Paired)?.credential.orEmpty()
+        if (credential.isBlank()) {
+            fatalTrustChangeLocked("凭据缺失，请重新扫码")
+            return
+        }
+        val payload = JSONObject()
+            .put("type", "authenticate")
+            .put("deviceId", bound.deviceId)
+            .put("credential", credential)
+        handshake = Handshake.AwaitingAuthHello
+        if (transport?.send(payload.toString()) != true) {
+            advanceEndpointLocked(generation, endpoint.orEmpty(), "鉴权发送失败")
+        }
+    }
+
+    /**
+     * 鉴权后的 `hello`：必须带 profile，且 pin 集合与 deviceId 与扫码绑定的一致。
+     * 任一不符都是信任锚变化，断开并要求重新扫码。
+     */
+    private fun verifyAuthenticatedHelloLocked(frame: InboundFrame.Hello): Boolean {
+        val bound = profile ?: return false
+        if (frame.deviceId != null && frame.deviceId != bound.deviceId) {
+            fatalTrustChangeLocked("设备身份变化，请重新扫码")
+            return false
+        }
+        val raw = frame.profileJson
+        if (raw == null) {
+            advanceEndpointLocked(generation, endpoint.orEmpty(), "服务端未返回连接资料")
+            return false
+        }
+        val next = try {
+            RemoteValidation.parseProfileJson(raw)
+        } catch (error: RemoteValidationException) {
+            fatalTrustChangeLocked(error.message ?: "连接资料无效，请重新扫码")
+            return false
+        }
+        if (next.deviceId != bound.deviceId) {
+            fatalTrustChangeLocked("设备身份变化，请重新扫码")
+            return false
+        }
+        try {
+            RemoteValidation.assertProfileTrustUnchanged(bound, next)
+        } catch (error: RemoteValidationException) {
+            fatalTrustChangeLocked(error.message ?: "TLS 信任锚变化，请在电脑重新扫码")
+            return false
+        }
+        adoptProfileLocked(next)
+        handshake = Handshake.Ready
+        endpointTimeoutJob?.cancel()
+        endpointTimeoutJob = null
+        _endpointFailures.value = emptyMap()
+        _profileUpdates.tryEmit(next)
+        return true
+    }
+
+    /** 服务端每 15s 推送连接资料：只允许改地址，pin 或设备身份变化立即断开。 */
+    private fun handleConnectionProfileLocked(frame: InboundFrame.ConnectionProfile) {
+        val bound = profile ?: return
+        val next = try {
+            RemoteValidation.parseProfileJson(frame.profileJson)
+        } catch (error: RemoteValidationException) {
+            fatalTrustChangeLocked("连接资料无效，请在电脑重新扫码")
+            return
+        }
+        if (next.deviceId != bound.deviceId) {
+            fatalTrustChangeLocked("设备身份变化，请重新扫码")
+            return
+        }
+        try {
+            RemoteValidation.assertProfileTrustUnchanged(bound, next)
+        } catch (error: RemoteValidationException) {
+            fatalTrustChangeLocked(error.message ?: "TLS 信任锚变化，请在电脑重新扫码")
+            return
+        }
+        adoptProfileLocked(next)
+        _profileUpdates.tryEmit(next)
+    }
+
+    /** 采用新资料：保留当前已连端点的下标；端点被移除时回到第一个。 */
+    private fun adoptProfileLocked(next: RemoteProfile) {
+        val current = endpoint
+        val ordered = next.orderedEndpoints()
+        profile = next
+        endpoints = ordered
+        val index = ordered.indexOfFirst { it.url == current }
+        endpointIndex = if (index >= 0) index else 0
+    }
+
+    /** 信任锚变化：停止自动重连，把「请重新扫码」暴露给 UI。 */
+    private fun fatalTrustChangeLocked(message: String) {
+        shouldReconnect = false
+        generation += 1
+        reconnectJob?.cancel()
+        reconnectJob = null
+        heartbeatJob?.cancel()
+        heartbeatJob = null
+        endpointTimeoutJob?.cancel()
+        endpointTimeoutJob = null
+        transport?.let { socket ->
+            transport = null
+            socket.close(4001, "trust changed")
+        }
+        failPendingLocked(PocketDisconnectedException(message))
+        pingSentAt = null
+        _latencyMs.value = null
+        _status.value = ConnectionStatus.Offline(OfflineCause.Unauthorized, message)
     }
 
     private fun handlePongLocked() {
@@ -476,6 +719,11 @@ class PocketConnection(
             if (gen != generation) return
             if (transport == null) return
             transport = null
+            // 4001 是明确的鉴权拒绝：停止重连，不再轮询其它端点。
+            if (code != 4001 && target is Target.Paired && shouldReconnect) {
+                advanceEndpointLocked(gen, endpoint.orEmpty(), reason.takeIf { it.isNotBlank() } ?: "连接已断开")
+                return
+            }
             markDisconnectedLocked(code, reason)
         }
     }
@@ -527,24 +775,35 @@ class PocketConnection(
             delay(delayMs)
             synchronized(lock) {
                 if (gen != generation || !shouldReconnect || transport != null) return@launch
+                if (target is Target.Paired) handshake = Handshake.AwaitingRemoteHello
                 openSocketLocked(gen)
             }
         }
     }
 
     private fun openSocketLocked(gen: Int) {
-        val endpoint = endpoint
-        val token = token
-        if (endpoint.isNullOrBlank() || token.isNullOrBlank()) {
+        when (val current = target) {
+            is Target.Legacy -> openLegacySocketLocked(gen, current)
+            is Target.Paired -> openPairedSocketLocked(gen, current)
+            null -> {
+                shouldReconnect = false
+                _status.value = ConnectionStatus.Offline(OfflineCause.MissingCredentials)
+            }
+        }
+    }
+
+    private fun openLegacySocketLocked(gen: Int, target: Target.Legacy) {
+        if (target.url.isBlank() || target.token.isBlank()) {
             shouldReconnect = false
             _status.value = ConnectionStatus.Offline(OfflineCause.MissingCredentials)
             return
         }
+        handshake = Handshake.Ready
+        endpoint = target.url
         val socket = transports.create()
         transport = socket
-        val url = buildUrl(endpoint, token)
         try {
-            socket.connect(url, listener(gen))
+            socket.connect(ConnectTarget(buildUrl(target.url, target.token)), listener(gen))
         } catch (error: Exception) {
             transport = null
             shouldReconnect = false
@@ -553,6 +812,100 @@ class PocketConnection(
                 message = error.message,
             )
         }
+    }
+
+    private fun openPairedSocketLocked(gen: Int, target: Target.Paired) {
+        if (target.credential.isBlank()) {
+            shouldReconnect = false
+            _status.value = ConnectionStatus.Offline(OfflineCause.MissingCredentials, "凭据缺失，请重新扫码")
+            return
+        }
+        val candidate = endpoints.getOrNull(endpointIndex)
+        if (candidate == null) {
+            endpointIndex = 0
+            finishRoundLocked(gen, endpoint.orEmpty(), "没有可用端点")
+            return
+        }
+        endpoint = candidate.url
+        handshake = Handshake.AwaitingRemoteHello
+        val socket = transports.create()
+        transport = socket
+        try {
+            socket.connect(ConnectTarget(candidate.url, candidate), listener(gen))
+        } catch (error: Exception) {
+            transport = null
+            advanceEndpointLocked(gen, candidate.url, error.message ?: "端点不可达")
+            return
+        }
+        scheduleEndpointTimeoutLocked(gen, candidate)
+    }
+
+    /**
+     * 端点级超时：LAN 2.5s / 公网 8s。
+     * 「TCP 连上」不算成功，必须走完 v1 握手（hello + authenticate + 带 profile 的 hello）。
+     */
+    private fun scheduleEndpointTimeoutLocked(gen: Int, endpoint: RemoteEndpoint) {
+        endpointTimeoutJob?.cancel()
+        endpointTimeoutJob = scope.launch {
+            delay(endpoint.timeoutMs)
+            synchronized(lock) {
+                if (gen != generation) return@launch
+                if (handshake == Handshake.Ready) return@launch
+                val socket = transport ?: return@launch
+                transport = null
+                socket.close(1001, "endpoint timeout")
+                val reason = if (handshake == Handshake.AwaitingAuthHello) "鉴权超时" else "端点探测超时"
+                advanceEndpointLocked(gen, endpoint.url, reason)
+            }
+        }
+    }
+
+    /** 当前端点失败：记录原因，立刻尝试下一个；整轮失败后按指数退避重来。 */
+    private fun advanceEndpointLocked(gen: Int, url: String, reason: String) {
+        if (gen != generation) return
+        endpointTimeoutJob?.cancel()
+        endpointTimeoutJob = null
+        _endpointFailures.value = _endpointFailures.value + (url to reason)
+        transport?.let { socket ->
+            transport = null
+            socket.close(1001, "next endpoint")
+        }
+        requeueInflightSendsLocked()
+        failPendingLocked(PocketDisconnectedException("连接已切换"))
+        pingSentAt = null
+        _latencyMs.value = null
+        endpointIndex += 1
+        if (endpointIndex < endpoints.size) {
+            _status.value = ConnectionStatus.Connecting
+            openSocketLocked(gen)
+            return
+        }
+        endpointIndex = 0
+        round += 1
+        finishRoundLocked(gen, url, reason)
+    }
+
+    private fun finishRoundLocked(gen: Int, url: String, reason: String) {
+        if (gen != generation) return
+        if (!shouldReconnect) {
+            _status.value = ConnectionStatus.Offline(OfflineCause.UserDisconnected)
+            return
+        }
+        if (!autoReconnect) {
+            _status.value = ConnectionStatus.Offline(OfflineCause.Unreachable, "已关闭自动重连")
+            return
+        }
+        attempt += 1
+        if (!networkAvailable) {
+            _status.value = ConnectionStatus.Offline(OfflineCause.Unreachable, "手机网络已断开")
+            reconnectJob?.cancel()
+            scheduleReconnectJobLocked(backoff.maxMs)
+            return
+        }
+        val delayMs = backoff.delayFor(attempt)
+        _status.value = ConnectionStatus.Reconnecting(attempt, delayMs, reason)
+        reconnectJob?.cancel()
+        scheduleReconnectJobLocked(delayMs)
     }
 
     private fun startHeartbeatLocked(gen: Int) {
@@ -665,12 +1018,12 @@ class PocketConnection(
     /** 小文件 + 防抖：连续发多条消息时只写一次，且不占主线程。 */
     private fun schedulePersistQueueLocked() {
         val store = queueStore ?: return
-        val target = endpoint ?: return
+        val key = resumeKey()
         queuePersistJob?.cancel()
         val snapshot = queue.toList()
         queuePersistJob = scope.launch {
             delay(150)
-            store.save(target, snapshot)
+            store.save(key, snapshot)
         }
     }
 
@@ -720,20 +1073,29 @@ class PocketConnection(
 
     private fun schedulePersistLocked() {
         if (persistJob?.isActive == true) return
-        val currentEndpoint = endpoint ?: return
+        val key = resumeKey()
         persistJob = scope.launch {
             delay(250)
             synchronized(lock) {
-                if (endpoint == currentEndpoint) {
-                    resumeState.save(currentEndpoint, cursor, serverInstanceId)
+                if (resumeKey() == key) {
+                    resumeState.save(key, cursor, serverInstanceId)
                 }
             }
         }
     }
 
     private fun persistCursorLocked() {
-        val currentEndpoint = endpoint ?: return
-        resumeState.save(currentEndpoint, cursor, serverInstanceId)
+        resumeState.save(resumeKey(), cursor, serverInstanceId)
+    }
+
+    /**
+     * 游标与待发队列的归属键：v1 用设备身份（换 IP 不应丢游标），
+     * 手动连接沿用地址。
+     */
+    private fun resumeKey(): String = when (val current = target) {
+        is Target.Paired -> "device:${current.profile.deviceId}"
+        is Target.Legacy -> current.url
+        null -> endpoint.orEmpty()
     }
 
     private fun sendResumeLocked() {

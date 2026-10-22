@@ -13,6 +13,13 @@ import com.profer.pocket.chat.parseRichBlocks
 import com.profer.pocket.data.SessionCatalog
 import com.profer.pocket.connect.ConnectionPhase
 import com.profer.pocket.connect.ConnectionUiState
+import com.profer.pocket.connect.DeviceUi
+import com.profer.pocket.connect.PairingUi
+import com.profer.pocket.data.PocketRepository.PairingState
+import com.profer.pocket.remote.EndpointScope
+import com.profer.pocket.remote.RemoteDevice
+import com.profer.pocket.remote.TransportMode
+import com.profer.pocket.remote.TrustMode
 import com.profer.pocket.designsystem.component.ToolStatus
 import com.profer.pocket.model.ChatEntry
 import com.profer.pocket.model.ChatMessage as DomainChatMessage
@@ -72,6 +79,11 @@ object UiMapping {
         token: String,
         hasSavedToken: Boolean,
         latencyMs: Int? = null,
+        devices: List<RemoteDevice> = emptyList(),
+        activeDeviceId: String? = null,
+        pairing: PairingState = PairingState.Idle,
+        endpointFailures: Map<String, String> = emptyMap(),
+        registryError: String? = null,
     ): ConnectionUiState {
         val endpoint = (status as? ConnectionStatus.Connected)?.endpoint
             ?: url.takeIf { it.isNotBlank() }
@@ -91,9 +103,10 @@ object UiMapping {
         }
         val error = when (status) {
             is ConnectionStatus.Offline -> when (status.cause) {
-                com.profer.pocket.model.OfflineCause.Unauthorized -> "连接 Token 已失效，请重新输入"
+                // 鉴权失败既可能是 Token 失效，也可能是证书轮换；有具体原因就照实说。
+                com.profer.pocket.model.OfflineCause.Unauthorized -> status.message ?: "连接凭据已失效，请重新扫码或输入 Token"
                 com.profer.pocket.model.OfflineCause.Unreachable -> status.message ?: "连接失败"
-                com.profer.pocket.model.OfflineCause.MissingCredentials -> "请填写连接 Token"
+                com.profer.pocket.model.OfflineCause.MissingCredentials -> status.message ?: "请填写连接 Token"
                 com.profer.pocket.model.OfflineCause.UserDisconnected -> null
             }
 
@@ -101,20 +114,63 @@ object UiMapping {
             else -> null
         }
         val host = hostOf(endpoint)
+        // 已连接卡显示的是「设备名」：优先当前绑定设备的 profile.deviceName；
+        // 手动 legacy 连接没有设备资料，才退回 endpoint host。
+        val activeDevice = devices.firstOrNull { it.profile.deviceId == activeDeviceId }
+        // 扫码设备显示 profile.deviceName；手动 legacy 的注册名只是「手动连接」，仍退回 host。
+        val deviceName = activeDevice
+            ?.takeIf { it.transportMode != TransportMode.LEGACY_QUERY }
+            ?.profile?.deviceName?.takeIf { it.isNotBlank() }
+            ?: host.ifBlank { "Mac" }
         return ConnectionUiState(
             phase = phase,
             url = url,
             token = token,
             hasSavedToken = hasSavedToken,
-            deviceName = host.ifBlank { "Mac" },
+            deviceName = deviceName,
             deviceAddress = endpoint,
             latencyMs = latencyMs ?: 0,
             daemonVersion = "远程",
             networkLabel = if (endpoint.startsWith("wss://")) "加密网络" else "局域网",
             protocolLabel = "Pocket WS v1",
             lastSyncLabel = if (status is ConnectionStatus.Connected) "已连接" else "—",
-            errorMessage = error,
+            errorMessage = registryError ?: error,
+            devices = devices.map { deviceUi(it, activeDeviceId) },
+            activeDeviceId = activeDeviceId,
+            trustLabel = activeDevice?.let(::trustLabel).orEmpty(),
+            pairing = when (pairing) {
+                is PairingState.Failed -> PairingUi.Failed(pairing.message)
+                is PairingState.Succeeded -> PairingUi.Succeeded(pairing.deviceName)
+                PairingState.Pairing -> PairingUi.Pairing
+                PairingState.Idle -> PairingUi.Idle
+            },
+            endpointFailures = endpointFailures.map { (endpoint, reason) -> "${endpointLabel(endpoint)}：$reason" },
         )
+    }
+
+    private fun deviceUi(device: RemoteDevice, activeDeviceId: String?): DeviceUi {
+        val endpoint = device.profile.endpoints.firstOrNull()
+        return DeviceUi(
+            id = device.profile.deviceId,
+            name = device.profile.deviceName,
+            address = endpoint?.url.orEmpty(),
+            scopeLabel = if (endpoint?.scope == EndpointScope.PUBLIC) "公网" else "局域网",
+            trustLabel = trustLabel(device),
+            isActive = device.profile.deviceId == activeDeviceId,
+            isManual = device.transportMode == TransportMode.LEGACY_QUERY,
+        )
+    }
+
+    private fun trustLabel(device: RemoteDevice): String = when {
+        device.transportMode == TransportMode.LEGACY_QUERY -> "手动 · 系统证书"
+        device.profile.endpoints.any { it.trustMode == TrustMode.PINNED } -> "证书固定"
+        device.profile.endpoints.any { it.scope == EndpointScope.PUBLIC } -> "系统证书"
+        else -> "局域网"
+    }
+
+    private fun endpointLabel(url: String): String = when {
+        url.contains("://") -> url.substringAfter("://").substringBefore("/ws")
+        else -> url
     }
 
     /**
