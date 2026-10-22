@@ -32,6 +32,8 @@ object RemoteValidation {
 
     private val PROFILE_KEYS = setOf("schemaVersion", "deviceId", "deviceName", "updatedAt", "endpoints")
     private val QR_KEYS = PROFILE_KEYS + setOf("kind", "issuedAt", "expiresAt", "pairingCode")
+    /** 精简配对码：v/d/h/c/x，只保留配对必需字段。 */
+    private val COMPACT_QR_KEYS = setOf("v", "d", "h", "c", "x")
     private val ENDPOINT_KEYS = setOf("url", "scope", "trustMode", "pin")
     private val PIN_KEYS = setOf("algorithm", "value")
 
@@ -169,6 +171,7 @@ object RemoteValidation {
         } catch (_: Exception) {
             fail("二维码损坏")
         }
+        if (json.opt("v") == 2) return parseCompactPairingQr(json, now)
         val p = record(json, QR_KEYS)
         val parsed = profile(p)
         val code = p.opt("pairingCode")
@@ -184,6 +187,58 @@ object RemoteValidation {
         }
         if (expiresAt <= now) fail("二维码已过期，请在电脑刷新")
         return PairingQr(parsed, code, issuedAt, expiresAt)
+    }
+
+    /**
+     * 精简配对二维码：`{"v":2,"d":deviceId,"h":"host:port","c":pairingCode,"x":过期秒}`。
+     * 只用于局域网单端点；完整 profile 在 `paired` 响应里返回。
+     */
+    private fun parseCompactPairingQr(p: JSONObject, now: Long): PairingQr {
+        val obj = record(p, COMPACT_QR_KEYS)
+        val version = obj.opt("v")
+        val deviceId = obj.opt("d") as? String
+        val hostValue = obj.opt("h") as? String
+        val code = obj.opt("c") as? String
+        val expiresSec = safeInteger(obj.opt("x"))
+        if (version != 2 ||
+            deviceId == null || !DEVICE_ID.matches(deviceId) ||
+            hostValue == null ||
+            code == null || !PAIRING_CODE.matches(code) ||
+            expiresSec == null || expiresSec <= 0 || expiresSec > 9_007_199_254_740L
+        ) {
+            fail("二维码无效")
+        }
+        val host = compactHost(hostValue)
+        val expiresAt = expiresSec * 1000
+        val issuedAt = expiresAt - PAIRING_TTL_MS
+        if (issuedAt > now + MAX_CLOCK_SKEW_MS) fail("二维码无效")
+        if (expiresAt <= now) fail("二维码已过期，请在电脑刷新")
+        val endpoint = validateEndpoint(
+            JSONObject().put("url", "ws://$host/ws").put("scope", "lan"),
+        )
+        val profile = RemoteProfile(
+            schemaVersion = 1,
+            deviceId = deviceId,
+            deviceName = "电脑",
+            updatedAt = issuedAt,
+            endpoints = listOf(endpoint),
+        )
+        return PairingQr(profile, code, issuedAt, expiresAt)
+    }
+
+    private fun compactHost(value: String): String {
+        if (value.length > 128 || value.any { it in "/?#@ \t\r\n" }) fail("连接端点无效")
+        val uri = try {
+            URI("ws://$value/ws")
+        } catch (_: Exception) {
+            fail("连接端点无效")
+        }
+        val host = uri.host?.lowercase() ?: fail("连接端点无效")
+        if (uri.port !in 1..65535 || uri.rawPath != "/ws" || uri.rawQuery != null || uri.userInfo != null) {
+            fail("连接端点无效")
+        }
+        val bare = host.removePrefix("[").removeSuffix("]")
+        return if (bare.contains(':')) "[$bare]:${uri.port}" else "$bare:${uri.port}"
     }
 
     // ===== 信任锚断言 =====

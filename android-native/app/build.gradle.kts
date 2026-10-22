@@ -27,7 +27,7 @@ fun pocketVersionCodeOf(versionName: String): Int {
     return (major * 10_000 + minor * 100 + patch) * 100 + build
 }
 
-val pocketVersionName = "0.1.20-native.3"
+val pocketVersionName = "0.1.20-native.4"
 val pocketVersionCode = pocketVersionCodeOf(pocketVersionName)
 
 val signingProperties = Properties()
