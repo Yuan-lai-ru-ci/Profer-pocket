@@ -21,8 +21,8 @@ android {
         applicationId = "com.profer.pocket"
         minSdk = 26
         targetSdk = 35
-        versionCode = 11904
-        versionName = "0.1.19-internal.4"
+        versionCode = 12001
+        versionName = "0.1.20-native.1"
     }
 
     signingConfigs {
