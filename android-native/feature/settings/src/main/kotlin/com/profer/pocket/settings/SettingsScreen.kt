@@ -1,5 +1,6 @@
 package com.profer.pocket.settings
 
+import android.content.pm.ApplicationInfo
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -34,9 +35,11 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.profer.pocket.designsystem.component.ProferDivider
 import com.profer.pocket.designsystem.component.ProferIconAction
@@ -75,6 +78,17 @@ fun SettingsScreen(
     onCheckDeveloperUpdate: () -> Unit = {},
     developerUpdateLabel: String? = null,
 ) {
+    val context = LocalContext.current
+    val versionLabel = remember(context) {
+        runCatching {
+            context.packageManager.getPackageInfo(context.packageName, 0).versionName
+        }.getOrNull().orEmpty().ifBlank { "未知" }
+    }
+    val buildLabel = if ((context.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE) != 0) {
+        "debug"
+    } else {
+        "release"
+    }
     Scaffold(
         modifier = modifier,
         containerColor = MaterialTheme.colorScheme.background,
@@ -239,9 +253,9 @@ fun SettingsScreen(
 
             SectionTitle("关于")
             SettingsCard {
-                SettingsValueRow(title = "版本", value = "0.1.0 · 设计原型")
+                SettingsValueRow(title = "版本", value = versionLabel)
                 ProferDivider(insetStart = 16.dp)
-                SettingsValueRow(title = "构建", value = "debug")
+                SettingsValueRow(title = "构建", value = buildLabel)
                 ProferDivider(insetStart = 16.dp)
                 SettingsValueRow(title = "协议", value = "Pocket WS v1")
             }

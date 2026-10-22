@@ -137,6 +137,11 @@ fun ConnectionScreen(
                         onDisconnect = onDisconnect,
                     )
                     ConnectionDetails(state = state)
+                    ScanAnotherDeviceCard(
+                        pairing = state.pairing,
+                        onScan = onScan,
+                        onDismiss = onDismissPairing,
+                    )
                 }
 
                 ConnectionPhase.Disconnected -> Column(
@@ -181,6 +186,11 @@ fun ConnectionScreen(
                     FailedPanel(
                         message = state.errorMessage.orEmpty(),
                         onRetry = onConnect,
+                    )
+                    ScanAnotherDeviceCard(
+                        pairing = state.pairing,
+                        onScan = onScan,
+                        onDismiss = onDismissPairing,
                     )
                     if (state.endpointFailures.isNotEmpty()) {
                         EndpointFailureCard(state.endpointFailures)
@@ -772,6 +782,105 @@ private fun ConnectStep(label: String, state: StepState) {
                 MaterialTheme.colorScheme.onSurface
             },
         )
+    }
+}
+
+/**
+ * 已连接或连接失败时的备用扫码入口：换一台电脑不必先手动断开。
+ * 配对成功会直接切到新设备，当前链路由连接层切换。
+ */
+@Composable
+private fun ScanAnotherDeviceCard(
+    pairing: PairingUi,
+    onScan: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+        color = MaterialTheme.colorScheme.surfaceContainerLow,
+        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+    ) {
+        Column(modifier = Modifier.padding(ProferSpacing.lg)) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(ProferSpacing.sm),
+            ) {
+                Icon(
+                    imageVector = Icons.Outlined.QrCodeScanner,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(18.dp),
+                )
+                Text(
+                    text = "扫码连接另一台电脑",
+                    style = MaterialTheme.typography.titleSmall,
+                    color = MaterialTheme.colorScheme.onSurface,
+                )
+            }
+            Text(
+                text = "扫描电脑上的二维码即可切换；当前连接会断开。",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = ProferSpacing.xs),
+            )
+            when (pairing) {
+                PairingUi.Idle -> Unit
+                PairingUi.Pairing -> Text(
+                    text = "正在配对…",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = ProferSpacing.sm),
+                )
+
+                is PairingUi.Succeeded -> Text(
+                    text = "已绑定 ${pairing.deviceName}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = ProferThemeExtras.semantic.success,
+                    modifier = Modifier.padding(top = ProferSpacing.sm),
+                )
+
+                is PairingUi.Failed -> Row(
+                    modifier = Modifier
+                        .padding(top = ProferSpacing.sm)
+                        .fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(ProferSpacing.sm),
+                ) {
+                    Text(
+                        text = pairing.message,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error,
+                        modifier = Modifier.weight(1f),
+                    )
+                    Text(
+                        text = "知道了",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier
+                            .heightIn(min = ProferSizes.minTouchTarget)
+                            .clickable(onClick = onDismiss)
+                            .padding(horizontal = 8.dp, vertical = 12.dp),
+                    )
+                }
+            }
+            OutlinedButton(
+                onClick = onScan,
+                enabled = pairing != PairingUi.Pairing,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = ProferSpacing.md)
+                    .heightIn(min = 48.dp),
+                shape = CircleShape,
+            ) {
+                Icon(
+                    imageVector = Icons.Outlined.QrCodeScanner,
+                    contentDescription = null,
+                    modifier = Modifier.size(18.dp),
+                )
+                Text(text = "扫描二维码", modifier = Modifier.padding(start = 8.dp))
+            }
+        }
     }
 }
 
