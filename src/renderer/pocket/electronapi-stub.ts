@@ -143,8 +143,8 @@ interface PocketRemoteClient extends HeatmapRemoteClient {
     opts?: { before?: number; targetMessages?: number },
   ): Promise<unknown>
   sendMessage(payload: { sessionId: string; userMessage: string; channelId: string; modelId?: string; workspaceId?: string; permissionMode?: 'auto' | 'plan' | 'bypassPermissions'; uuid?: string; startedAt?: number }): Promise<unknown>
-  /** Pi 推理档位能力（服务端 resolvePiReasoningCapability） */
-  getPiReasoningCapability(provider: string, modelId: string): Promise<unknown>
+  /** Pi 推理档位能力（服务端 resolvePiReasoningCapability）；baseUrl 用于 DeepSeek/Ollama 协议判定。 */
+  getPiReasoningCapability(provider: string, modelId: string, baseUrl?: string): Promise<unknown>
   /** 远程搜索会话可引用的工作区文件（roots 由服务端按会话授权推导） */
   searchWorkspaceFiles(sessionId: string, query: string, limit?: number): Promise<unknown>
   /** 向正在运行的 Agent 注入消息（对齐桌面 queueAgentMessage：interrupt 软打断 / uuid 幂等） */
@@ -172,6 +172,7 @@ interface PocketRemoteClient extends HeatmapRemoteClient {
   getConversationMessages(conversationId: string): Promise<unknown>
   getRecentMessages(conversationId: string, limit: number): Promise<unknown>
   updateConversationTitle(conversationId: string, title: string): Promise<unknown>
+  regenerateConversationTitle(conversationId: string, channelId?: string, modelId?: string): Promise<unknown>
   updateConversationModel(conversationId: string, modelId?: string, channelId?: string): Promise<unknown>
   deleteConversation(conversationId: string): Promise<unknown>
   toggleConversationPin(conversationId: string): Promise<unknown>
@@ -195,6 +196,7 @@ interface PocketRemoteClient extends HeatmapRemoteClient {
   chatDeleteMessage(conversationId: string, messageId: string): Promise<unknown>
   chatTruncateMessagesFrom(conversationId: string, messageId: string, preserveFirstMessageAttachments?: boolean): Promise<unknown>
   chatUpdateContextDividers(conversationId: string, dividers: string[]): Promise<unknown>
+  chatAutoTitle(input: { conversationId: string; channelId: string; modelId: string }): Promise<unknown>
   chatGenerateTitle(input: GenerateTitleInput): Promise<unknown>
   chatSaveAttachment(input: { conversationId: string; filename: string; mediaType: string; data: string }): Promise<unknown>
   chatDeleteAttachment(localPath: string): Promise<unknown>
@@ -949,6 +951,10 @@ export function installElectronApiStub(): void {
       if (!remoteClient) return Promise.reject(new Error('移动端连接未就绪'))
       return remoteClient.updateConversationTitle(conversationId, title)
     },
+    regenerateConversationTitle: (conversationId: string, channelId?: string, modelId?: string) => {
+      if (!remoteClient) return Promise.reject(new Error('移动端连接未就绪'))
+      return remoteClient.regenerateConversationTitle(conversationId, channelId, modelId)
+    },
     updateConversationModel: (conversationId: string, modelId?: string, channelId?: string) => {
       if (!remoteClient) return Promise.reject(new Error('移动端连接未就绪'))
       return remoteClient.updateConversationModel(conversationId, modelId, channelId)
@@ -1017,6 +1023,10 @@ export function installElectronApiStub(): void {
     updateContextDividers: (conversationId: string, dividers: string[]) => {
       if (!remoteClient) return Promise.reject(new Error('移动端连接未就绪'))
       return remoteClient.chatUpdateContextDividers(conversationId, dividers)
+    },
+    autoTitleConversation: (input: { conversationId: string; channelId: string; modelId: string }) => {
+      if (!remoteClient) return Promise.reject(new Error('移动端连接未就绪'))
+      return remoteClient.chatAutoTitle(input)
     },
     generateTitle: (input: GenerateTitleInput) => {
       if (!remoteClient) return Promise.reject(new Error('移动端连接未就绪'))
@@ -1096,10 +1106,10 @@ export function installElectronApiStub(): void {
     // 给出与桌面不同的档位集合 → 等于把双端漂移换个地方复现。
     // 旧服务端不认识该命令 → sendCommand 拒绝或 ok:false → 这里返回 undefined，
     // 与改动前「恒 undefined」的降级完全等价（调用方 AgentView:733 已带 .catch 兜底）。
-    getPiReasoningCapability: async (provider: string, modelId?: string) => {
+    getPiReasoningCapability: async (provider: string, modelId?: string, baseUrl?: string) => {
       if (!remoteClient || !provider) return undefined
       try {
-        const result = (await remoteClient.getPiReasoningCapability(provider, modelId ?? '')) as
+        const result = (await remoteClient.getPiReasoningCapability(provider, modelId ?? '', baseUrl)) as
           | { levels?: unknown }
           | null
           | undefined

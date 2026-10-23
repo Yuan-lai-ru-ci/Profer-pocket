@@ -132,22 +132,18 @@ export function useGlobalChatListeners(): void {
         if (titleInput) {
           pendingTitles.delete(event.conversationId)
           console.log('[GlobalChatListeners] 开始生成标题:', titleInput)
-          window.electronAPI.generateTitle(titleInput).then((title) => {
-            console.log('[GlobalChatListeners] 标题生成结果:', title)
-            if (!title) return
-            window.electronAPI
-              .updateConversationTitle(event.conversationId, title)
-              .then((updated) => {
-                console.log('[GlobalChatListeners] 标题更新成功:', updated.title)
-                store.set(conversationsAtom, (prev) =>
-                  prev.map((c) => (c.id === updated.id ? updated : c))
-                )
-                // 同步更新标签页标题
-                store.set(tabsAtom, (prev) => updateTabTitle(prev, event.conversationId, title))
-              })
-              .catch(console.error)
+          window.electronAPI.autoTitleConversation({
+            conversationId: event.conversationId,
+            channelId: titleInput.channelId,
+            modelId: titleInput.modelId,
+          }).then((updated) => {
+            if (!updated) return
+            store.set(conversationsAtom, (prev) =>
+              prev.map((c) => (c.id === updated.id ? updated : c)),
+            )
+            store.set(tabsAtom, (prev) => updateTabTitle(prev, event.conversationId, updated.title))
           }).catch((error) => {
-            console.error('[GlobalChatListeners] 标题生成失败:', error)
+            console.error('[GlobalChatListeners] 自动命名失败:', error)
           })
         }
       }

@@ -670,6 +670,38 @@ export function useLeftSidebar(pocketMode?: boolean) {
     }
   }, [setConversations, setTabs])
 
+  /** 正在重新生成 Chat 标题的会话 ID */
+  const [regeneratingConversationTitleIds, setRegeneratingConversationTitleIds] = React.useState<Set<string>>(new Set())
+
+  /** 手动重新生成对话标题 */
+  const handleRegenerateConversationTitle = React.useCallback(async (id: string): Promise<void> => {
+    if (regeneratingConversationTitleIds.has(id)) return
+    setRegeneratingConversationTitleIds((prev) => new Set(prev).add(id))
+    const loadingToastId = `regenerate-title:${id}`
+    toast.loading('正在生成标题…', { id: loadingToastId, duration: Infinity })
+    try {
+      const conversation = store.get(conversationsAtom).find((item) => item.id === id)
+      const updated = await window.electronAPI.regenerateConversationTitle(id, conversation?.channelId, conversation?.modelId)
+      if (!updated) {
+        toast.error('重新生成标题失败：缺少可用模型或有效消息')
+        return
+      }
+      setConversations((prev) => prev.map((item) => (item.id === updated.id ? updated : item)))
+      setTabs((prev) => updateTabTitle(prev, id, updated.title))
+      toast.success(`标题已更新：${updated.title}`)
+    } catch (error) {
+      console.error('[侧边栏] 重新生成对话标题失败:', error)
+      toast.error('重新生成标题失败')
+    } finally {
+      toast.dismiss(loadingToastId)
+      setRegeneratingConversationTitleIds((prev) => {
+        const next = new Set(prev)
+        next.delete(id)
+        return next
+      })
+    }
+  }, [regeneratingConversationTitleIds, setConversations, setTabs, store])
+
   /** 切换对话置顶状态 */
   const handleTogglePin = React.useCallback(async (id: string): Promise<void> => {
     try {
@@ -1201,7 +1233,10 @@ export function useLeftSidebar(pocketMode?: boolean) {
 
   /** 手动重新生成 Agent 会话标题 */
   const handleAgentRegenerateTitle = React.useCallback(async (id: string): Promise<void> => {
+    if (regeneratingTitleIds.has(id)) return
     setRegeneratingTitleIds((prev) => new Set(prev).add(id))
+    const loadingToastId = `regenerate-title:${id}`
+    toast.loading('正在生成标题…', { id: loadingToastId, duration: Infinity })
     try {
       const updated = await window.electronAPI.regenerateAgentSessionTitle(id)
       if (!updated) {
@@ -1215,6 +1250,7 @@ export function useLeftSidebar(pocketMode?: boolean) {
       console.error('[侧边栏] 重新生成 Agent 会话标题失败:', error)
       toast.error('重新生成标题失败')
     } finally {
+      toast.dismiss(loadingToastId)
       setRegeneratingTitleIds((prev) => { const next = new Set(prev); next.delete(id); return next })
     }
   }, [setAgentSessions, setTabs])
@@ -1618,6 +1654,8 @@ export function useLeftSidebar(pocketMode?: boolean) {
     handleSelectConversation,
     handleRequestDelete,
     handleRename,
+    handleRegenerateConversationTitle,
+    regeneratingConversationTitleIds,
     handleTogglePin,
     handleToggleArchive,
 

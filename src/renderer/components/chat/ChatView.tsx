@@ -346,13 +346,15 @@ function ChatViewInner({ conversationId, pocketMode = false, hideChatHeader = fa
     const messageCountBeforeSend = options?.messageCountBeforeSend ?? messages.length
     const isFirstMessage = messageCountBeforeSend === 0
     console.log('[ChatView] 发送消息 - isFirstMessage:', isFirstMessage, 'messageCountBeforeSend:', messageCountBeforeSend, 'conversationId:', conversationId)
-    if (isFirstMessage && content) {
+    if (content) {
       console.log('[ChatView] 设置待生成标题:', { conversationId, userMessage: content.slice(0, 50) })
       registerPendingTitle(conversationId, {
         userMessage: content,
         channelId: selectedModel.channelId,
         modelId: selectedModel.modelId,
       })
+    }
+    if (isFirstMessage) {
       // 取消 draft 标记，让会话出现在侧边栏
       setDraftSessionIds((prev: Set<string>) => {
         if (!prev.has(conversationId)) return prev

@@ -39,3 +39,6 @@ pocket-app/android/app/signing.properties
 pocket-app/android/app/*.jks
 pocket-app/android/app/*.keystore
 pocket-app/android/app/*.p12
+
+# Android 原生工程：验收截图是本地证据，不入库（源码照常提交）
+android-native/screenshots/

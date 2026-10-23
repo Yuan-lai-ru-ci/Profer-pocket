@@ -326,6 +326,9 @@ export interface ElectronAPI {
   /** 更新对话标题 */
   updateConversationTitle: (id: string, title: string) => Promise<ConversationMeta>
 
+  /** 手动重新生成对话标题 */
+  regenerateConversationTitle: (id: string, channelId?: string, modelId?: string) => Promise<ConversationMeta | null>
+
   /** 更新对话使用的模型/渠道 */
   updateConversationModel: (id: string, modelId?: string, channelId?: string) => Promise<ConversationMeta>
 
@@ -373,6 +376,8 @@ export interface ElectronAPI {
   /** 更新上下文分隔线 */
   updateContextDividers: (conversationId: string, dividers: string[]) => Promise<ConversationMeta>
 
+  /** 自动命名对话标题（由主进程状态机决定是否写入） */
+  autoTitleConversation: (input: { conversationId: string; channelId: string; modelId: string }) => Promise<ConversationMeta | null>
   /** 生成对话标题 */
   generateTitle: (input: GenerateTitleInput) => Promise<string | null>
 
@@ -815,8 +820,8 @@ export interface ElectronAPI {
   updateSessionCodexFastMode: (sessionId: string, enabled: boolean) => Promise<AgentSessionMeta>
   /** 切换当前会话的 ChatGPT Codex 推理档位（跨会话持久化）。 */
   updateSessionOpenAIThinkingLevel: (sessionId: string, level: AgentThinkingLevel | null) => Promise<AgentSessionMeta>
-  /** 查询某 Pi 模型可用的推理档位能力（renderer 思考档位菜单动态展示）。 */
-  getPiReasoningCapability: (provider: ProviderType, modelId: string | undefined) => Promise<ReasoningCapability | undefined>
+  /** 查询某 Pi 模型可用的推理档位能力（renderer 思考档位菜单动态展示）；baseUrl 用于可变协议渠道判定。 */
+  getPiReasoningCapability: (provider: ProviderType, modelId: string | undefined, baseUrl?: string) => Promise<ReasoningCapability | undefined>
 
   /** 切换空闲会话的 Agent runtime；跨 runtime 时清除旧 SDK session ID。 */
   updateSessionAgentRuntime: (sessionId: string, runtime: AgentRuntime, expectedRevision?: number) => Promise<AgentSessionMeta>

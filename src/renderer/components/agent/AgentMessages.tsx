@@ -692,7 +692,10 @@ export function AgentMessages({ sessionId, sessionModelId, messagesLoaded, persi
 
   // `null` derives the initial slice during the very first render after message
   // hydration, avoiding a full-history mount before the reset effect can run.
-  const resolvedVisibleGroupStart = visibleGroupStart ?? Math.max(0, allGroups.length - HISTORY_GROUP_PAGE_SIZE)
+  // 移动端（pocketMode）的历史已由传输层分页（首屏少量 + 触顶逐页加载），这里不再二次切片：
+  // 否则触顶加载的更早消息会落在 30 组切片之外，用户看不到。桌面端保持原有的 30 组分页。
+  const defaultVisibleGroupStart = pocketMode ? 0 : Math.max(0, allGroups.length - HISTORY_GROUP_PAGE_SIZE)
+  const resolvedVisibleGroupStart = visibleGroupStart ?? defaultVisibleGroupStart
   const visibleGroups = allGroups.slice(resolvedVisibleGroupStart)
   const hasEarlierGroups = resolvedVisibleGroupStart > 0
   const loadEarlierGroups = React.useCallback(() => {

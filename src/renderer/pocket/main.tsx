@@ -1252,44 +1252,6 @@ function App({ onReady }: { onReady: () => void }): React.ReactElement {
         {/* 已连接：桌面式布局（左侧会话栏 + 主区，无右侧栏；对话区整体复用桌面 AgentView）。
             断点约定：横屏且 ≥1024px 显示固定侧栏（iPad 横屏/桌面浏览器）；其余一律抽屉+顶栏——
             竖屏不管宽度（含 iPad Pro 12.9" 竖屏 1024px）都走抽屉，避免固定侧栏挤压对话区。 */}
-        {/* 浮动顶栏（竖屏/窄屏；横屏固定侧栏布局由 AgentHeader 自带标题）。
-            Portal 到 body 是关键：UiScaleContainer 的 transform 是定位 containing block，
-            顶栏若渲染在容器内，fixed 会退化为相对容器定位，键盘弹起触发文档滚动时被顶出屏幕；
-            Portal 后 fixed 相对视口 + visualViewport.offsetTop 驱动，永远锚定可视区域顶部，
-            键盘弹起/滚动都不影响。 */}
-        {!landscapeWide && !sidebarOpen && createPortal(
-          <div
-            className="fixed inset-x-0 z-30 flex h-12 items-center bg-tabbar-surface px-2"
-            style={{ top: `calc(${visualTop}px + ${SAFE_AREA_TOP})` }}
-          >
-            <Button type="button" variant="ghost" size="icon" onClick={() => setSidebarOpen(true)} className="mr-1 size-10 shrink-0 rounded-[12px] text-foreground/65 hover:bg-foreground/[0.06]" aria-label="打开导航"><Menu className="size-[18px]" /></Button>
-            <div className="flex-1 min-w-0 px-1">
-              <span className="block truncate text-sm font-medium text-foreground">{activeTitle}</span>
-            </div>
-            {/* 强制刷新入口（R10）：重新加载当前会话（等价于重新进一次）——兼做“完成但结果未出现”
-                与弱网下输出不全（缩在执行过程里）的兑底。加载中图标旋转 + 禁用重复点击。 */}
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button type="button" variant="ghost" size="icon" onClick={() => void handleRefresh()} disabled={refreshing} className="size-10 shrink-0 rounded-[12px] text-foreground/65 hover:bg-foreground/[0.06]" aria-label="重新加载当前会话" aria-busy={refreshing}>
-                  <RefreshCw className={refreshing ? 'size-[18px] animate-spin' : 'size-[18px]'} />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent side="bottom">{refreshing ? '正在重新加载…' : '重新加载当前会话'}</TooltipContent>
-            </Tooltip>
-            {/* 顶栏解绑入口：Link 图标 + 绿色状态点表示“已绑定”，避免 Unlink（断链图标）被误读为未连接 */}
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button type="button" variant="ghost" size="icon" onClick={() => setUnbindConfirmOpen(true)} className="relative size-10 shrink-0 rounded-[12px] text-foreground/65 hover:bg-foreground/[0.06]" aria-label="已绑定，点击解绑">
-                  <Link className="size-[18px]" />
-                  <span className="absolute right-1.5 top-1.5 size-1.5 rounded-full bg-emerald-500" aria-hidden />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent side="bottom">已绑定 · 点击解绑</TooltipContent>
-            </Tooltip>
-          </div>,
-          document.body
-        )}
-
         <div className={`pocket-app-root flex h-full w-full overflow-hidden bg-background p-0 text-foreground landscape:min-[1024px]:p-2 ${SAFE_AREA_CLS}`}>
           <NativePocketSidebar
             mobileOpen={sidebarOpen}
@@ -1298,7 +1260,32 @@ function App({ onReady }: { onReady: () => void }): React.ReactElement {
             wide={landscapeWide}
             safeAreaClassName={SAFE_AREA_CLS}
           >
-            <div className={`flex min-h-0 flex-1 flex-col touch-pan-y ${landscapeWide ? '' : 'pt-12'}`}>
+            <div className="flex min-h-0 flex-1 flex-col touch-pan-y">
+              {!landscapeWide && !sidebarOpen && (
+                <div className="pocket-mobile-header flex h-12 shrink-0 items-center bg-content-area px-2">
+                  <Button type="button" variant="ghost" size="icon" onClick={() => setSidebarOpen(true)} className="mr-1 size-10 shrink-0 rounded-[12px] text-foreground/65 hover:bg-foreground/[0.06]" aria-label="打开导航"><Menu className="size-[18px]" /></Button>
+                  <div className="flex-1 min-w-0 px-1">
+                    <span className="block truncate text-sm font-medium text-foreground">{activeTitle}</span>
+                  </div>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button type="button" variant="ghost" size="icon" onClick={() => void handleRefresh()} disabled={refreshing} className="size-10 shrink-0 rounded-[12px] text-foreground/65 hover:bg-foreground/[0.06]" aria-label="重新加载当前会话" aria-busy={refreshing}>
+                        <RefreshCw className={refreshing ? 'size-[18px] animate-spin' : 'size-[18px]'} />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent side="bottom">{refreshing ? '正在重新加载…' : '重新加载当前会话'}</TooltipContent>
+                  </Tooltip>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button type="button" variant="ghost" size="icon" onClick={() => setUnbindConfirmOpen(true)} className="relative size-10 shrink-0 rounded-[12px] text-foreground/65 hover:bg-foreground/[0.06]" aria-label="已绑定，点击解绑">
+                        <Link className="size-[18px]" />
+                        <span className="absolute right-1.5 top-1.5 size-1.5 rounded-full bg-emerald-500" aria-hidden />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent side="bottom">已绑定 · 点击解绑</TooltipContent>
+                  </Tooltip>
+                </div>
+              )}
               {appMode === 'chat' ? (
                 currentChatId ? (
                   <ChatView conversationId={currentChatId} pocketMode hideChatHeader={!landscapeWide} />
@@ -1401,7 +1388,7 @@ function NativePocketSidebar({ mobileOpen, onOpen, onDismiss, wide, safeAreaClas
               <LeftSidebar width={sidebarWidth} pocketMode flush onCollapse={onDismiss} renderSearchDialog={false} />
             </div>
             <div
-              className={`absolute inset-y-3 z-10 flex flex-col border border-border/50 bg-content-area shadow-[0_12px_32px_-20px_rgb(0_0_0_/_0.38)] transition-[left,border-radius,box-shadow] duration-300 sidebar-collapse-ease ${mobileOpen ? 'rounded-[28px]' : 'rounded-none border-transparent shadow-none'}`}
+              className={`pocket-mobile-conversation-frame absolute inset-0 z-10 flex flex-col bg-content-area transition-[left,box-shadow] duration-300 sidebar-collapse-ease ${mobileOpen ? 'pocket-mobile-conversation-frame-open rounded-[28px] shadow-xl' : 'rounded-none shadow-none'}`}
               style={{ left: mobileOpen ? conversationLeft : 0, width: viewportWidth }}
             >{children}</div>
           </div>
