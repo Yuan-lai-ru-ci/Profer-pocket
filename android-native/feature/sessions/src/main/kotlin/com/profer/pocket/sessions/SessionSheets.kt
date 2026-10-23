@@ -3,6 +3,7 @@ package com.profer.pocket.sessions
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -43,6 +44,7 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.profer.pocket.designsystem.component.sheetMaxHeight
 import com.profer.pocket.designsystem.theme.ProferHeadingSerif
 import com.profer.pocket.designsystem.theme.ProferSpacing
 
@@ -64,10 +66,13 @@ fun NewSessionSheet(
         onDismissRequest = onDismiss,
         sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
         containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+        // 弹层最高只到 86%，顶部不再需要状态栏内边距；底部由内容自己 navigationBarsPadding。
+        contentWindowInsets = { WindowInsets(0, 0, 0, 0) },
     ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
+                .sheetMaxHeight()
                 .navigationBarsPadding()
                 .padding(bottom = ProferSpacing.md),
         ) {
@@ -76,7 +81,9 @@ fun NewSessionSheet(
                 subtitle = "选择和电脑上一致的项目",
             )
             LazyColumn(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f, fill = false),
                 contentPadding = androidx.compose.foundation.layout.PaddingValues(
                     horizontal = ProferSpacing.sm,
                 ),
@@ -115,16 +122,21 @@ fun MoveSessionSheet(
         onDismissRequest = onDismiss,
         sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
         containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+        // 弹层最高只到 86%，顶部不再需要状态栏内边距；底部由内容自己 navigationBarsPadding。
+        contentWindowInsets = { WindowInsets(0, 0, 0, 0) },
     ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
+                .sheetMaxHeight()
                 .navigationBarsPadding()
                 .padding(bottom = ProferSpacing.md),
         ) {
             SheetTitle(title = "移动到项目", subtitle = "运行中的会话需要先停止")
             LazyColumn(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f, fill = false),
                 contentPadding = androidx.compose.foundation.layout.PaddingValues(
                     horizontal = ProferSpacing.sm,
                 ),

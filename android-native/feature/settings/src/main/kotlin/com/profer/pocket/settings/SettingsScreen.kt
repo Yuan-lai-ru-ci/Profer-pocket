@@ -1,5 +1,6 @@
 package com.profer.pocket.settings
 
+import android.os.Build
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -34,9 +35,11 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.profer.pocket.designsystem.component.ProferDivider
 import com.profer.pocket.designsystem.component.ProferIconAction
@@ -72,7 +75,23 @@ fun SettingsScreen(
     modifier: Modifier = Modifier,
     showDeveloperTools: Boolean = false,
     onOpenStressTest: () -> Unit = {},
+    onCheckDeveloperUpdate: () -> Unit = {},
+    developerUpdateLabel: String? = null,
 ) {
+    val context = LocalContext.current
+    val versionLabel = remember(context) {
+        runCatching {
+            val info = context.packageManager.getPackageInfo(context.packageName, 0)
+            val name = info.versionName.orEmpty().ifBlank { "未知" }
+            val code = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                info.longVersionCode
+            } else {
+                @Suppress("DEPRECATION")
+                info.versionCode.toLong()
+            }
+            "$name ($code)"
+        }.getOrNull() ?: "未知"
+    }
     Scaffold(
         modifier = modifier,
         containerColor = MaterialTheme.colorScheme.background,
@@ -135,12 +154,21 @@ fun SettingsScreen(
                         }
                     }
                     Text(
-                        text = "浅色是暖纸底色，深色是石墨黑；两套都用同一支墨色主操作。",
+                        text = "浅色是云朵舞者的暖纸底，深色是同色相的暖墨；两套都用同一支砖红主操作。",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(top = ProferSpacing.sm, start = 2.dp, end = 2.dp),
                     )
                 }
+            }
+
+            SectionTitle("更新")
+            SettingsCard {
+                SettingsActionRow(
+                    title = "开发者更新",
+                    subtitle = developerUpdateLabel ?: "检查原生 Android 测试版",
+                    onClick = onCheckDeveloperUpdate,
+                )
             }
 
             SectionTitle("通知")
@@ -164,7 +192,7 @@ fun SettingsScreen(
             SettingsCard {
                 SettingsSwitchRow(
                     title = "自动重连",
-                    subtitle = "网络恢复后立即重试，最长等 30 秒",
+                    subtitle = "断网或网络恢复时立即重试；连不上电脑时最长隔 60 秒重试一次",
                     checked = autoReconnect,
                     onCheckedChange = onAutoReconnectChange,
                 )
@@ -228,9 +256,7 @@ fun SettingsScreen(
 
             SectionTitle("关于")
             SettingsCard {
-                SettingsValueRow(title = "版本", value = "0.1.0 · 设计原型")
-                ProferDivider(insetStart = 16.dp)
-                SettingsValueRow(title = "构建", value = "debug")
+                SettingsValueRow(title = "版本", value = versionLabel)
                 ProferDivider(insetStart = 16.dp)
                 SettingsValueRow(title = "协议", value = "Pocket WS v1")
             }
@@ -310,6 +336,29 @@ private fun SettingsCard(content: @Composable () -> Unit) {
         border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
     ) {
         Column { content() }
+    }
+}
+
+@Composable
+private fun SettingsActionRow(
+    title: String,
+    subtitle: String,
+    onClick: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(min = 64.dp)
+            .clip(RoundedCornerShape(16.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = ProferSpacing.md, vertical = ProferSpacing.sm),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(title, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurface)
+            Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        Icon(Icons.Outlined.ChevronRight, contentDescription = null)
     }
 }
 

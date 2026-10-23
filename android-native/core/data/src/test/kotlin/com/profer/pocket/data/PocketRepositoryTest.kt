@@ -28,6 +28,8 @@ class PocketRepositoryTest {
     private class Fixture(
         val factory: FakeSocketFactory,
         val repository: PocketRepository,
+        val registry: com.profer.pocket.remote.DeviceRegistry,
+        val credentials: FakeCredentialStore,
     )
 
     private fun fixture(scope: CoroutineScope, snapshot: SessionSnapshotStore.Snapshot): Fixture {
@@ -41,9 +43,13 @@ class PocketRepositoryTest {
             backoff = BackoffPolicy(),
             newId = { "cmd-${sequence++}" },
         )
+        val credentials = FakeCredentialStore()
+        val registry = fakeRegistry()
         val repository = PocketRepository(
             connection = connection,
-            credentials = FakeCredentialStore(),
+            credentials = credentials,
+            registry = registry,
+            pairing = UnsupportedRemoteSocketFactory().client(),
             snapshots = FakeSnapshotStore(snapshot),
             settingsStore = FakeSettingsStore(),
             scope = scope,
@@ -53,7 +59,7 @@ class PocketRepositoryTest {
             // 快照读取在测试里立即完成，保持与旧同步语义一致的断言时机。
             snapshotDispatcher = kotlinx.coroutines.Dispatchers.Unconfined,
         )
-        return Fixture(factory, repository)
+        return Fixture(factory, repository, registry, credentials)
     }
 
     private fun hello(): String =
@@ -89,7 +95,7 @@ class PocketRepositoryTest {
         )
         val fixture = fixture(backgroundScope, snapshot)
         runCurrent()
-        assertTrue(fixture.repository.connect("ws://host/ws", "t"))
+        assertTrue(fixture.repository.connect("ws://192.168.1.2:7788/ws", "t"))
         val socket = fixture.factory.created.single()
         socket.open()
         socket.receive(hello())
@@ -115,7 +121,7 @@ class PocketRepositoryTest {
         )
         val fixture = fixture(backgroundScope, snapshot)
         runCurrent()
-        fixture.repository.connect("ws://host/ws", "t")
+        fixture.repository.connect("ws://192.168.1.2:7788/ws", "t")
         val socket = fixture.factory.created.single()
         socket.open()
         socket.receive(hello())
@@ -141,7 +147,7 @@ class PocketRepositoryTest {
         val notifications = mutableListOf<PocketNotification>()
         backgroundScope.launch { fixture.repository.notifications.collect { notifications += it } }
         runCurrent()
-        fixture.repository.connect("ws://host/ws", "t")
+        fixture.repository.connect("ws://192.168.1.2:7788/ws", "t")
         val socket = fixture.factory.created.single()
         socket.open()
         socket.receive(hello())
@@ -168,7 +174,7 @@ class PocketRepositoryTest {
         )
         val fixture = fixture(backgroundScope, snapshot)
         runCurrent()
-        fixture.repository.connect("ws://host/ws", "t")
+        fixture.repository.connect("ws://192.168.1.2:7788/ws", "t")
         val socket = fixture.factory.created.single()
         socket.open()
         socket.receive(hello())
@@ -198,7 +204,7 @@ class PocketRepositoryTest {
         val notifications = mutableListOf<PocketNotification>()
         backgroundScope.launch { fixture.repository.notifications.collect { notifications += it } }
         runCurrent()
-        fixture.repository.connect("ws://host/ws", "t")
+        fixture.repository.connect("ws://192.168.1.2:7788/ws", "t")
         val socket = fixture.factory.created.single()
         socket.open()
         socket.receive(hello())
@@ -219,7 +225,7 @@ class PocketRepositoryTest {
     // ===== 会话/项目系统真实链路 =====
 
     private fun connect(fixture: Fixture) {
-        assertTrue(fixture.repository.connect("ws://host/ws", "t"))
+        assertTrue(fixture.repository.connect("ws://192.168.1.2:7788/ws", "t"))
         val socket = fixture.factory.created.single()
         socket.open()
         socket.receive(hello())
@@ -386,12 +392,13 @@ class PocketRepositoryTest {
             fixture,
             "ensure_project_draft_session",
             """{"id":"s2","sessionId":"s2","revision":1,"title":"新 Agent 会话","workspaceId":"w1",
-              "channelId":"c1","modelId":"m1","draft":true,"updatedAt":20}""",
+              "channelId":"c1","modelId":"m1","presetId":"global-project-lead","draft":true,"updatedAt":20}""",
         )
         job.join()
 
         val created = fixture.repository.sessions.value.first { it.id == "s2" }
         assertEquals("w1", created.workspaceId)
+        assertEquals("global-project-lead", created.presetId)
         assertEquals(true, created.draft)
     }
 
@@ -753,5 +760,53 @@ class PocketRepositoryTest {
         val messages = fixture.repository.conversationMessages.value["c1"].orEmpty()
         assertEquals(1, messages.size)
         assertEquals("u9", messages.single().id)
+    }
+
+    // ===== 设备注册表与迁移 =====
+
+    @Test
+    fun `旧单连接迁移为 legacy 设备并继续可连`() = runTest {
+        val fixture = fixture(backgroundScope, SessionSnapshotStore.Snapshot())
+        fixture.credentials.saved = com.profer.pocket.data.store.CredentialStore.SavedConnection(
+            endpoint = "ws://192.168.1.2:7788/ws",
+            token = "legacy-token",
+        )
+        fixture.repository.start()
+        runCurrent()
+
+        val snapshot = fixture.repository.devices.value
+        val device = snapshot.devices.single()
+        assertTrue(device.profile.deviceId.startsWith("legacy-"))
+        assertEquals(com.profer.pocket.remote.TransportMode.LEGACY_QUERY, device.transportMode)
+        assertEquals(device.profile.deviceId, snapshot.activeId)
+        // token 保留在新存储里，旧键在迁移成功后才清理。
+        assertEquals("legacy-token", fixture.registry.credential(device.profile.deviceId))
+        assertEquals(null, fixture.credentials.saved)
+        assertTrue(fixture.factory.created.single().lastUrl!!.startsWith("ws://192.168.1.2:7788/ws?token="))
+    }
+
+    @Test
+    fun `配对失败只上报原因不落盘设备`() = runTest {
+        val fixture = fixture(backgroundScope, SessionSnapshotStore.Snapshot())
+        fixture.repository.pairWithQr("not-a-qr")
+        runCurrent()
+        val state = fixture.repository.pairingState.value
+        assertTrue(state is PocketRepository.PairingState.Failed)
+        assertTrue((state as PocketRepository.PairingState.Failed).message.isNotEmpty())
+        assertTrue(fixture.repository.devices.value.devices.isEmpty())
+    }
+
+    @Test
+    fun `移除当前设备后回到未连接`() = runTest {
+        val fixture = fixture(backgroundScope, SessionSnapshotStore.Snapshot())
+        connect(fixture)
+        runCurrent()
+        val active = fixture.repository.devices.value.active()!!
+        fixture.repository.removeDevice(active.profile.deviceId)
+        runCurrent()
+
+        assertTrue(fixture.repository.devices.value.devices.isEmpty())
+        assertEquals(null, fixture.repository.devices.value.activeId)
+        assertTrue(fixture.repository.connectionStatus.value is com.profer.pocket.model.ConnectionStatus.Offline)
     }
 }

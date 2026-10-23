@@ -17,6 +17,10 @@ private fun ConnectConnectedPreview() {
             onConnect = {},
             onDisconnect = {},
             onCancel = {},
+            onScan = {},
+            onSelectDevice = {},
+            onRemoveDevice = {},
+            onDismissPairing = {},
         )
     }
 }
@@ -39,6 +43,10 @@ private fun ConnectDisconnectedDarkPreview() {
             onConnect = {},
             onDisconnect = {},
             onCancel = {},
+            onScan = {},
+            onSelectDevice = {},
+            onRemoveDevice = {},
+            onDismissPairing = {},
         )
     }
 }
@@ -55,6 +63,10 @@ private fun ConnectConnectingPreview() {
             onConnect = {},
             onDisconnect = {},
             onCancel = {},
+            onScan = {},
+            onSelectDevice = {},
+            onRemoveDevice = {},
+            onDismissPairing = {},
         )
     }
 }
@@ -71,6 +83,30 @@ private fun ConnectFailedPreview() {
             onConnect = {},
             onDisconnect = {},
             onCancel = {},
+            onScan = {},
+            onSelectDevice = {},
+            onRemoveDevice = {},
+            onDismissPairing = {},
+        )
+    }
+}
+
+@Preview(name = "连接 · 配对失败", showBackground = true, widthDp = 360, heightDp = 780)
+@Composable
+private fun ConnectPairingFailedPreview() {
+    ProferTheme(darkTheme = true) {
+        ConnectionScreen(
+            state = ConnectionPreviewData.pairingFailed,
+            onBack = {},
+            onUrlChange = {},
+            onTokenChange = {},
+            onConnect = {},
+            onDisconnect = {},
+            onCancel = {},
+            onScan = {},
+            onSelectDevice = {},
+            onRemoveDevice = {},
+            onDismissPairing = {},
         )
     }
 }

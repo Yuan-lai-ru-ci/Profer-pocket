@@ -44,6 +44,25 @@ class FrameCodecTest {
     }
 
     @Test
+    fun `解析 assistant 消息里的思考块`() {
+        val frame = FrameCodec.parseInbound(
+            """
+            {"kind":"agent_event","eventId":9,"sessionId":"s1","payload":{"kind":"sdk_message","message":{
+              "type":"assistant","uuid":"a2","_partial":true,
+              "message":{"role":"assistant","content":[
+                {"type":"thinking","thinking":"先看日志"},
+                {"type":"thinking","thinking":"再改代码"},
+                {"type":"text","text":"开始处理"}
+              ]}
+            }}}
+            """.trimIndent(),
+        ) as InboundFrame.AgentEvent
+        val payload = frame.payload as AgentPayload.SdkMessage
+        assertEquals("先看日志再改代码", payload.message.reasoning)
+        assertEquals("开始处理", payload.message.text)
+    }
+
+    @Test
     fun `解析用户消息及其落盘时间`() {
         val frame = FrameCodec.parseInbound(
             """
@@ -57,6 +76,24 @@ class FrameCodecTest {
         assertEquals("user", payload.message.type)
         assertEquals("电脑上下的指令", payload.message.text)
         assertEquals(1_712_345_678_901L, payload.message.createdAt)
+    }
+
+    @Test
+    fun `解析用户消息里的图片引用`() {
+        val frame = FrameCodec.parseInbound(
+            """
+            {"kind":"agent_event","eventId":9,"sessionId":"s1","payload":{"kind":"sdk_message","message":{
+              "type":"user","uuid":"u2",
+              "message":{"content":[{"type":"tool_result","tool_use_id":"t1","images":[
+                {"path":"/ws/s1/.context/agent-output-images/a.png","filename":"a.png","mediaType":"image/png"}
+              ]}]}
+            }}}
+            """.trimIndent(),
+        ) as InboundFrame.AgentEvent
+        val result = (frame.payload as AgentPayload.SdkMessage).message.toolResults.single()
+        assertEquals("t1", result.toolUseId)
+        assertEquals("a.png", result.images.single().filename)
+        assertEquals("image/png", result.images.single().mediaType)
     }
 
     @Test

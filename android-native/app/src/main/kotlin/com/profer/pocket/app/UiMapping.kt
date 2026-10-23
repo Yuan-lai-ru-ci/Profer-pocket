@@ -6,12 +6,20 @@ import com.profer.pocket.chat.ConversationMessage
 import com.profer.pocket.chat.ConversationUiState
 import com.profer.pocket.chat.NoticeTone
 import com.profer.pocket.chat.PermissionRequest
+import com.profer.pocket.chat.ThinkingBlock
 import com.profer.pocket.chat.ToolBlock
 import com.profer.pocket.chat.ToolKind
 import com.profer.pocket.chat.parseRichBlocks
 import com.profer.pocket.data.SessionCatalog
 import com.profer.pocket.connect.ConnectionPhase
 import com.profer.pocket.connect.ConnectionUiState
+import com.profer.pocket.connect.DeviceUi
+import com.profer.pocket.connect.PairingUi
+import com.profer.pocket.data.PocketRepository.PairingState
+import com.profer.pocket.remote.EndpointScope
+import com.profer.pocket.remote.RemoteDevice
+import com.profer.pocket.remote.TransportMode
+import com.profer.pocket.remote.TrustMode
 import com.profer.pocket.designsystem.component.ToolStatus
 import com.profer.pocket.model.ChatEntry
 import com.profer.pocket.model.ChatMessage as DomainChatMessage
@@ -70,6 +78,12 @@ object UiMapping {
         url: String,
         token: String,
         hasSavedToken: Boolean,
+        latencyMs: Int? = null,
+        devices: List<RemoteDevice> = emptyList(),
+        activeDeviceId: String? = null,
+        pairing: PairingState = PairingState.Idle,
+        endpointFailures: Map<String, String> = emptyMap(),
+        registryError: String? = null,
     ): ConnectionUiState {
         val endpoint = (status as? ConnectionStatus.Connected)?.endpoint
             ?: url.takeIf { it.isNotBlank() }
@@ -89,9 +103,10 @@ object UiMapping {
         }
         val error = when (status) {
             is ConnectionStatus.Offline -> when (status.cause) {
-                com.profer.pocket.model.OfflineCause.Unauthorized -> "连接 Token 已失效，请重新输入"
+                // 鉴权失败既可能是 Token 失效，也可能是证书轮换；有具体原因就照实说。
+                com.profer.pocket.model.OfflineCause.Unauthorized -> status.message ?: "连接凭据已失效，请重新扫码或输入 Token"
                 com.profer.pocket.model.OfflineCause.Unreachable -> status.message ?: "连接失败"
-                com.profer.pocket.model.OfflineCause.MissingCredentials -> "请填写连接 Token"
+                com.profer.pocket.model.OfflineCause.MissingCredentials -> status.message ?: "请填写连接 Token"
                 com.profer.pocket.model.OfflineCause.UserDisconnected -> null
             }
 
@@ -99,20 +114,89 @@ object UiMapping {
             else -> null
         }
         val host = hostOf(endpoint)
+        // 已连接卡显示的是「设备名」：优先当前绑定设备的 profile.deviceName；
+        // 手动 legacy 连接没有设备资料，才退回 endpoint host。
+        val activeDevice = devices.firstOrNull { it.profile.deviceId == activeDeviceId }
+        // 扫码设备显示 profile.deviceName；手动 legacy 的注册名只是「手动连接」，仍退回 host。
+        val deviceName = activeDevice
+            ?.takeIf { it.transportMode != TransportMode.LEGACY_QUERY }
+            ?.profile?.deviceName?.takeIf { it.isNotBlank() }
+            ?: host.ifBlank { "Mac" }
         return ConnectionUiState(
             phase = phase,
             url = url,
             token = token,
             hasSavedToken = hasSavedToken,
-            deviceName = host.ifBlank { "Mac" },
+            deviceName = deviceName,
             deviceAddress = endpoint,
-            latencyMs = 0,
+            latencyMs = latencyMs ?: 0,
             daemonVersion = "远程",
             networkLabel = if (endpoint.startsWith("wss://")) "加密网络" else "局域网",
             protocolLabel = "Pocket WS v1",
             lastSyncLabel = if (status is ConnectionStatus.Connected) "已连接" else "—",
-            errorMessage = error,
+            errorMessage = registryError ?: error,
+            devices = devices.map { deviceUi(it, activeDeviceId) },
+            activeDeviceId = activeDeviceId,
+            trustLabel = activeDevice?.let(::trustLabel).orEmpty(),
+            pairing = when (pairing) {
+                is PairingState.Failed -> PairingUi.Failed(pairing.message)
+                is PairingState.Succeeded -> PairingUi.Succeeded(pairing.deviceName)
+                PairingState.Pairing -> PairingUi.Pairing
+                PairingState.Idle -> PairingUi.Idle
+            },
+            endpointFailures = endpointFailures.map { (endpoint, reason) -> "${endpointLabel(endpoint)}：$reason" },
         )
+    }
+
+    private fun deviceUi(device: RemoteDevice, activeDeviceId: String?): DeviceUi {
+        val endpoint = device.profile.endpoints.firstOrNull()
+        return DeviceUi(
+            id = device.profile.deviceId,
+            name = device.profile.deviceName,
+            address = endpoint?.url.orEmpty(),
+            scopeLabel = if (endpoint?.scope == EndpointScope.PUBLIC) "公网" else "局域网",
+            trustLabel = trustLabel(device),
+            isActive = device.profile.deviceId == activeDeviceId,
+            isManual = device.transportMode == TransportMode.LEGACY_QUERY,
+        )
+    }
+
+    private fun trustLabel(device: RemoteDevice): String = when {
+        device.transportMode == TransportMode.LEGACY_QUERY -> "手动 · 系统证书"
+        device.profile.endpoints.any { it.trustMode == TrustMode.PINNED } -> "证书固定"
+        device.profile.endpoints.any { it.scope == EndpointScope.PUBLIC } -> "系统证书"
+        else -> "局域网"
+    }
+
+    private fun endpointLabel(url: String): String = when {
+        url.contains("://") -> url.substringAfter("://").substringBefore("/ws")
+        else -> url
+    }
+
+    /**
+     * 离线条文案：把「为什么没连上 / 还要等多久 / 有几条没发出去」说清楚。
+     * 连接正常时返回 null——正常不是信息。
+     */
+    fun offlineLabel(status: ConnectionStatus, queuedSends: Int = 0): String? {
+        val base = when (status) {
+            ConnectionStatus.Idle -> "还没有连接"
+            ConnectionStatus.Connecting -> "正在连接电脑…"
+            is ConnectionStatus.Connected -> null
+            is ConnectionStatus.Reconnecting -> {
+                val seconds = ((status.delayMs + 999) / 1000).coerceAtLeast(1)
+                "连接中断 · 约 ${seconds}s 后重试"
+            }
+
+            is ConnectionStatus.Offline -> when (status.cause) {
+                com.profer.pocket.model.OfflineCause.Unreachable ->
+                    status.message ?: "无法连接电脑"
+
+                com.profer.pocket.model.OfflineCause.Unauthorized -> "连接 Token 已失效"
+                com.profer.pocket.model.OfflineCause.MissingCredentials -> "还没有配置连接"
+                com.profer.pocket.model.OfflineCause.UserDisconnected -> "已断开连接"
+            }
+        } ?: return null
+        return if (queuedSends > 0) "$base · $queuedSends 条待发送" else base
     }
 
     fun chatState(
@@ -120,11 +204,13 @@ object UiMapping {
         chat: SessionChat?,
         sessions: List<SessionSummary>,
         workspaces: List<WorkspaceSummary>,
-        online: Boolean,
+        status: ConnectionStatus,
+        queuedSends: Int = 0,
         draft: String,
         presets: List<com.profer.pocket.model.AgentPresetSummary> = emptyList(),
         now: Long = System.currentTimeMillis(),
     ): ChatUiState {
+        val online = status is ConnectionStatus.Connected
         val summary = sessions.firstOrNull { it.id == sessionId }
         val title = chat?.title?.takeIf { it.isNotBlank() }
             ?: summary?.title?.takeIf { it.isNotBlank() }
@@ -134,7 +220,6 @@ object UiMapping {
         val channelId = chat?.channelId ?: summary?.channelId
         val modelId = chat?.modelId ?: summary?.modelId
         val permissionMode = chat?.permissionMode ?: summary?.permissionMode
-        val lastAssistantId = chat?.messages?.lastOrNull { it is ChatEntry.Assistant }?.id
         val messages = buildList {
             chat?.messages?.forEach { entry ->
                 when (entry) {
@@ -159,21 +244,16 @@ object UiMapping {
                     is ChatEntry.Assistant -> add(
                         ChatMessage.Assistant(
                             id = entry.id,
-                            tools = if (entry.id == lastAssistantId && (chat.tools.total > 0)) {
-                                listOf(
-                                    ToolBlock(
-                                        id = "tools-${chat.sessionId}",
-                                        kind = ToolKind.Bash,
-                                        title = "工具调用 ${chat.tools.total} 次",
-                                        subtitle = chat.tools.summary(),
-                                        status = if (chat.running) ToolStatus.Running else ToolStatus.Success,
-                                    ),
+                            // 有思考就渲染折叠卡：运行中显示「思考中…」，结束后回到「思考过程」。
+                            thinking = entry.thinking?.takeIf { it.isNotBlank() }?.let { body ->
+                                ThinkingBlock(
+                                    durationLabel = if (entry.streaming) "思考中…" else "思考过程",
+                                    body = body,
                                 )
-                            } else {
-                                emptyList()
                             },
                             blocks = parseRichBlocks(entry.text),
                             streaming = entry.streaming,
+                            images = entry.images,
                         ),
                     )
 
@@ -223,12 +303,58 @@ object UiMapping {
             messages = messages,
             streaming = chat?.running == true || chat?.messages?.any { it is ChatEntry.Assistant && it.streaming } == true,
             offline = !online,
+            offlineLabel = offlineLabel(status, queuedSends),
             pendingPermission = chat?.pendingInteraction?.toUiPermission(),
             pendingQuestionId = (chat?.pendingInteraction as? PendingInteraction.Question)?.id,
             pendingQuestions = (chat?.pendingInteraction as? PendingInteraction.Question)?.questions.orEmpty(),
             draft = draft,
             turnFiles = chat?.visibleTurnFiles.orEmpty(),
+            toolCalls = chat?.let { current ->
+                current.toolCalls.map { call ->
+                    val status = when {
+                        call.id in current.failedToolIds -> ToolStatus.Error
+                        call.id in current.completedToolIds -> ToolStatus.Success
+                        current.running -> ToolStatus.Running
+                        else -> ToolStatus.Waiting
+                    }
+                    ToolBlock(
+                        id = call.id,
+                        kind = toolKind(call.name),
+                        title = toolTitle(call.name),
+                        // 入参只透传了 file_path；拿不到路径时用状态文案，
+                        // 不伪造命令/结果，也不把工具名重复写两遍。
+                        subtitle = call.path ?: when (status) {
+                            ToolStatus.Running -> "运行中…"
+                            ToolStatus.Success -> "已完成"
+                            ToolStatus.Error -> "执行失败"
+                            ToolStatus.Waiting -> "未返回结果"
+                        },
+                        status = status,
+                    )
+                }
+            }.orEmpty(),
         )
+    }
+
+    /** 工具名 → 移动端图标分类；未知工具统一走 Other，不把它归到 Bash。 */
+    private fun toolKind(name: String): ToolKind = when (name.lowercase()) {
+        "read", "notebookread" -> ToolKind.Read
+        "grep", "glob", "search", "websearch", "webfetch", "ls", "list" -> ToolKind.Search
+        "bash", "shell", "terminal", "execute" -> ToolKind.Bash
+        "edit", "write", "multiedit", "notebookedit", "str_replace_editor" -> ToolKind.Edit
+        else -> ToolKind.Other
+    }
+
+    /** 卡片标题说人话；没有路径时用工具名当副标题，保持信息诚实。 */
+    private fun toolTitle(name: String): String = when (name.lowercase()) {
+        "read", "notebookread" -> "读取文件"
+        "write" -> "写入文件"
+        "edit", "multiedit", "notebookedit", "str_replace_editor" -> "修改文件"
+        "bash", "shell", "terminal", "execute" -> "执行命令"
+        "grep", "glob" -> "搜索内容"
+        "search", "websearch" -> "搜索网页"
+        "webfetch" -> "抓取网页"
+        else -> name
     }
 
     fun sessionListState(
@@ -376,7 +502,8 @@ object UiMapping {
         messages: List<DomainChatMessage>,
         stream: ChatStream?,
         draft: String,
-        offline: Boolean,
+        status: ConnectionStatus,
+        queuedSends: Int = 0,
     ): ConversationUiState = ConversationUiState(
         conversationId = conversation?.id,
         title = conversation?.displayTitle.orEmpty(),
@@ -404,7 +531,8 @@ object UiMapping {
         streaming = stream?.running == true,
         error = stream?.error,
         draft = draft,
-        offline = offline,
+        offline = status !is ConnectionStatus.Connected,
+        offlineLabel = offlineLabel(status, queuedSends),
     )
 
     private fun timeLabel(timestamp: Long): String =

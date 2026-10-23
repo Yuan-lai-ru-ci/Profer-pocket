@@ -28,6 +28,7 @@ import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import kotlinx.coroutines.launch
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -38,6 +39,7 @@ import com.profer.pocket.chat.rememberPocketDrawerState
 import com.profer.pocket.chat.ModelOption
 import com.profer.pocket.connect.ConnectionPhase
 import com.profer.pocket.connect.ConnectionScreen
+import com.profer.pocket.connect.QrScannerScreen
 import com.profer.pocket.designsystem.theme.ProferTheme
 import com.profer.pocket.sessions.DrawerMode
 import com.profer.pocket.sessions.SessionListContent
@@ -108,6 +110,8 @@ fun ProferApp(viewModel: PocketViewModel) {
     ApplySystemBarStyle(darkTheme = darkTheme)
 
     ProferTheme(darkTheme = darkTheme) {
+        // 首帧完成后才允许启动前台服务：冷启动期间主线程排不进服务回调。
+        LaunchedEffect(Unit) { viewModel.onUiReady() }
         val navController = rememberNavController()
         val context = LocalContext.current
         val debuggable = (context.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE) != 0
@@ -305,6 +309,15 @@ fun ProferApp(viewModel: PocketViewModel) {
                         onRewriteMessage = viewModel::rewriteAndResend,
                         onRetrySend = viewModel::retrySend,
                         onOpenAttachment = { previewFile = it },
+                        onOpenImage = { image ->
+                            previewFile = com.profer.pocket.model.AgentAttachment(
+                                filename = image.filename,
+                                path = image.path,
+                            )
+                        },
+                        imageLoader = { path ->
+                            chatState.sessionId?.let { viewModel.loadMessageImage(it, path) }
+                        },
                         lastReadMessageId = chatState.sessionId?.let { readPositions[it] },
                         onReadLatest = { messageId ->
                             chatState.sessionId?.let { viewModel.markReadUpTo(it, messageId) }
@@ -341,10 +354,28 @@ fun ProferApp(viewModel: PocketViewModel) {
                     onConnect = viewModel::connect,
                     onDisconnect = viewModel::disconnect,
                     onCancel = viewModel::disconnect,
+                    onScan = { navController.navigate("scan") },
+                    onSelectDevice = viewModel::selectDevice,
+                    onRemoveDevice = viewModel::removeDevice,
+                    onDismissPairing = viewModel::dismissPairing,
+                )
+            }
+
+            composable("scan") {
+                QrScannerScreen(
+                    onBack = { navController.popBackStack() },
+                    onScanned = { text ->
+                        // 配对在后台进行，失败原因回到连接页展示；扫码页立即关闭。
+                        viewModel.pairWithQr(text)
+                        navController.popBackStack()
+                    },
                 )
             }
 
             composable("settings") {
+                val context = LocalContext.current
+                val scope = rememberCoroutineScope()
+                var developerUpdateLabel by remember { mutableStateOf<String?>(null) }
                 SettingsScreen(
                     themePreference = settings.theme.toPreference(),
                     onThemePreferenceChange = viewModel::updateTheme,
@@ -366,6 +397,20 @@ fun ProferApp(viewModel: PocketViewModel) {
                     onBack = { navController.popBackStack() },
                     showDeveloperTools = debuggable,
                     onOpenStressTest = { navController.navigate("stress") },
+                    developerUpdateLabel = developerUpdateLabel,
+                    onCheckDeveloperUpdate = {
+                        developerUpdateLabel = "正在检查…"
+                        scope.launch {
+                            NativePocketUpdater.check(context).onSuccess { info ->
+                                if (info == null) developerUpdateLabel = "已是最新版本"
+                                else {
+                                    developerUpdateLabel = "发现 ${info.versionName}，点击安装"
+                                    NativePocketUpdater.downloadAndInstall(context, info)
+                                        .onFailure { developerUpdateLabel = "更新失败：${it.message ?: "未知错误"}" }
+                                }
+                            }.onFailure { developerUpdateLabel = "检查失败：${it.message ?: "网络错误"}" }
+                        }
+                    },
                 )
             }
 

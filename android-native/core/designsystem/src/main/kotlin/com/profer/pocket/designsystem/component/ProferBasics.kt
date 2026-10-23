@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
@@ -25,6 +26,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
@@ -73,33 +75,45 @@ fun ProferPill(
     } else {
         MaterialTheme.colorScheme.onSurfaceVariant
     }
-    Surface(
-        modifier = modifier
-            .height(30.dp)
-            .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier),
-        shape = CircleShape,
-        color = container,
-        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+    Box(
+        modifier = modifier.then(
+            if (onClick != null) {
+                Modifier
+                    .heightIn(min = ProferSizes.minTouchTarget)
+                    .clip(CircleShape)
+                    .clickable(onClick = onClick)
+            } else {
+                Modifier.heightIn(min = 30.dp)
+            },
+        ),
+        contentAlignment = Alignment.Center,
     ) {
-        Row(
-            modifier = Modifier.padding(horizontal = 10.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(5.dp),
+        Surface(
+            modifier = Modifier.height(30.dp),
+            shape = CircleShape,
+            color = container,
+            border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
         ) {
-            if (icon != null) {
-                Icon(
-                    imageVector = icon,
-                    contentDescription = null,
-                    tint = content,
-                    modifier = Modifier.size(14.dp),
+            Row(
+                modifier = Modifier.padding(horizontal = 10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(5.dp),
+            ) {
+                if (icon != null) {
+                    Icon(
+                        imageVector = icon,
+                        contentDescription = null,
+                        tint = content,
+                        modifier = Modifier.size(14.dp),
+                    )
+                }
+                Text(
+                    text = text,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = content,
+                    maxLines = 1,
                 )
             }
-            Text(
-                text = text,
-                style = MaterialTheme.typography.labelMedium,
-                color = content,
-                maxLines = 1,
-            )
         }
     }
 }
@@ -177,8 +191,9 @@ fun ProferConnectionBanner(
                 color = content,
                 fontWeight = FontWeight.SemiBold,
                 modifier = Modifier
+                    .heightIn(min = ProferSizes.minTouchTarget)
                     .clickable(onClick = onAction)
-                    .padding(vertical = 4.dp, horizontal = 2.dp),
+                    .padding(horizontal = 8.dp),
             )
         }
     }
@@ -207,7 +222,7 @@ fun ProferIconAction(
 ) {
     Box(
         modifier = modifier
-            .size(size)
+            .size(size.coerceAtLeast(ProferSizes.minTouchTarget))
             .clickable(onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
@@ -221,5 +236,5 @@ fun ProferIconAction(
 }
 
 /** 内容块圆角：与 M3 形状档位一致，不出现 6/7dp 混用。 */
-val ProferCardShape = RoundedCornerShape(14.dp)
+val ProferCardShape = RoundedCornerShape(16.dp)
 val ProferSheetShape = RoundedCornerShape(28.dp)

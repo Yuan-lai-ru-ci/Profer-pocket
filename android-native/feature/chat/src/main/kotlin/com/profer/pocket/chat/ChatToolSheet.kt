@@ -1,6 +1,7 @@
 package com.profer.pocket.chat
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -30,6 +31,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.profer.pocket.designsystem.theme.ProferHeadingSerif
+import com.profer.pocket.designsystem.component.sheetMaxHeight
 import com.profer.pocket.designsystem.theme.ProferSpacing
 import com.profer.pocket.model.ChatToolSummary
 
@@ -50,10 +52,13 @@ internal fun ChatToolSheet(
         onDismissRequest = onDismiss,
         sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
         containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+        // 弹层最高只到 86%，顶部不再需要状态栏内边距；底部由内容自己 navigationBarsPadding。
+        contentWindowInsets = { WindowInsets(0, 0, 0, 0) },
     ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
+                .sheetMaxHeight()
                 .navigationBarsPadding()
                 .padding(bottom = ProferSpacing.md),
         ) {
@@ -84,7 +89,7 @@ internal fun ChatToolSheet(
                 LazyColumn(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .heightIn(max = 420.dp),
+                        .weight(1f, fill = false),
                 ) {
                     items(tools, key = { it.id }) { tool ->
                         ChatToolRow(tool = tool, onToggle = onToggle)

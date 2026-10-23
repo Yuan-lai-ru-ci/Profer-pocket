@@ -4,6 +4,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
@@ -26,6 +27,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -104,6 +106,9 @@ fun ProferPermissionSheet(
     onAlwaysAllow: (() -> Unit)? = null,
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    // 2.0× 字号下「允许 / 始终允许 / 拒绝」会被正文挤出屏幕：大字号时弹层占 92% 高，
+    // 正文自己滚动，动作区固定在底部；1.0× 仍是内容高度，不改变原来看法。
+    val tallLayout = LocalDensity.current.fontScale > 1.3f
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
@@ -113,76 +118,98 @@ fun ProferPermissionSheet(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
+                .then(if (tallLayout) Modifier.fillMaxHeight(0.92f) else Modifier)
                 .statusBarsPadding()
-                .navigationBarsPadding()
-                .padding(start = 20.dp, end = 20.dp, bottom = 20.dp)
-                .verticalScroll(rememberScrollState()),
-            verticalArrangement = Arrangement.spacedBy(ProferSpacing.md),
+                .navigationBarsPadding(),
         ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(ProferSpacing.sm),
-            ) {
-                ProferStatusDot(color = ProferThemeExtras.semantic.warning, size = 7.dp)
-                Text(
-                    text = contextLabel ?: "来自 Profer",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-            Text(
-                text = title,
-                style = ProferHeadingSerif,
-                color = MaterialTheme.colorScheme.onSurface,
-            )
-            Text(
-                text = description,
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            if (command != null) {
-                ProferCodeBlock(code = command, language = "shell", wrap = true)
-            }
-
-            Button(
-                onClick = onAllow,
+            Column(
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .height(48.dp),
-                shape = CircleShape,
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = MaterialTheme.colorScheme.primary,
-                    contentColor = MaterialTheme.colorScheme.onPrimary,
-                ),
+                    .then(if (tallLayout) Modifier.weight(1f) else Modifier)
+                    .verticalScroll(rememberScrollState())
+                    .padding(start = 20.dp, end = 20.dp),
+                verticalArrangement = Arrangement.spacedBy(ProferSpacing.md),
             ) {
-                Text(
-                    text = "允许一次",
-                    style = MaterialTheme.typography.labelLarge,
-                    fontWeight = FontWeight.SemiBold,
-                )
-            }
-            if (onAlwaysAllow != null) {
-                OutlinedButton(
-                    onClick = onAlwaysAllow,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(48.dp),
-                    shape = CircleShape,
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(ProferSpacing.sm),
                 ) {
-                    Text(text = "本会话始终允许", style = MaterialTheme.typography.labelLarge)
+                    ProferStatusDot(color = ProferThemeExtras.semantic.warning, size = 7.dp)
+                    Text(
+                        text = contextLabel ?: "来自 Profer",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                 }
-            }
-            TextButton(
-                onClick = onDeny,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(44.dp),
-            ) {
                 Text(
-                    text = "拒绝",
-                    style = MaterialTheme.typography.labelLarge,
+                    text = title,
+                    style = ProferHeadingSerif,
                     color = MaterialTheme.colorScheme.onSurface,
                 )
+                Text(
+                    text = description,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                if (command != null) {
+                    ProferCodeBlock(code = command, language = "shell", wrap = true)
+                }
+            }
+
+            if (tallLayout) {
+                androidx.compose.material3.HorizontalDivider(
+                    modifier = Modifier.padding(horizontal = 20.dp),
+                    color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f),
+                )
+            }
+            Column(
+                modifier = Modifier.padding(
+                    start = 20.dp,
+                    end = 20.dp,
+                    top = ProferSpacing.md,
+                    bottom = 20.dp,
+                ),
+                verticalArrangement = Arrangement.spacedBy(ProferSpacing.xs),
+            ) {
+                Button(
+                    onClick = onAllow,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 48.dp),
+                    shape = CircleShape,
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.primary,
+                        contentColor = MaterialTheme.colorScheme.onPrimary,
+                    ),
+                ) {
+                    Text(
+                        text = "允许一次",
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                }
+                if (onAlwaysAllow != null) {
+                    OutlinedButton(
+                        onClick = onAlwaysAllow,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = 48.dp),
+                        shape = CircleShape,
+                    ) {
+                        Text(text = "本会话始终允许", style = MaterialTheme.typography.labelLarge)
+                    }
+                }
+                TextButton(
+                    onClick = onDeny,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 48.dp),
+                ) {
+                    Text(
+                        text = "拒绝",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.onSurface,
+                    )
+                }
             }
         }
     }

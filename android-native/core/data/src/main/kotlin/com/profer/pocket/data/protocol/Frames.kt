@@ -11,7 +11,20 @@ sealed interface InboundFrame {
         val serverInstanceId: String?,
         val latestEventId: Long?,
         val oldestEventId: Long?,
+        /** v1 鉴权后服务端附带：协议版本、设备身份与当前连接资料（原始 JSON，严格解析在连接层）。 */
+        val protocolVersion: Int? = null,
+        val deviceId: String? = null,
+        val profileJson: String? = null,
     ) : InboundFrame
+
+    /** v1 握手第一步：服务端在鉴权前只报身份与协议版本。 */
+    data class RemoteHello(
+        val protocolVersion: Int?,
+        val deviceId: String?,
+    ) : InboundFrame
+
+    /** 服务端每 15s 推送一次连接资料；pin/deviceId 变化必须断开重扫。 */
+    data class ConnectionProfile(val profileJson: String) : InboundFrame
 
     data object Pong : InboundFrame
 
@@ -68,8 +81,8 @@ sealed interface AgentPayload {
 }
 
 /**
- * SDK 消息的移动端投影：只保留正文、工具名称与少量元信息。
- * 服务端已经裁掉思考正文与工具入参/结果（见 desktop pocket-agent-projection）。
+ * SDK 消息的移动端投影：保留正文、工具名称、思考预览与少量元信息。
+ * 服务端已经裁掉工具入参与结果，并给思考正文做了有界截断（见 desktop pocket-agent-projection）。
  */
 data class SdkMessageView(
     val type: String,
@@ -88,6 +101,8 @@ data class SdkMessageView(
     val usage: TokenUsage? = null,
     /** result 消息里的模型上下文窗口（modelUsage[model].contextWindow）。 */
     val modelUsage: Map<String, Int> = emptyMap(),
+    /** 模型思考正文：桌面对 Pocket 只下发有界预览（partial 为尾部窗口）。 */
+    val reasoning: String? = null,
 )
 
 /**
@@ -114,6 +129,15 @@ data class ToolUseView(
 data class ToolResultView(
     val toolUseId: String,
     val isError: Boolean = false,
+    /** 工具结果里的图片引用（桌面只下发路径与文件名，字节按需拉取）。 */
+    val images: List<ImageRef> = emptyList(),
+)
+
+/** 图片引用：path 为电脑端会话授权范围内的路径。 */
+data class ImageRef(
+    val path: String,
+    val filename: String,
+    val mediaType: String,
 )
 
 /** profer_event 的移动端投影：只解析首版需要的字段，其余忽略。 */

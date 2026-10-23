@@ -23,10 +23,25 @@ data class ToolTally(
     }
 }
 
+/** 本轮的一次工具调用：只保留渲染身份与名称，入参与结果仍不下发。 */
+data class ToolCall(
+    val id: String,
+    val name: String,
+    val path: String? = null,
+    val at: Long = 0L,
+)
+
 enum class NoticeTone { Info, Success, Warning }
 
 /** 单条用户消息的发送状态；历史消息一律 Sent。 */
 enum class SendStatus { Sending, Sent, Failed }
+
+/** 模型/工具产出的图片：只带引用，字节在点开或首次渲染时向电脑端拉取。 */
+data class ChatImage(
+    val path: String,
+    val filename: String,
+    val mediaType: String,
+)
 
 sealed interface ChatEntry {
     val id: String
@@ -45,6 +60,10 @@ sealed interface ChatEntry {
         val text: String,
         val streaming: Boolean,
         override val at: Long,
+        /** 模型思考正文（服务端已做有界截断；partial 帧只带尾部窗口）。 */
+        val thinking: String? = null,
+        /** 本回合工具产出的图片（send_local_image / generate_image），按路径去重。 */
+        val images: List<ChatImage> = emptyList(),
     ) : ChatEntry
 
     data class Notice(
@@ -135,6 +154,10 @@ data class SessionChat(
     val pendingInteraction: PendingInteraction? = null,
     val tools: ToolTally = ToolTally(),
     val countedToolIds: Set<String> = emptySet(),
+    /** 本轮工具调用（按发生顺序），用于逐条渲染各自的图标与状态。 */
+    val toolCalls: List<ToolCall> = emptyList(),
+    /** 已收到 tool_result 的工具 id（不区分成功失败）。 */
+    val completedToolIds: Set<String> = emptySet(),
     /** 当前用户回合内被修改的文件（桌面 TurnFileChangesSummary 的移动端对应物）。 */
     val turnFiles: List<TurnFile> = emptyList(),
     val failedToolIds: Set<String> = emptySet(),

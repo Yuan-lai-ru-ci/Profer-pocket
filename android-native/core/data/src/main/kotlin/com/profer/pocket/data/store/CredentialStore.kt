@@ -43,12 +43,33 @@ class AndroidCredentialStore(
     private val prefs = context.applicationContext
         .getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
+    /**
+     * 解密结果缓存：Keystore 首次访问是一次跨进程调用，在低端机/高负载下能达到数百毫秒。
+     * 连接页每次重组、每个连接状态变化都会问一次「有没有保存过 token」，不能每次都进 Keystore。
+     */
+    @Volatile
+    private var cached: CredentialStore.SavedConnection? = null
+
+    @Volatile
+    private var cacheLoaded = false
+
     override fun load(): CredentialStore.SavedConnection? {
+        if (cacheLoaded) return cached
+        synchronized(this) {
+            if (cacheLoaded) return cached
+            val result = readFromDisk()
+            cached = result
+            cacheLoaded = true
+            return result
+        }
+    }
+
+    private fun readFromDisk(): CredentialStore.SavedConnection? {
         val endpoint = prefs.getString(KEY_ENDPOINT, null)?.takeIf { it.isNotBlank() } ?: return null
         val storedToken = prefs.getString(KEY_TOKEN, null)?.takeIf { it.isNotBlank() } ?: return null
         val token = cipher.decrypt(storedToken)?.takeIf { it.isNotBlank() }
         if (token == null) {
-            clear()
+            prefs.edit().remove(KEY_ENDPOINT).remove(KEY_TOKEN).apply()
             return null
         }
         return CredentialStore.SavedConnection(endpoint = endpoint, token = token)
@@ -60,10 +81,18 @@ class AndroidCredentialStore(
             .putString(KEY_ENDPOINT, endpoint)
             .putString(KEY_TOKEN, encrypted)
             .apply()
+        synchronized(this) {
+            cached = CredentialStore.SavedConnection(endpoint = endpoint, token = token)
+            cacheLoaded = true
+        }
     }
 
     override fun clear() {
         prefs.edit().remove(KEY_ENDPOINT).remove(KEY_TOKEN).apply()
+        synchronized(this) {
+            cached = null
+            cacheLoaded = true
+        }
     }
 
     private companion object {

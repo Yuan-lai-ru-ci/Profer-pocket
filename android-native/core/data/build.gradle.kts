@@ -23,6 +23,7 @@ android {
 
 dependencies {
     api(project(":core:model"))
+    api(project(":core:remote"))
 
     implementation(libs.kotlinx.coroutines.core)
     implementation(libs.kotlinx.coroutines.android)

@@ -63,6 +63,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.profer.pocket.designsystem.theme.ProferCodeTextStyle
+import com.profer.pocket.designsystem.theme.ProferSizes
 import com.profer.pocket.designsystem.theme.ProferSpacing
 import com.profer.pocket.designsystem.theme.ProferThemeExtras
 import kotlinx.coroutines.delay
@@ -139,11 +140,14 @@ fun ProferThinkingCard(
     modifier: Modifier = Modifier,
     /** Agent 用「思考了 12 秒」；Chat 没有时长，传空串只显示标签。 */
     labelPrefix: String = "思考了",
+    /** 折叠时的两行尾部预览：只在流式思考期间传，用来体现「一直在想」。 */
+    preview: String? = null,
 ) {
     Column(modifier = modifier.fillMaxWidth()) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
+                .heightIn(min = ProferSizes.minTouchTarget)
                 .clickable(onClick = onToggle)
                 .padding(vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically,
@@ -166,6 +170,16 @@ fun ProferThinkingCard(
                 contentDescription = if (expanded) "收起思考" else "展开思考",
                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.size(18.dp),
+            )
+        }
+        if (!expanded && !preview.isNullOrBlank()) {
+            Text(
+                text = preview,
+                style = MaterialTheme.typography.bodySmall.copy(lineHeight = 19.sp),
+                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.75f),
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.padding(start = 22.dp, end = 18.dp, bottom = 8.dp),
             )
         }
         AnimatedVisibility(
@@ -226,7 +240,8 @@ fun ProferToolCallCard(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clickable(onClick = onToggle)
+                    // 没有详情可展开时不做可点击：避免点了没反应的死交互。
+                    .then(if (detail != null) Modifier.clickable(onClick = onToggle) else Modifier)
                     .padding(horizontal = 10.dp, vertical = 9.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
@@ -515,7 +530,7 @@ fun ProferPermissionCard(
                 Surface(
                     modifier = Modifier
                         .weight(1f)
-                        .heightIn(min = 38.dp)
+                        .heightIn(min = ProferSizes.minTouchTarget)
                         .clickable(onClick = onAllow),
                     shape = CircleShapeCompatible,
                     color = MaterialTheme.colorScheme.primary,
@@ -532,7 +547,7 @@ fun ProferPermissionCard(
                 Surface(
                     modifier = Modifier
                         .weight(1f)
-                        .heightIn(min = 38.dp)
+                        .heightIn(min = ProferSizes.minTouchTarget)
                         .clickable(onClick = onDeny),
                     shape = CircleShapeCompatible,
                     color = MaterialTheme.colorScheme.surfaceContainerHigh,
