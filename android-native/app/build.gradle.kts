@@ -34,28 +34,9 @@ fun pocketVersionCodeOf(versionName: String): Int {
     return (major * 10_000 + minor * 100 + patch) * 100 + build
 }
 
-val pocketVersionName = "0.1.21"
+// 正式版默认版本号；测试包构建时传 -PpocketVersionName=0.1.23-internal.1 覆盖，不改文件。
+val pocketVersionName = providers.gradleProperty("pocketVersionName").orNull ?: "0.1.22"
 val pocketVersionCode = pocketVersionCodeOf(pocketVersionName)
-
-/**
- * 测试通道（AList）地址只在本地注入，不进仓库、不进公开分发的正式包：
- * 1. 在 android-native/local.properties 写 proferInternalUpdateBaseUrl=http://<host>/<dir>/
- * 2. 或构建时传 -PproferInternalUpdateBaseUrl=...
- * 正式包构建必须加 -PpocketOfficialBuild=true，地址不会写进 APK。
- * 未配置时该值为空字符串，连点版本号 10 次只提示测试通道未配置。
- */
-val pocketLocalProperties = Properties().apply {
-    val localPropertiesFile = rootProject.file("local.properties")
-    if (localPropertiesFile.exists()) localPropertiesFile.inputStream().use { load(it) }
-}
-val pocketOfficialBuild = providers.gradleProperty("pocketOfficialBuild").isPresent
-val pocketInternalUpdateBaseUrl = if (pocketOfficialBuild) {
-    ""
-} else {
-    providers.gradleProperty("proferInternalUpdateBaseUrl").orNull
-        ?: pocketLocalProperties.getProperty("proferInternalUpdateBaseUrl")
-        ?: ""
-}
 
 val signingProperties = Properties()
 val signingPropertiesFile = file("signing.properties")
@@ -73,7 +54,6 @@ android {
         targetSdk = 35
         versionCode = pocketVersionCode
         versionName = pocketVersionName
-        buildConfigField("String", "INTERNAL_UPDATE_BASE_URL", "\"$pocketInternalUpdateBaseUrl\"")
     }
 
     signingConfigs {

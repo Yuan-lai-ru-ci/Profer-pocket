@@ -32,11 +32,11 @@ versionCode = (major * 10000 + minor * 100 + patch) * 100 + build
 
 | versionName | 计算 | versionCode |
 |---|---|---|
-| `0.1.21-internal.1` | `(0*10000 + 1*100 + 21) * 100 + 1` | `12101` |
-| `0.1.21` | `(0*10000 + 1*100 + 21) * 100 + 99` | `12199` |
 | `0.1.22-internal.1` | `(0*10000 + 1*100 + 22) * 100 + 1` | `12201` |
+| `0.1.22` | `(0*10000 + 1*100 + 22) * 100 + 99` | `12299` |
+| `0.1.23-internal.1` | `(0*10000 + 1*100 + 23) * 100 + 1` | `12301` |
 
-`android-native/app/build.gradle.kts` 已内置该公式：只改 `pocketVersionName`，`versionCode` 自动计算；格式不合法会直接让 Gradle 配置失败。
+`android-native/app/build.gradle.kts` 已内置该公式：只改 `pocketVersionName`（或构建时覆盖），`versionCode` 自动计算；格式不合法会直接让 Gradle 配置失败。
 
 ## 4. 递增与渠道规则
 
@@ -45,15 +45,21 @@ versionCode = (major * 10000 + minor * 100 + patch) * 100 + build
 3. **versionCode 不复用**，包括未发布但已装机的包。Android 系统会拒绝安装比当前设备版本更低的包（防降级）。
 4. 历史版本不回改；已发布的 versionName/versionCode 保持不变。
 5. 同一 versionName 只能对应一个 APK；测试包重打必须加 build，正式包重打只能升 patch（如 `0.1.22`）。
+6. **测试包必须基于下一个 patch 基线**：正式 `0.1.22`（12299）之后，测试包是 `0.1.23-internal.1`（12301）。同基线内的测试包号更小，正式版连点 10 次也发现不了。
+7. 装过测试包后回不到同基线正式版（12301 > 12299），要等下一个正式版（12399）或卸载重装。
 
 ## 5. 修改位置
 
-只改这一处：
+正式版默认值写在文件里；测试包构建时用 Gradle 属性覆盖，不改仓库文件：
 
 ```kotlin
 // android-native/app/build.gradle.kts
-val pocketVersionName = "0.1.21"
+val pocketVersionName = providers.gradleProperty("pocketVersionName").orNull ?: "0.1.22"
 val pocketVersionCode = pocketVersionCodeOf(pocketVersionName)
+```
+
+```bash
+./gradlew.bat assembleRelease -PpocketVersionName=0.1.23-internal.1
 ```
 
 不要手写 `versionCode`。`defaultConfig` 已读取上面两个变量，公式校验在配置阶段执行。
@@ -62,21 +68,12 @@ val pocketVersionCode = pocketVersionCodeOf(pocketVersionName)
 
 | 通道 | 入口 | 数据源 |
 |---|---|---|
-| 正式版 | 设置 → 检查更新 | GitHub 最新 Release，`Profer-Pocket-<versionName>.apk` + `pocket-update.json` 作为 Release 资产 |
-| 测试版 | 设置 → 关于 → 连点版本号 10 次 | 自建 AList 开发者源，APK + `pocket-update.json` 成对放置 |
+| 正式版 | 设置 → 检查更新 | GitHub `/releases/latest`，非预发布的 Release |
+| 测试版 | 设置 → 关于 → 连点版本号 10 次 | GitHub `/releases` 列表里 `prerelease=true` 的最新一个 |
 
-两条通道都校验 `pocket-update.json` 的 `versionCode`、`apkAssetName`、`sha256`；`versionCode` 不高于本机时不提示。
+两条通道都读 Release 资产里的 `Profer-Pocket-<versionName>.apk` 与 `pocket-update.json`，校验 `versionCode`、`apkAssetName`、`sha256`；`versionCode` 不高于本机时不提示。
 
-测试通道地址不进仓库、不进 GitHub Release 的 APK，只在本地构建时注入：
-
-```properties
-# android-native/local.properties（已被 .gitignore 忽略，不提交）
-proferInternalUpdateBaseUrl=http://<host>/<dir>/
-```
-
-也可以构建时临时传 `-PproferInternalUpdateBaseUrl=...`。
-
-**正式包构建必须加 `-PpocketOfficialBuild=true`**：该参数忽略本地配置，APK 内地址为空，连点 10 次只提示“测试通道未配置”。发布前用 `grep -a` 扫 APK 确认不含服务器地址。
+测试包以 GitHub 预发布（pre-release）发布：普通用户检查更新看不到，但仓库公开时 Releases 页面可见、可下载。不需要额外服务器，代码里也没有任何服务器地址。
 
 ## 7. 打包与发布检查
 
@@ -84,8 +81,18 @@ proferInternalUpdateBaseUrl=http://<host>/<dir>/
 2. `applicationId = com.profer.pocket`，使用正式 release 签名；debug 包只能并装手测，不能当更新源。
 3. APK 文件名必须是 `Profer-Pocket-<versionName>.apk`。
 4. `pocket-update.json` 的四个字段必须与 APK 完全一致。
-5. 正式版发 GitHub Release（tag `v<versionName>`）；测试版传 AList，两者不混用。
+5. 正式版发 GitHub Release（tag `v<versionName>`，非预发布）；测试版发预发布（`--prerelease`，tag `v<versionName>`）。
 6. 构建用的临时 `android-native/app/signing.properties` 构建后删除，不提交。
+7. 测试包构建用 `-PpocketVersionName=...`，不改仓库文件；构建后 `git status` 应保持干净。
+
+```bash
+# 测试版
+gh release create v0.1.23-internal.1 --prerelease --notes "..." \
+  Profer-Pocket-0.1.23-internal.1.apk pocket-update.json
+
+# 正式版
+gh release create v0.1.22 --notes "..." Profer-Pocket-0.1.22.apk pocket-update.json
+```
 
 ## 8. 历史版本
 

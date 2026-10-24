@@ -16,13 +16,16 @@ import java.net.URL
 import java.security.MessageDigest
 
 /**
- * 双通道更新检查：
- * - 正式版：GitHub 最新 Release，APK 与 pocket-update.json 作为 Release 资产。
- * - 测试版：AList 开发者源（设置里连点版本号 10 次触发）。
+ * 双通道更新检查，全部走 GitHub Release：
+ * - 正式版：最新的非预发布 Release。
+ * - 测试版：预发布（prerelease），设置里连点版本号 10 次触发。
  */
 object NativePocketUpdater {
-    private const val RELEASES_API =
+    private const val RELEASES_LATEST =
         "https://api.github.com/repos/Yuan-lai-ru-ci/Profer-pocket/releases/latest"
+    private const val RELEASES_LIST =
+        "https://api.github.com/repos/Yuan-lai-ru-ci/Profer-pocket/releases?per_page=30"
+    private const val GITHUB_ACCEPT = "application/vnd.github+json"
     private const val MANIFEST_ASSET = "pocket-update.json"
 
     data class UpdateInfo(
@@ -33,30 +36,25 @@ object NativePocketUpdater {
         val apkUrl: String,
     )
 
-    /** 正式通道：GitHub Release。 */
+    /** 正式通道：最新的非预发布 Release。 */
     suspend fun checkStable(context: Context): Result<UpdateInfo?> = withContext(Dispatchers.IO) {
         runCatching {
-            val release = fetchJson(RELEASES_API, "application/vnd.github+json")
-            val assets = release.getJSONArray("assets")
-            val manifestUrl = findAssetUrl(assets, MANIFEST_ASSET)
-                ?: error("Release ${release.optString("tag_name")} 缺少 $MANIFEST_ASSET")
-            val manifest = fetchJson(manifestUrl, null)
-            val apkAssetName = manifest.getString("apkAssetName")
-            val apkUrl = findAssetUrl(assets, apkAssetName)
-                ?: error("Release 缺少 APK 资产 $apkAssetName")
-            readInfo(manifest, apkUrl).takeIf { it.versionCode > BuildConfig.VERSION_CODE }
+            readReleaseInfo(fetchJson(RELEASES_LATEST, GITHUB_ACCEPT))
+                ?.takeIf { it.versionCode > BuildConfig.VERSION_CODE }
         }
     }
 
-    /** 测试通道：AList 开发者源，地址由本地构建注入（见 build.gradle.kts）。 */
+    /** 测试通道：预发布（prerelease）里 id 最大的那个。 */
     suspend fun checkInternal(context: Context): Result<UpdateInfo?> = withContext(Dispatchers.IO) {
         runCatching {
-            val baseUrl = BuildConfig.INTERNAL_UPDATE_BASE_URL.trim()
-            require(baseUrl.isNotEmpty()) { "测试通道未配置" }
-            val manifest = fetchJson(baseUrl.trimEnd('/') + "/" + MANIFEST_ASSET, null)
-            val apkAssetName = manifest.getString("apkAssetName")
-            readInfo(manifest, baseUrl.trimEnd('/') + "/" + apkAssetName)
-                .takeIf { it.versionCode > BuildConfig.VERSION_CODE }
+            val releases = fetchJsonArray(RELEASES_LIST, GITHUB_ACCEPT)
+            val latestPrerelease = (0 until releases.length())
+                .map { releases.getJSONObject(it) }
+                .filter { it.optBoolean("prerelease") && !it.optBoolean("draft") }
+                .maxByOrNull { it.getLong("id") }
+                ?: return@runCatching null
+            readReleaseInfo(latestPrerelease)
+                ?.takeIf { it.versionCode > BuildConfig.VERSION_CODE }
         }
     }
 
@@ -86,13 +84,29 @@ object NativePocketUpdater {
         }
     }
 
-    private fun fetchJson(url: String, accept: String?): JSONObject {
+    private fun openConnection(url: String, accept: String?): HttpURLConnection {
         val connection = URL(url).openConnection() as HttpURLConnection
         connection.setRequestProperty("User-Agent", "Profer-Pocket")
         if (accept != null) connection.setRequestProperty("Accept", accept)
         connection.connectTimeout = 15_000
         connection.readTimeout = 30_000
-        return connection.inputStream.bufferedReader().use { JSONObject(it.readText()) }
+        return connection
+    }
+
+    private fun fetchJson(url: String, accept: String?): JSONObject =
+        openConnection(url, accept).inputStream.bufferedReader().use { JSONObject(it.readText()) }
+
+    private fun fetchJsonArray(url: String, accept: String?): JSONArray =
+        openConnection(url, accept).inputStream.bufferedReader().use { JSONArray(it.readText()) }
+
+    /** 从 Release 的资产里找 manifest，再按 manifest 找 APK。 */
+    private fun readReleaseInfo(release: JSONObject): UpdateInfo? {
+        val assets = release.getJSONArray("assets")
+        val manifestUrl = findAssetUrl(assets, MANIFEST_ASSET) ?: return null
+        val manifest = fetchJson(manifestUrl, null)
+        val apkAssetName = manifest.getString("apkAssetName")
+        val apkUrl = findAssetUrl(assets, apkAssetName) ?: return null
+        return readInfo(manifest, apkUrl)
     }
 
     private fun findAssetUrl(assets: JSONArray, name: String): String? =
