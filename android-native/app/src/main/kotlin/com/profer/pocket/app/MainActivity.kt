@@ -375,7 +375,27 @@ fun ProferApp(viewModel: PocketViewModel) {
             composable("settings") {
                 val context = LocalContext.current
                 val scope = rememberCoroutineScope()
-                var developerUpdateLabel by remember { mutableStateOf<String?>(null) }
+                var updateLabel by remember { mutableStateOf<String?>(null) }
+                var internalUpdateLabel by remember { mutableStateOf<String?>(null) }
+
+                fun runUpdateCheck(
+                    setLabel: (String?) -> Unit,
+                    check: suspend () -> Result<NativePocketUpdater.UpdateInfo?>,
+                ) {
+                    setLabel("正在检查…")
+                    scope.launch {
+                        check().onSuccess { info ->
+                            if (info == null) {
+                                setLabel("已是最新版本")
+                            } else {
+                                setLabel("发现 ${info.versionName}，正在下载…")
+                                NativePocketUpdater.downloadAndInstall(context, info)
+                                    .onSuccess { setLabel("已触发安装 ${info.versionName}") }
+                                    .onFailure { setLabel("更新失败：${it.message ?: "未知错误"}") }
+                            }
+                        }.onFailure { setLabel("检查失败：${it.message ?: "网络错误"}") }
+                    }
+                }
                 SettingsScreen(
                     themePreference = settings.theme.toPreference(),
                     onThemePreferenceChange = viewModel::updateTheme,
@@ -397,19 +417,13 @@ fun ProferApp(viewModel: PocketViewModel) {
                     onBack = { navController.popBackStack() },
                     showDeveloperTools = debuggable,
                     onOpenStressTest = { navController.navigate("stress") },
-                    developerUpdateLabel = developerUpdateLabel,
-                    onCheckDeveloperUpdate = {
-                        developerUpdateLabel = "正在检查…"
-                        scope.launch {
-                            NativePocketUpdater.check(context).onSuccess { info ->
-                                if (info == null) developerUpdateLabel = "已是最新版本"
-                                else {
-                                    developerUpdateLabel = "发现 ${info.versionName}，点击安装"
-                                    NativePocketUpdater.downloadAndInstall(context, info)
-                                        .onFailure { developerUpdateLabel = "更新失败：${it.message ?: "未知错误"}" }
-                                }
-                            }.onFailure { developerUpdateLabel = "检查失败：${it.message ?: "网络错误"}" }
-                        }
+                    updateLabel = updateLabel,
+                    onCheckUpdate = {
+                        runUpdateCheck({ updateLabel = it }) { NativePocketUpdater.checkStable(context) }
+                    },
+                    internalUpdateLabel = internalUpdateLabel,
+                    onCheckInternalUpdate = {
+                        runUpdateCheck({ internalUpdateLabel = it }) { NativePocketUpdater.checkInternal(context) }
                     },
                 )
             }

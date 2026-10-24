@@ -35,7 +35,10 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -75,9 +78,12 @@ fun SettingsScreen(
     modifier: Modifier = Modifier,
     showDeveloperTools: Boolean = false,
     onOpenStressTest: () -> Unit = {},
-    onCheckDeveloperUpdate: () -> Unit = {},
-    developerUpdateLabel: String? = null,
+    updateLabel: String? = null,
+    onCheckUpdate: () -> Unit = {},
+    internalUpdateLabel: String? = null,
+    onCheckInternalUpdate: () -> Unit = {},
 ) {
+    var versionTapCount by remember { mutableIntStateOf(0) }
     val context = LocalContext.current
     val versionLabel = remember(context) {
         runCatching {
@@ -165,10 +171,14 @@ fun SettingsScreen(
             SectionTitle("更新")
             SettingsCard {
                 SettingsActionRow(
-                    title = "开发者更新",
-                    subtitle = developerUpdateLabel ?: "检查原生 Android 测试版",
-                    onClick = onCheckDeveloperUpdate,
+                    title = "检查更新",
+                    subtitle = updateLabel ?: "从 GitHub 检查正式版",
+                    onClick = onCheckUpdate,
                 )
+                if (internalUpdateLabel != null) {
+                    ProferDivider(insetStart = 16.dp)
+                    SettingsValueRow(title = "测试通道", value = internalUpdateLabel)
+                }
             }
 
             SectionTitle("通知")
@@ -256,7 +266,18 @@ fun SettingsScreen(
 
             SectionTitle("关于")
             SettingsCard {
-                SettingsValueRow(title = "版本", value = versionLabel)
+                SettingsValueRow(
+                    title = "版本",
+                    value = versionLabel,
+                    onClick = {
+                        // 连点 10 次才走 AList 测试通道；平时只是普通点击。
+                        versionTapCount += 1
+                        if (versionTapCount >= 10) {
+                            versionTapCount = 0
+                            onCheckInternalUpdate()
+                        }
+                    },
+                )
                 ProferDivider(insetStart = 16.dp)
                 SettingsValueRow(title = "协议", value = "Pocket WS v1")
             }
@@ -406,11 +427,12 @@ private fun SettingsSwitchRow(
 }
 
 @Composable
-private fun SettingsValueRow(title: String, value: String) {
+private fun SettingsValueRow(title: String, value: String, onClick: (() -> Unit)? = null) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .heightIn(min = 52.dp)
+            .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
             .padding(horizontal = ProferSpacing.md),
         verticalAlignment = Alignment.CenterVertically,
     ) {

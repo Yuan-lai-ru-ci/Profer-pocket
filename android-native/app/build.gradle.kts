@@ -9,26 +9,53 @@ plugins {
 
 /**
  * Pocket 版本规则，详见 android-native/VERSIONING.md：
- * versionName = <major>.<minor>.<patch>-<channel>.<build>
+ * 正式版 versionName = <major>.<minor>.<patch>，versionCode 取该基线最大值（build = 99）
+ * 测试版 versionName = <major>.<minor>.<patch>-<channel>.<build>，build = 1..98
  * versionCode = (major * 10000 + minor * 100 + patch) * 100 + build
- * 例：0.1.20-native.3 -> (0 * 10000 + 1 * 100 + 20) * 100 + 3 = 12003
+ * 例：0.1.21 -> (0 * 10000 + 1 * 100 + 21) * 100 + 99 = 12199
+ *     0.1.21-internal.1 -> (0 * 10000 + 1 * 100 + 21) * 100 + 1 = 12101
  */
 fun pocketVersionCodeOf(versionName: String): Int {
     val core = versionName.substringBefore('-')
     val parts = core.split('.')
-    require(parts.size == 3) { "versionName 必须形如 0.1.20-native.3：$versionName" }
+    require(parts.size == 3) { "versionName 必须形如 0.1.21 或 0.1.21-internal.1：$versionName" }
     val numbers = parts.map { it.toIntOrNull() ?: error("versionName 含非数字段：$versionName") }
-    val build = versionName.substringAfterLast('.', "").toIntOrNull()
-        ?: error("versionName 缺少 build 序号：$versionName")
+    val build = if (versionName.contains('-')) {
+        val suffix = versionName.substringAfter('-')
+        require('.' in suffix) { "测试版 versionName 必须形如 0.1.21-internal.1：$versionName" }
+        suffix.substringAfterLast('.').toIntOrNull() ?: error("测试版 build 序号含非数字：$versionName")
+    } else {
+        99
+    }
     val (major, minor, patch) = numbers
-    require(major in 0..99 && minor in 0..99 && patch in 0..99 && build in 0..99) {
-        "versionName 各段必须在 0..99：$versionName"
+    require(major in 0..99 && minor in 0..99 && patch in 0..99 && build in 1..99) {
+        "versionName 各段必须在 0..99、build 在 1..99：$versionName"
     }
     return (major * 10_000 + minor * 100 + patch) * 100 + build
 }
 
-val pocketVersionName = "0.1.20-native.4"
+val pocketVersionName = "0.1.21"
 val pocketVersionCode = pocketVersionCodeOf(pocketVersionName)
+
+/**
+ * 测试通道（AList）地址只在本地注入，不进仓库、不进公开分发的正式包：
+ * 1. 在 android-native/local.properties 写 proferInternalUpdateBaseUrl=http://<host>/<dir>/
+ * 2. 或构建时传 -PproferInternalUpdateBaseUrl=...
+ * 正式包构建必须加 -PpocketOfficialBuild=true，地址不会写进 APK。
+ * 未配置时该值为空字符串，连点版本号 10 次只提示测试通道未配置。
+ */
+val pocketLocalProperties = Properties().apply {
+    val localPropertiesFile = rootProject.file("local.properties")
+    if (localPropertiesFile.exists()) localPropertiesFile.inputStream().use { load(it) }
+}
+val pocketOfficialBuild = providers.gradleProperty("pocketOfficialBuild").isPresent
+val pocketInternalUpdateBaseUrl = if (pocketOfficialBuild) {
+    ""
+} else {
+    providers.gradleProperty("proferInternalUpdateBaseUrl").orNull
+        ?: pocketLocalProperties.getProperty("proferInternalUpdateBaseUrl")
+        ?: ""
+}
 
 val signingProperties = Properties()
 val signingPropertiesFile = file("signing.properties")
@@ -46,6 +73,7 @@ android {
         targetSdk = 35
         versionCode = pocketVersionCode
         versionName = pocketVersionName
+        buildConfigField("String", "INTERNAL_UPDATE_BASE_URL", "\"$pocketInternalUpdateBaseUrl\"")
     }
 
     signingConfigs {

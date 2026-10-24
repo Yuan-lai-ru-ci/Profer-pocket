@@ -8,29 +8,55 @@ import android.provider.Settings
 import androidx.core.content.FileProvider
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
-import java.security.MessageDigest
 import java.net.HttpURLConnection
 import java.net.URL
+import java.security.MessageDigest
 
-/** Developer-channel updater for the native Android client. */
+/**
+ * 双通道更新检查：
+ * - 正式版：GitHub 最新 Release，APK 与 pocket-update.json 作为 Release 资产。
+ * - 测试版：AList 开发者源（设置里连点版本号 10 次触发）。
+ */
 object NativePocketUpdater {
-    private const val MANIFEST_URL = "http://<internal-host>/<internal-dir>/pocket-update.json"
-    private const val APK_BASE_URL = "http://<internal-host>/<internal-dir>/"
+    private const val RELEASES_API =
+        "https://api.github.com/repos/Yuan-lai-ru-ci/Profer-pocket/releases/latest"
+    private const val MANIFEST_ASSET = "pocket-update.json"
 
-    data class UpdateInfo(val versionCode: Int, val versionName: String, val apkAssetName: String, val sha256: String)
+    data class UpdateInfo(
+        val versionCode: Int,
+        val versionName: String,
+        val apkAssetName: String,
+        val sha256: String,
+        val apkUrl: String,
+    )
 
-    suspend fun check(context: Context): Result<UpdateInfo?> = withContext(Dispatchers.IO) {
+    /** 正式通道：GitHub Release。 */
+    suspend fun checkStable(context: Context): Result<UpdateInfo?> = withContext(Dispatchers.IO) {
         runCatching {
-            val manifest = URL(MANIFEST_URL).openStream().bufferedReader().use { JSONObject(it.readText()) }
-            val info = UpdateInfo(
-                versionCode = manifest.getInt("versionCode"),
-                versionName = manifest.getString("versionName"),
-                apkAssetName = manifest.getString("apkAssetName"),
-                sha256 = manifest.getString("sha256").lowercase(),
-            )
-            if (info.versionCode <= BuildConfig.VERSION_CODE) null else info
+            val release = fetchJson(RELEASES_API, "application/vnd.github+json")
+            val assets = release.getJSONArray("assets")
+            val manifestUrl = findAssetUrl(assets, MANIFEST_ASSET)
+                ?: error("Release ${release.optString("tag_name")} 缺少 $MANIFEST_ASSET")
+            val manifest = fetchJson(manifestUrl, null)
+            val apkAssetName = manifest.getString("apkAssetName")
+            val apkUrl = findAssetUrl(assets, apkAssetName)
+                ?: error("Release 缺少 APK 资产 $apkAssetName")
+            readInfo(manifest, apkUrl).takeIf { it.versionCode > BuildConfig.VERSION_CODE }
+        }
+    }
+
+    /** 测试通道：AList 开发者源，地址由本地构建注入（见 build.gradle.kts）。 */
+    suspend fun checkInternal(context: Context): Result<UpdateInfo?> = withContext(Dispatchers.IO) {
+        runCatching {
+            val baseUrl = BuildConfig.INTERNAL_UPDATE_BASE_URL.trim()
+            require(baseUrl.isNotEmpty()) { "测试通道未配置" }
+            val manifest = fetchJson(baseUrl.trimEnd('/') + "/" + MANIFEST_ASSET, null)
+            val apkAssetName = manifest.getString("apkAssetName")
+            readInfo(manifest, baseUrl.trimEnd('/') + "/" + apkAssetName)
+                .takeIf { it.versionCode > BuildConfig.VERSION_CODE }
         }
     }
 
@@ -38,7 +64,8 @@ object NativePocketUpdater {
         runCatching {
             require(info.apkAssetName.endsWith(".apk"))
             val target = File(context.cacheDir, info.apkAssetName)
-            val connection = URL(APK_BASE_URL + info.apkAssetName).openConnection() as HttpURLConnection
+            val connection = URL(info.apkUrl).openConnection() as HttpURLConnection
+            connection.setRequestProperty("User-Agent", "Profer-Pocket")
             connection.connectTimeout = 15_000
             connection.readTimeout = 60_000
             connection.inputStream.use { input -> target.outputStream().use { output -> input.copyTo(output) } }
@@ -58,4 +85,27 @@ object NativePocketUpdater {
             context.startActivity(intent)
         }
     }
+
+    private fun fetchJson(url: String, accept: String?): JSONObject {
+        val connection = URL(url).openConnection() as HttpURLConnection
+        connection.setRequestProperty("User-Agent", "Profer-Pocket")
+        if (accept != null) connection.setRequestProperty("Accept", accept)
+        connection.connectTimeout = 15_000
+        connection.readTimeout = 30_000
+        return connection.inputStream.bufferedReader().use { JSONObject(it.readText()) }
+    }
+
+    private fun findAssetUrl(assets: JSONArray, name: String): String? =
+        (0 until assets.length())
+            .map { assets.getJSONObject(it) }
+            .firstOrNull { it.getString("name") == name }
+            ?.getString("browser_download_url")
+
+    private fun readInfo(manifest: JSONObject, apkUrl: String) = UpdateInfo(
+        versionCode = manifest.getInt("versionCode"),
+        versionName = manifest.getString("versionName"),
+        apkAssetName = manifest.getString("apkAssetName"),
+        sha256 = manifest.getString("sha256").lowercase(),
+        apkUrl = apkUrl,
+    )
 }
