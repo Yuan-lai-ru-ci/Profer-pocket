@@ -64,7 +64,7 @@ object NativePocketUpdater {
             val target = File(context.cacheDir, info.apkAssetName)
             val connection = URL(info.apkUrl).openConnection() as HttpURLConnection
             connection.setRequestProperty("User-Agent", "Profer-Pocket")
-            connection.connectTimeout = 15_000
+            connection.connectTimeout = 30_000
             connection.readTimeout = 60_000
             connection.inputStream.use { input -> target.outputStream().use { output -> input.copyTo(output) } }
             val digest = MessageDigest.getInstance("SHA-256")
@@ -88,7 +88,7 @@ object NativePocketUpdater {
         val connection = URL(url).openConnection() as HttpURLConnection
         connection.setRequestProperty("User-Agent", "Profer-Pocket")
         if (accept != null) connection.setRequestProperty("Accept", accept)
-        connection.connectTimeout = 15_000
+        connection.connectTimeout = 30_000
         connection.readTimeout = 30_000
         return connection
     }
