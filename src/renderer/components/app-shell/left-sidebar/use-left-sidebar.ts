@@ -691,7 +691,7 @@ export function useLeftSidebar(pocketMode?: boolean) {
       toast.success(`标题已更新：${updated.title}`)
     } catch (error) {
       console.error('[侧边栏] 重新生成对话标题失败:', error)
-      toast.error('重新生成标题失败')
+      toast.error(error instanceof Error ? error.message : '重新生成标题失败')
     } finally {
       toast.dismiss(loadingToastId)
       setRegeneratingConversationTitleIds((prev) => {
@@ -1248,7 +1248,7 @@ export function useLeftSidebar(pocketMode?: boolean) {
       toast.success(`标题已更新：${updated.title}`)
     } catch (error) {
       console.error('[侧边栏] 重新生成 Agent 会话标题失败:', error)
-      toast.error('重新生成标题失败')
+      toast.error(error instanceof Error ? error.message : '重新生成标题失败')
     } finally {
       toast.dismiss(loadingToastId)
       setRegeneratingTitleIds((prev) => { const next = new Set(prev); next.delete(id); return next })
