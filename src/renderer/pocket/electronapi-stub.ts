@@ -47,6 +47,54 @@ interface AgentSessionMetaRemoteClient {
   listSessions(): Promise<unknown>
 }
 
+/** 创建会话时只透传 workspaceId；默认预设由服务端按工作区权威配置解析。 */
+export interface CreateSessionRemoteClient {
+  createSession(payload: {
+    title?: string
+    channelId?: string
+    workspaceId?: string
+    modelId?: string
+    presetId?: string
+    agentRuntime?: 'claude' | 'pi'
+    permissionMode?: 'auto' | 'plan' | 'bypassPermissions'
+  }): Promise<unknown>
+}
+
+export async function createSessionWithWorkspaceDefault<T extends Record<string, unknown>>(
+  client: CreateSessionRemoteClient,
+  payload: {
+    title?: string
+    channelId?: string
+    workspaceId?: string
+    modelId?: string
+    presetId?: string
+    agentRuntime?: 'claude' | 'pi'
+    permissionMode?: 'auto' | 'plan' | 'bypassPermissions'
+  },
+): Promise<T> {
+  const created = await client.createSession(payload) as Record<string, unknown>
+  assertCreatedSessionPreset(created, payload.presetId)
+  return created as T
+}
+
+export function assertCreatedSessionPreset(
+  session: Record<string, unknown>,
+  requestedPresetId?: string,
+): void {
+  if (session.presetId === undefined || session.presetId === null) {
+    throw new Error('远端新会话未返回 presetId')
+  }
+  const reference = session.presetReference
+  if (!reference || typeof reference !== 'object'
+    || (reference as Record<string, unknown>).presetId !== session.presetId
+    || !['builtin-meta', 'user-global', 'workspace'].includes(String((reference as Record<string, unknown>).presetScope))) {
+    throw new Error('远端新会话未返回匹配的 presetReference')
+  }
+  if (requestedPresetId && session.presetId !== requestedPresetId) {
+    throw new Error(`远端新会话预设不匹配: expected=${requestedPresetId}, actual=${String(session.presetId)}`)
+  }
+}
+
 function isAgentSessionMetaRecord(value: unknown): value is AgentSessionMetaRecord {
   if (!value || typeof value !== 'object') return false
   const record = value as Record<string, unknown>
@@ -793,9 +841,9 @@ export function installElectronApiStub(): void {
     },
     // ---- 命令映射：LeftSidebar 会话管理（已在 WebSocket 建连后注入） ----
     listAgentSessions: () => remoteClient?.listSessions() ?? Promise.resolve([]),
-    createAgentSession: async (title?: string, channelId?: string, workspaceId?: string, modelId?: string, presetId?: string, permissionMode?: 'auto' | 'plan' | 'bypassPermissions') => {
+    createAgentSession: async (title?: string, channelId?: string, workspaceId?: string, modelId?: string, presetId?: string, permissionMode?: 'auto' | 'plan' | 'bypassPermissions', agentRuntime?: 'claude' | 'pi') => {
       if (!remoteClient) throw new Error('移动端连接未就绪')
-      const created = await remoteClient.createSession({ title, channelId, workspaceId, modelId, presetId, permissionMode }) as Record<string, unknown>
+      const created = await createSessionWithWorkspaceDefault(remoteClient, { title, channelId, workspaceId, modelId, presetId, permissionMode, agentRuntime })
       const sessionId = typeof created.id === 'string' ? created.id : String(created.sessionId || '')
       if (!sessionId) throw new Error('远端创建会话未返回 sessionId')
       return resolveAuthoritativeAgentSession(remoteClient, sessionId, created)

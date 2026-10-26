@@ -893,9 +893,11 @@ function App({ onReady }: { onReady: () => void }): React.ReactElement {
     try {
       const permissionMode = pocketStore.get(agentDefaultPermissionModeAtom)
       const workspaceId = pocketStore.get(currentAgentWorkspaceIdAtom) ?? undefined
-      const agentRuntime = pocketStore.get(agentRuntimeAtom)
-      const data = await client.createSession({ title: '新会话', workspaceId, agentRuntime, permissionMode }) as { id?: string; sessionId?: string; title: string; permissionMode?: string }
-      const sessionId = data?.id ?? data?.sessionId
+      const data = await window.electronAPI.createAgentSession(
+        '新会话', undefined, workspaceId, undefined, undefined, permissionMode,
+        pocketStore.get(agentRuntimeAtom),
+      )
+      const sessionId = data?.id
       if (sessionId) {
         await openSession(sessionId, data.title)
         void loadSessions(client)

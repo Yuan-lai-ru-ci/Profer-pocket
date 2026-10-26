@@ -4,7 +4,54 @@ import {
   installElectronApiStub,
   requestWorkspaceHeatmapDaily,
   resolveAuthoritativeAgentSession,
+  createSessionWithWorkspaceDefault,
+  assertCreatedSessionPreset,
 } from './electronapi-stub'
+
+describe('createSessionWithWorkspaceDefault', () => {
+  test('透传 workspaceId，让服务端按权威工作区默认解析', async () => {
+    let request: Record<string, unknown> | undefined
+    const client = {
+      createSession: async (payload: Record<string, unknown>) => {
+        request = payload
+        return {
+          id: 'session-1', title: 'New session', createdAt: 1, updatedAt: 2,
+          presetId: 'global-project-lead',
+          presetReference: { presetId: 'global-project-lead', presetScope: 'user-global' },
+        }
+      },
+    }
+
+    const created = await createSessionWithWorkspaceDefault(client, { workspaceId: 'workspace-1' })
+    expect(request).toEqual({ workspaceId: 'workspace-1' })
+    expect(created.presetReference).toEqual({ presetId: 'global-project-lead', presetScope: 'user-global' })
+  })
+
+  test('显式 presetId 仍保留，并要求服务端投影匹配', async () => {
+    let request: Record<string, unknown> | undefined
+    const client = {
+      createSession: async (payload: Record<string, unknown>) => {
+        request = payload
+        return {
+          id: 'session-1', title: 'New session', createdAt: 1, updatedAt: 2,
+          presetId: 'global-project-lead',
+          presetReference: { presetId: 'global-project-lead', presetScope: 'user-global' },
+        }
+      },
+    }
+
+    await createSessionWithWorkspaceDefault(client, { workspaceId: 'workspace-1', presetId: 'global-project-lead' })
+    expect(request?.presetId).toBe('global-project-lead')
+  })
+
+  test('rejects a create projection that did not preserve the requested preset', () => {
+    expect(() => assertCreatedSessionPreset({
+      presetId: 'standard', presetReference: { presetId: 'standard', presetScope: 'builtin-meta' },
+    }, 'global-project-lead')).toThrow('远端新会话预设不匹配')
+    expect(() => assertCreatedSessionPreset({ presetId: 'global-project-lead' }, 'global-project-lead'))
+      .toThrow('未返回匹配的 presetReference')
+  })
+})
 
 const entries = [
   { date: '2026-08-20', tokens: 1200 },
