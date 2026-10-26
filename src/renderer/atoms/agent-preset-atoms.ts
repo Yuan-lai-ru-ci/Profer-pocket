@@ -56,8 +56,12 @@ export function presetOf(presets: AgentPreset[], presetId: string | undefined): 
   // 防御：预设缓存一旦被写成非数组（例如旧版桌面端回包形状不一致、异常响应体），
   // 这里的 `.find` 会抛 "presets.find is not a function"，React 整树卸载 → 移动端白屏。
   if (!Array.isArray(presets)) return undefined
-  if (!presetId) return presets.find((p) => p.id === DEFAULT_PRESET_ID)
-  return presets.find((p) => p.id === presetId) ?? presets.find((p) => p.id === DEFAULT_PRESET_ID)
+  const enabledPresets = presets.filter((preset) => preset.enabledInWorkspace !== false)
+  if (presetId) {
+    const selected = enabledPresets.find((preset) => preset.id === presetId)
+    if (selected) return selected
+  }
+  return enabledPresets.find((preset) => preset.id === DEFAULT_PRESET_ID) ?? enabledPresets[0]
 }
 
 export const sessionPresetIdAtom = atomFamily((sessionId: string) =>

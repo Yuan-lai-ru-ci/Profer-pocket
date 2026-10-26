@@ -14,7 +14,7 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
-import { agentPresetsLoadedAtom, agentSessionPresetMapAtom, presetCacheKey, workspacePresetsAtom, presetOf } from '@/atoms/agent-preset-atoms'
+import { agentPresetsLoadedAtom, agentSessionPresetMapAtom, presetCacheKey, workspacePresetsAtom } from '@/atoms/agent-preset-atoms'
 import { mergeAuthoritativeAgentSession } from '@/lib/agent-session-settings'
 import { useSessionSettingMutation } from '@/lib/use-session-setting-mutation'
 import { agentSessionsAtom, workspaceCapabilitiesVersionAtom } from '@/atoms/agent-atoms'
@@ -102,8 +102,9 @@ export function PresetSelector({ sessionId, persistedPresetId, persistedPresetRe
     return () => { cancelled = true }
   }, [cacheKey, capabilitiesVersion, setLoadedPresets, setPresets, workspaceSlug])
 
-  const effectiveId = presetMap.get(sessionId) ?? persistedPresetReference?.presetId ?? persistedPresetId ?? DEFAULT_PRESET_ID
-  const current = presetOf(availablePresets, effectiveId)
+  const projectedId = persistedPresetReference?.presetId ?? persistedPresetId
+  const effectiveId = pocketMode ? projectedId : projectedId ?? presetMap.get(sessionId) ?? DEFAULT_PRESET_ID
+  const current = effectiveId ? availablePresets.find((preset) => preset.id === effectiveId) : undefined
 
   const selectPreset = React.useCallback(async (presetId: string) => {
     if (pending) return
@@ -124,7 +125,8 @@ export function PresetSelector({ sessionId, persistedPresetId, persistedPresetRe
       rollback: () => {
         setPresetMap((prev: Map<string, string>) => {
           const next = new Map(prev)
-          next.set(sessionId, prevId)
+          if (prevId) next.set(sessionId, prevId)
+          else next.delete(sessionId)
           return next
         })
       },
@@ -180,7 +182,7 @@ export function PresetSelector({ sessionId, persistedPresetId, persistedPresetRe
                 type="button"
                 variant="ghost"
                 size="icon"
-                aria-label={`预设：${current?.name ?? '标准'}`}
+                aria-label={`预设：${current?.name ?? (pocketMode ? '未选择' : '标准')}`}
                 className="size-[36px] rounded-full text-foreground/60 hover:text-foreground"
               >
                 <BriefcaseBusiness className="size-5" />

@@ -17,6 +17,15 @@ describe('presetOf 防御性解析', () => {
     expect(presetOf(presets, 'not-exist')?.id).toBe('standard')
   })
 
+  test('Given 工作区默认 user-global 预设且 standard 已停用 Then 展示可用的默认预设', () => {
+    const presets = [preset('standard'), { ...preset('project-lead'), scope: 'user-global' as const }]
+    presets[0]!.enabledInWorkspace = false
+
+    expect(presetOf(presets, 'project-lead')?.id).toBe('project-lead')
+    expect(presetOf(presets, 'stale-id')?.id).toBe('project-lead')
+    expect(presetOf(presets, undefined)?.id).toBe('project-lead')
+  })
+
   test('Given 预设缓存不是数组 Then 返回 undefined 而不是抛错（移动端白屏回归防护）', () => {
     // 旧版桌面端把 list_presets 包装成 { presets: [...] } 时，上层会把它直接写进
     // workspacePresetsAtom；此处若不防御，render 阶段会抛
