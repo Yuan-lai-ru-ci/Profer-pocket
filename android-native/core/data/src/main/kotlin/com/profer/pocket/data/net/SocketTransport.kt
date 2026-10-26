@@ -29,15 +29,17 @@ interface SocketTransport {
  * 一次连接尝试的目标。
  *
  * - [endpoint] 为空：手动连接的 `?token=` 旧私网路径，走系统 CA；
- * - [endpoint] 非空：扫码绑定的 v1 端点，按端点的 trustMode 选择 pinned 或系统校验，
- *   并带 `Sec-WebSocket-Protocol: profer.remote.v1`。
+ * - [endpoint] 非空：按端点的 trustMode 选择 pinned 或系统校验（TLS 由 OkHttp 决定）；
+ * - [useV1Protocol] 为 true 时带 `Sec-WebSocket-Protocol: profer.remote.v1`，
+ *   手动 `?token=` 路径即使带了 pinned 端点也不能带子协议（服务端会按 v1 握手解析）。
  */
 data class ConnectTarget(
     val url: String,
     val endpoint: RemoteEndpoint? = null,
+    val useV1Protocol: Boolean = endpoint != null,
 ) {
     val subprotocols: List<String>
-        get() = if (endpoint == null) emptyList() else listOf(REMOTE_PROTOCOL)
+        get() = if (useV1Protocol) listOf(REMOTE_PROTOCOL) else emptyList()
 }
 
 fun interface SocketTransportFactory {

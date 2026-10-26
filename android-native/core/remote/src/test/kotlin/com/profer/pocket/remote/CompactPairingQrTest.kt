@@ -55,4 +55,80 @@ class CompactPairingQrTest {
             RemoteValidation.parsePairingQr(JSONObject(base.toString()).put("v", 1).toString(), now)
         }
     }
+
+    @Test
+    fun `parses v3 pairing QR with pinned public endpoint`() {
+        val now = 1_700_000_000_000L
+        val pin = "sha256/" + "A".repeat(43) + "="
+        val qr = RemoteValidation.parsePairingQr(
+            JSONObject()
+                .put("v", 3)
+                .put("d", deviceId)
+                .put("h", "192.168.1.2:7788")
+                .put("p", "203.0.113.7:17788")
+                .put("k", pin)
+                .put("c", code)
+                .put("x", now / 1000 + 300)
+                .toString(),
+            now,
+        )
+        assertEquals(2, qr.endpoints.size)
+        assertEquals(EndpointScope.LAN, qr.endpoints[0].scope)
+        assertEquals("ws://192.168.1.2:7788/ws", qr.endpoints[0].url)
+        assertEquals(EndpointScope.PUBLIC, qr.endpoints[1].scope)
+        assertEquals(TrustMode.PINNED, qr.endpoints[1].trustMode)
+        assertEquals("wss://203.0.113.7:17788/ws", qr.endpoints[1].url)
+        assertEquals(pin, qr.endpoints[1].pin?.value)
+    }
+
+    @Test
+    fun `v3 domain public endpoint is system trusted and rejects pin`() {
+        val now = 1_700_000_000_000L
+        val base = JSONObject()
+            .put("v", 3)
+            .put("d", deviceId)
+            .put("h", "192.168.1.2:7788")
+            .put("p", "remote.example.com:443")
+            .put("c", code)
+            .put("x", now / 1000 + 300)
+        val qr = RemoteValidation.parsePairingQr(base.toString(), now)
+        assertEquals(TrustMode.SYSTEM, qr.endpoints[1].trustMode)
+        assertEquals("wss://remote.example.com/ws", qr.endpoints[1].url)
+        assertThrows(RemoteValidationException::class.java) {
+            RemoteValidation.parsePairingQr(
+                JSONObject(base.toString()).put("k", "sha256/" + "A".repeat(43) + "=").toString(),
+                now,
+            )
+        }
+    }
+
+    @Test
+    fun `v3 rejects missing pin and malformed public host`() {
+        val now = 1_700_000_000_000L
+        val pin = "sha256/" + "A".repeat(43) + "="
+        val base = JSONObject()
+            .put("v", 3)
+            .put("d", deviceId)
+            .put("h", "192.168.1.2:7788")
+            .put("p", "203.0.113.7:17788")
+            .put("k", pin)
+            .put("c", code)
+            .put("x", now / 1000 + 300)
+        val withoutPin = JSONObject(base.toString())
+        withoutPin.remove("k")
+        assertThrows(RemoteValidationException::class.java) {
+            RemoteValidation.parsePairingQr(withoutPin.toString(), now)
+        }
+        for (broken in listOf(
+            JSONObject(base.toString()).put("p", "203.0.113.7:0"),
+            JSONObject(base.toString()).put("p", "203.0.113.7:17788/ws"),
+            JSONObject(base.toString()).put("k", "sha256/bad"),
+            JSONObject(base.toString()).put("extra", "SECRET"),
+            JSONObject(base.toString()).put("x", now / 1000 - 1),
+        )) {
+            assertThrows(RemoteValidationException::class.java) {
+                RemoteValidation.parsePairingQr(broken.toString(), now)
+            }
+        }
+    }
 }

@@ -193,7 +193,7 @@ class DeviceRegistry(
         return save(profile, token, TransportMode.LEGACY_QUERY)
     }
 
-    fun manualProfile(endpoint: String, deviceId: String, updatedAt: Long = clock()): RemoteProfile {
+    fun manualProfile(endpoint: String, deviceId: String, updatedAt: Long = clock(), pin: String? = null): RemoteProfile {
         val host = try {
             URI(endpoint).host?.lowercase()
         } catch (_: Exception) {
@@ -201,7 +201,16 @@ class DeviceRegistry(
         } ?: throw RemoteValidationException("地址格式不正确")
         val scope = if (RemoteValidation.isPrivateHost(host)) EndpointScope.LAN else EndpointScope.PUBLIC
         val endpointJson = JSONObject().put("url", endpoint).put("scope", scope.wire)
-        if (scope == EndpointScope.PUBLIC) endpointJson.put("trustMode", TrustMode.SYSTEM.wire)
+        if (scope == EndpointScope.PUBLIC) {
+            // 公网自签端点必须带 pin；不带 pin 则按系统可信证书处理（用户自己的反代）。
+            if (pin != null) {
+                endpointJson
+                    .put("trustMode", TrustMode.PINNED.wire)
+                    .put("pin", JSONObject().put("algorithm", RemotePin.ALGORITHM).put("value", pin))
+            } else {
+                endpointJson.put("trustMode", TrustMode.SYSTEM.wire)
+            }
+        }
         val validated = RemoteValidation.validateEndpoint(endpointJson)
         return RemoteProfile(
             schemaVersion = if (scope == EndpointScope.PUBLIC) 2 else 1,

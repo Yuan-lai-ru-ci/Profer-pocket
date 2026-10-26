@@ -76,7 +76,9 @@ object UiMapping {
     fun connectionState(
         status: ConnectionStatus,
         url: String,
+        port: String = "",
         token: String,
+        pin: String = "",
         hasSavedToken: Boolean,
         latencyMs: Int? = null,
         devices: List<RemoteDevice> = emptyList(),
@@ -125,7 +127,9 @@ object UiMapping {
         return ConnectionUiState(
             phase = phase,
             url = url,
+            port = port,
             token = token,
+            pin = pin,
             hasSavedToken = hasSavedToken,
             deviceName = deviceName,
             deviceAddress = endpoint,

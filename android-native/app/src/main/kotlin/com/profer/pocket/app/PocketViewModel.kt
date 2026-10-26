@@ -64,7 +64,9 @@ class PocketViewModel(application: Application) : AndroidViewModel(application) 
     private val _conversationsRefreshing = MutableStateFlow(false)
 
     private val _urlInput = MutableStateFlow("")
+    private val _portInput = MutableStateFlow("")
     private val _tokenInput = MutableStateFlow("")
+    private val _pinInput = MutableStateFlow("")
     private val _sessionQuery = MutableStateFlow("")
     private val _drafts = MutableStateFlow<Map<String, String>>(emptyMap())
     private var draftSaveJob: Job? = null
@@ -271,17 +273,17 @@ class PocketViewModel(application: Application) : AndroidViewModel(application) 
     private data class ConnectionInputs(
         val status: ConnectionStatus,
         val url: String,
+        val port: String,
         val token: String,
+        val pin: String,
         val latencyMs: Int?,
     )
 
     val connectionUiState: StateFlow<ConnectionUiState> = combine(
         combine(
-            repository.connectionStatus,
-            _urlInput,
-            _tokenInput,
-            repository.latencyMs,
-        ) { status, url, token, latency -> ConnectionInputs(status, url, token, latency) },
+            combine(repository.connectionStatus, _urlInput, _portInput) { status, url, port -> Triple(status, url, port) },
+            combine(_tokenInput, _pinInput, repository.latencyMs) { token, pin, latency -> Triple(token, pin, latency) },
+        ) { (status, url, port), (token, pin, latency) -> ConnectionInputs(status, url, port, token, pin, latency) },
         repository.devices,
         repository.pairingState,
         repository.endpointFailures,
@@ -290,7 +292,9 @@ class PocketViewModel(application: Application) : AndroidViewModel(application) 
         UiMapping.connectionState(
             status = inputs.status,
             url = inputs.url,
+            port = inputs.port,
             token = inputs.token,
+            pin = inputs.pin,
             hasSavedToken = repository.hasSavedToken(),
             latencyMs = inputs.latencyMs,
             devices = devices.devices,
@@ -305,7 +309,9 @@ class PocketViewModel(application: Application) : AndroidViewModel(application) 
         UiMapping.connectionState(
             status = repository.connectionStatus.value,
             url = _urlInput.value,
+            port = _portInput.value,
             token = "",
+            pin = "",
             hasSavedToken = repository.hasSavedToken(),
             devices = repository.devices.value.devices,
             activeDeviceId = repository.devices.value.activeId,
@@ -319,7 +325,11 @@ class PocketViewModel(application: Application) : AndroidViewModel(application) 
         // 本地状态读盘放到后台：SharedPreferences / Keystore 首次访问不应该卡住首帧。
         viewModelScope.launch(Dispatchers.IO) {
             val saved = repository.savedEndpoint().orEmpty()
-            if (saved.isNotEmpty() && _urlInput.value.isEmpty()) _urlInput.value = saved
+            if (saved.isNotEmpty() && _urlInput.value.isEmpty()) {
+                val (host, port) = splitEndpoint(saved)
+                _urlInput.value = host
+                _portInput.value = port
+            }
         }
         viewModelScope.launch(Dispatchers.IO) {
             _drafts.value = container.draftStore.load()
@@ -887,10 +897,17 @@ class PocketViewModel(application: Application) : AndroidViewModel(application) 
     // ===== 连接 =====
 
     fun connect() {
-        val ok = repository.connect(_urlInput.value, _tokenInput.value)
+        val ok = repository.connect(
+            endpointInput = composeEndpoint(_urlInput.value, _portInput.value),
+            tokenInput = _tokenInput.value,
+            pinInput = _pinInput.value.ifBlank { null },
+        )
         if (ok) {
             _tokenInput.value = ""
-            _urlInput.value = repository.savedEndpoint().orEmpty()
+            _pinInput.value = ""
+            val (host, port) = splitEndpoint(repository.savedEndpoint().orEmpty())
+            _urlInput.value = host
+            _portInput.value = port
         }
         container.syncBackgroundService()
     }
@@ -899,12 +916,41 @@ class PocketViewModel(application: Application) : AndroidViewModel(application) 
         _urlInput.value = url
     }
 
+    fun updatePort(port: String) {
+        _portInput.value = port.filter { it.isDigit() }.take(5)
+    }
+
+    fun updatePin(pin: String) {
+        _pinInput.value = pin.trim()
+    }
+
+    /** 地址 + 端口拼成连接地址：已带 scheme 时原样使用，方便直接粘贴完整 URL。 */
+    private fun composeEndpoint(host: String, port: String): String {
+        val trimmed = host.trim()
+        if (trimmed.contains("://")) return trimmed
+        val p = port.trim()
+        return if (p.isEmpty()) trimmed else "$trimmed:$p"
+    }
+
+    /** 回显已保存地址：拆成「主机」与「端口」两个输入框。 */
+    private fun splitEndpoint(url: String): Pair<String, String> {
+        if (url.isBlank()) return "" to ""
+        val uri = runCatching { java.net.URI(url) }.getOrNull() ?: return url to ""
+        val host = uri.host?.removePrefix("[")?.removeSuffix("]") ?: return url to ""
+        return host to if (uri.port > 0) uri.port.toString() else ""
+    }
+
     /** 仅 debug：验收/自动化用启动参数直接配置连接，不经过输入框。 */
     fun connectWith(endpoint: String, token: String) {
-        _urlInput.value = endpoint
+        val (host, port) = splitEndpoint(endpoint)
+        _urlInput.value = host
+        _portInput.value = port
         if (repository.connect(endpoint, token)) {
             _tokenInput.value = ""
-            _urlInput.value = repository.savedEndpoint().orEmpty()
+            _pinInput.value = ""
+            val (savedHost, savedPort) = splitEndpoint(repository.savedEndpoint().orEmpty())
+            _urlInput.value = savedHost
+            _portInput.value = savedPort
             container.syncBackgroundService()
         }
     }

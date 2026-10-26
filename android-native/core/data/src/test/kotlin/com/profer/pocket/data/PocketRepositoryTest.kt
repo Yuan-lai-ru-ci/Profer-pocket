@@ -809,4 +809,34 @@ class PocketRepositoryTest {
         assertEquals(null, fixture.repository.devices.value.activeId)
         assertTrue(fixture.repository.connectionStatus.value is com.profer.pocket.model.ConnectionStatus.Offline)
     }
+
+    @Test
+    fun `手动公网连接自动改用 wss 并携带 pinned 指纹`() = runTest {
+        val fixture = fixture(backgroundScope, SessionSnapshotStore.Snapshot())
+        runCurrent()
+        val pin = "sha256/" + "A".repeat(43) + "="
+
+        assertTrue(fixture.repository.connect("203.0.113.7:17788", "t", pin))
+        val target = fixture.factory.created.single().lastTarget!!
+        assertEquals("wss://203.0.113.7:17788/ws?token=t", target.url)
+        assertEquals(com.profer.pocket.remote.TrustMode.PINNED, target.endpoint?.trustMode)
+        assertEquals(pin, target.endpoint?.pin?.value)
+        // 手动 `?token=` 路径不能带 v1 子协议，否则服务端会按 v1 握手解析。
+        assertEquals(false, target.useV1Protocol)
+        val saved = fixture.repository.devices.value.devices.single().profile.endpoints.single()
+        assertEquals(com.profer.pocket.remote.EndpointScope.PUBLIC, saved.scope)
+        assertEquals(com.profer.pocket.remote.TrustMode.PINNED, saved.trustMode)
+    }
+
+    @Test
+    fun `手动公网连接不带指纹时按系统可信处理`() = runTest {
+        val fixture = fixture(backgroundScope, SessionSnapshotStore.Snapshot())
+        runCurrent()
+
+        assertTrue(fixture.repository.connect("remote.example.com:443", "t"))
+        val target = fixture.factory.created.single().lastTarget!!
+        assertEquals("wss://remote.example.com:443/ws?token=t", target.url)
+        assertEquals(com.profer.pocket.remote.TrustMode.SYSTEM, target.endpoint?.trustMode)
+        assertEquals(null, target.endpoint?.pin)
+    }
 }

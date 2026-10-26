@@ -20,6 +20,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.ArrowBack
@@ -61,6 +62,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import com.profer.pocket.designsystem.component.ProferDivider
@@ -78,7 +80,9 @@ fun ConnectionScreen(
     state: ConnectionUiState,
     onBack: () -> Unit,
     onUrlChange: (String) -> Unit,
+    onPortChange: (String) -> Unit,
     onTokenChange: (String) -> Unit,
+    onPinChange: (String) -> Unit,
     onConnect: () -> Unit,
     onDisconnect: () -> Unit,
     onCancel: () -> Unit,
@@ -160,11 +164,15 @@ fun ConnectionScreen(
                     }
                     ManualConnectPanel(
                         url = state.url,
+                        port = state.port,
                         token = state.token,
+                        pin = state.pin,
                         hasSavedToken = state.hasSavedToken,
                         errorMessage = state.errorMessage,
                         onUrlChange = onUrlChange,
+                        onPortChange = onPortChange,
                         onTokenChange = onTokenChange,
+                        onPinChange = onPinChange,
                         onConnect = onConnect,
                         onPaste = {
                             val text = clipboard.getText()?.text?.trim().orEmpty()
@@ -207,7 +215,7 @@ fun ConnectionScreen(
 
             Spacer(modifier = Modifier.height(ProferSpacing.xl))
             Text(
-                text = "同一 Wi-Fi 下会自动发现附近的 Mac。远程连接需要先在桌面端开启隧道，并保持 Profer 在运行。",
+                text = "同一 Wi-Fi 下可直接扫码连接；公网连接需要先在桌面端配好公网地址与自己的穿透映射。",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -370,11 +378,15 @@ private fun DetailRow(label: String, value: String) {
 @Composable
 private fun ManualConnectPanel(
     url: String,
+    port: String,
     token: String,
+    pin: String,
     hasSavedToken: Boolean,
     errorMessage: String?,
     onUrlChange: (String) -> Unit,
+    onPortChange: (String) -> Unit,
     onTokenChange: (String) -> Unit,
+    onPinChange: (String) -> Unit,
     onConnect: () -> Unit,
     onPaste: () -> Unit,
 ) {
@@ -391,7 +403,7 @@ private fun ManualConnectPanel(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
-                text = "手动连接（局域网）",
+                text = "手动填写连接",
                 style = MaterialTheme.typography.titleSmall,
                 color = MaterialTheme.colorScheme.onSurface,
             )
@@ -413,46 +425,96 @@ private fun ManualConnectPanel(
             )
         }
         Text(
-            text = "桌面端 → 设置 → 远程连接，复制访问地址与连接 Token。",
+            text = "填电脑的 IP（或域名）与端口，再粘贴桌面端「远程连接」里的连接 Token。公网 IP 的自签证书还需要填证书指纹；域名留空即可。",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
 
-        Surface(
+        Row(
             modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(14.dp),
-            color = MaterialTheme.colorScheme.surfaceContainerLow,
-            border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+            horizontalArrangement = Arrangement.spacedBy(ProferSpacing.sm),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
-            Row(
-                modifier = Modifier
-                    .heightIn(min = 52.dp)
-                    .padding(start = 14.dp, end = 4.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            Surface(
+                modifier = Modifier.weight(1f),
+                shape = RoundedCornerShape(14.dp),
+                color = MaterialTheme.colorScheme.surfaceContainerLow,
+                border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
             ) {
-                Icon(
-                    imageVector = Icons.Outlined.Link,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.size(18.dp),
-                )
-                Box(modifier = Modifier.weight(1f)) {
+                Row(
+                    modifier = Modifier
+                        .heightIn(min = 52.dp)
+                        .padding(start = 14.dp, end = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Icon(
+                        imageVector = Icons.Outlined.Link,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(18.dp),
+                    )
+                    Box(modifier = Modifier.weight(1f)) {
+                        BasicTextField(
+                            value = url,
+                            onValueChange = onUrlChange,
+                            textStyle = ProferCodeTextStyle.copy(
+                                color = MaterialTheme.colorScheme.onSurface,
+                            ),
+                            cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+                            singleLine = true,
+                            decorationBox = { inner ->
+                                if (url.isEmpty()) {
+                                    Text(
+                                        text = "电脑 IP 或域名",
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                                inner()
+                            },
+                        )
+                    }
+                    ProferIconAction(
+                        icon = Icons.Outlined.ContentCopy,
+                        contentDescription = "粘贴地址",
+                        onClick = onPaste,
+                    )
+                }
+            }
+            Surface(
+                modifier = Modifier.width(104.dp),
+                shape = RoundedCornerShape(14.dp),
+                color = MaterialTheme.colorScheme.surfaceContainerLow,
+                border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+            ) {
+                Box(
+                    modifier = Modifier
+                        .heightIn(min = 52.dp)
+                        .padding(horizontal = 14.dp),
+                    contentAlignment = Alignment.CenterStart,
+                ) {
                     BasicTextField(
-                        value = url,
-                        onValueChange = onUrlChange,
+                        value = port,
+                        onValueChange = onPortChange,
                         textStyle = ProferCodeTextStyle.copy(
                             color = MaterialTheme.colorScheme.onSurface,
                         ),
                         cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
                         singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        decorationBox = { inner ->
+                            if (port.isEmpty()) {
+                                Text(
+                                    text = "端口",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                            inner()
+                        },
                     )
                 }
-                ProferIconAction(
-                    icon = Icons.Outlined.ContentCopy,
-                    contentDescription = "粘贴地址",
-                    onClick = onPaste,
-                )
             }
         }
 
@@ -490,6 +552,49 @@ private fun ManualConnectPanel(
                                 Text(
                                     text = if (hasSavedToken) "Token 已保存，留空沿用" else "连接 Token",
                                     style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                            inner()
+                        },
+                    )
+                }
+            }
+        }
+
+        Surface(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(14.dp),
+            color = MaterialTheme.colorScheme.surfaceContainerLow,
+            border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+        ) {
+            Row(
+                modifier = Modifier
+                    .heightIn(min = 52.dp)
+                    .padding(horizontal = 14.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Icon(
+                    imageVector = Icons.Outlined.Lock,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(18.dp),
+                )
+                Box(modifier = Modifier.weight(1f)) {
+                    BasicTextField(
+                        value = pin,
+                        onValueChange = onPinChange,
+                        textStyle = ProferCodeTextStyle.copy(
+                            color = MaterialTheme.colorScheme.onSurface,
+                        ),
+                        cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+                        singleLine = true,
+                        decorationBox = { inner ->
+                            if (pin.isEmpty()) {
+                                Text(
+                                    text = "证书指纹（公网 IP 需要，域名可留空）",
+                                    style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
                             }

@@ -18,10 +18,12 @@ import com.profer.pocket.data.settings.SettingsStore
 import com.profer.pocket.data.store.CredentialStore
 import com.profer.pocket.data.store.SessionSnapshotStore
 import com.profer.pocket.remote.DeviceRegistry
+import com.profer.pocket.remote.EndpointScope
 import com.profer.pocket.remote.PairingClient
 import com.profer.pocket.remote.PairingException
 import com.profer.pocket.remote.RemoteDevice
 import com.profer.pocket.remote.RemoteRegistryException
+import com.profer.pocket.remote.RemoteValidation
 import com.profer.pocket.remote.TransportMode
 import com.profer.pocket.model.AgentPresetSummary
 import com.profer.pocket.model.AgentAttachment
@@ -272,10 +274,11 @@ class PocketRepository(
     }
 
     /**
-     * 手动连接（局域网地址 + token）：登记为 `legacy-<uuid>` 设备，
-     * 走旧的 `?token=` 私网路径，不改变任何已扫码绑定的信任锚。
+     * 手动连接（地址 + Token，可选证书指纹）：登记为 `legacy-<uuid>` 设备，走 `?token=` 路径。
+     *
+     * 公网地址自动改用 `wss://`；带指纹时按 pinned 校验自签证书（与扫码公网端点同一套 TLS 规则）。
      */
-    fun connect(endpointInput: String, tokenInput: String?): Boolean {
+    fun connect(endpointInput: String, tokenInput: String?, pinInput: String? = null): Boolean {
         val normalized = EndpointParser.normalize(
             raw = endpointInput,
             fallbackToken = tokenInput?.trim()?.takeIf { it.isNotEmpty() },
@@ -283,24 +286,34 @@ class PocketRepository(
             connection.reportConfigurationError(OfflineCause.Unreachable, "地址格式不正确")
             return false
         }
+        // 公网地址必须走 wss：用户只填 IP:端口 时，这里自动补上加密 scheme。
+        val host = RemoteValidation.hostOf(normalized.wsUrl).orEmpty()
+        val isPublic = host.isNotEmpty() && !RemoteValidation.isPrivateHost(host)
+        val url = if (isPublic && normalized.wsUrl.startsWith("ws://")) {
+            "wss://" + normalized.wsUrl.removePrefix("ws://")
+        } else {
+            normalized.wsUrl
+        }
+        val pin = pinInput?.trim()?.takeIf { it.isNotEmpty() }
         val existing = _devices.value.devices.firstOrNull {
             it.transportMode == TransportMode.LEGACY_QUERY &&
-                it.profile.endpoints.firstOrNull()?.url == normalized.wsUrl
+                it.profile.endpoints.firstOrNull()?.url == url
         }
         val legacy = credentials.load()
         val token = normalized.token
             ?: existing?.let { runCatching { registry.credential(it.profile.deviceId) }.getOrNull() }
-            ?: legacy?.token?.takeIf { legacy.endpoint == normalized.wsUrl }
+            ?: legacy?.token?.takeIf { legacy.endpoint == url }
         if (token.isNullOrBlank()) {
             connection.reportConfigurationError(OfflineCause.MissingCredentials, "请填写连接 Token")
             return false
         }
-        val profile = existing?.profile
-            ?: runCatching { registry.manualProfile(normalized.wsUrl, "legacy-${UUID.randomUUID()}") }
-                .getOrElse {
-                    connection.reportConfigurationError(OfflineCause.Unreachable, it.message)
-                    return false
-                }
+        val profile = runCatching {
+            // 复用已有 deviceId，避免每次重连都换身份；指纹变化则重建端点信任模式。
+            registry.manualProfile(url, existing?.profile?.deviceId ?: "legacy-${UUID.randomUUID()}", pin = pin)
+        }.getOrElse {
+            connection.reportConfigurationError(OfflineCause.Unreachable, it.message)
+            return false
+        }
         try {
             _devices.value = registry.save(profile, token, TransportMode.LEGACY_QUERY)
             _registryError.value = null
@@ -309,8 +322,9 @@ class PocketRepository(
             connection.reportConfigurationError(OfflineCause.Unreachable, error.message)
             return false
         }
+        val endpointInfo = profile.endpoints.firstOrNull()?.takeIf { it.scope == EndpointScope.PUBLIC }
         connection.autoReconnect = _settings.value.autoReconnect
-        connection.connect(normalized.wsUrl, token)
+        connection.connect(url, token, endpointInfo)
         return true
     }
 

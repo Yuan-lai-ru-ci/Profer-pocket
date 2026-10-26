@@ -6,7 +6,11 @@ import androidx.compose.runtime.Immutable
 data class ConnectionUiState(
     val phase: ConnectionPhase = ConnectionPhase.Disconnected,
     val url: String = "",
+    /** 手动连接的端口；与 [url] 分开填写，连接时拼成 host:port。 */
+    val port: String = "",
     val token: String = "",
+    /** 手动连接的自签证书指纹（公网 IP 需要；域名留空走系统可信）。 */
+    val pin: String = "",
     val hasSavedToken: Boolean = false,
     val deviceName: String = "Mac",
     val deviceAddress: String = "",

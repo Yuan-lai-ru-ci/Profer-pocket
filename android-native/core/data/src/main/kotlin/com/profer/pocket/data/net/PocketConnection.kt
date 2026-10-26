@@ -136,9 +136,9 @@ class PocketConnection(
     private var persistJob: Job? = null
     private var queuePersistJob: Job? = null
 
-    /** 连接目标：手动 `?token=` 旧私网路径，或扫码绑定的 v1 资料。 */
+    /** 连接目标：手动 `?token=` 路径（可带公网 pinned 端点），或扫码绑定的 v1 资料。 */
     private sealed interface Target {
-        data class Legacy(val url: String, val token: String) : Target
+        data class Legacy(val url: String, val token: String, val endpointInfo: RemoteEndpoint? = null) : Target
 
         data class Paired(val profile: RemoteProfile, val credential: String) : Target
     }
@@ -173,12 +173,15 @@ class PocketConnection(
     private val inflightSends = mutableMapOf<String, OutgoingMessage>()
     private val queue = ArrayDeque<OutgoingMessage>()
 
-    /** 手动连接（局域网地址 + `?token=`），保留为排障与旧配置回退路径。 */
-    fun connect(endpoint: String, token: String) {
+    /**
+     * 手动连接（`?token=` 路径）：保留为排障与手动填地址的通道。
+     * [endpointInfo] 只用于选择 TLS 校验方式（公网自签需要 pinned），不带 v1 子协议。
+     */
+    fun connect(endpoint: String, token: String, endpointInfo: RemoteEndpoint? = null) {
         synchronized(lock) {
             val previousEndpoint = this.endpoint
             val changed = previousEndpoint != endpoint || this.token != token
-            this.target = Target.Legacy(endpoint, token)
+            this.target = Target.Legacy(endpoint, token, endpointInfo)
             this.profile = null
             this.endpoints = emptyList()
             this.endpointIndex = 0
@@ -803,7 +806,14 @@ class PocketConnection(
         val socket = transports.create()
         transport = socket
         try {
-            socket.connect(ConnectTarget(buildUrl(target.url, target.token)), listener(gen))
+            socket.connect(
+                ConnectTarget(
+                    url = buildUrl(target.url, target.token),
+                    endpoint = target.endpointInfo,
+                    useV1Protocol = false,
+                ),
+                listener(gen),
+            )
         } catch (error: Exception) {
             transport = null
             shouldReconnect = false

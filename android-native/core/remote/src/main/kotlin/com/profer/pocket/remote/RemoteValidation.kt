@@ -34,6 +34,8 @@ object RemoteValidation {
     private val QR_KEYS = PROFILE_KEYS + setOf("kind", "issuedAt", "expiresAt", "pairingCode")
     /** 精简配对码：v/d/h/c/x，只保留配对必需字段。 */
     private val COMPACT_QR_KEYS = setOf("v", "d", "h", "c", "x")
+    /** 带公网端点的精简配对码：v/d/h/p/k/c/x（k 仅 IP 公网端点）。 */
+    private val COMPACT_QR_V3_KEYS = setOf("v", "d", "h", "p", "k", "c", "x")
     private val ENDPOINT_KEYS = setOf("url", "scope", "trustMode", "pin")
     private val PIN_KEYS = setOf("algorithm", "value")
 
@@ -171,6 +173,7 @@ object RemoteValidation {
         } catch (_: Exception) {
             fail("二维码损坏")
         }
+        if (json.opt("v") == 3) return parseCompactPairingQrV3(json, now)
         if (json.opt("v") == 2) return parseCompactPairingQr(json, now)
         val p = record(json, QR_KEYS)
         val parsed = profile(p)
@@ -222,6 +225,63 @@ object RemoteValidation {
             deviceName = "电脑",
             updatedAt = issuedAt,
             endpoints = listOf(endpoint),
+        )
+        return PairingQr(profile, code, issuedAt, expiresAt)
+    }
+
+    /**
+     * 带公网端点的精简配对码：`{"v":3,"d":deviceId,"h":"局域网host:port","p":"公网host:port","k":"sha256/...","c":配对码,"x":过期秒}`。
+     *
+     * 公网端点信任模式由主机形态决定（与桌面 v3 生成规则一致）：
+     * IP 必须带 pin（桌面自签 TLS）；域名必须不带 pin（用户自己的反代终止 TLS，系统可信）。
+     */
+    private fun parseCompactPairingQrV3(p: JSONObject, now: Long): PairingQr {
+        val obj = record(p, COMPACT_QR_V3_KEYS)
+        val version = obj.opt("v")
+        val deviceId = obj.opt("d") as? String
+        val lanValue = obj.opt("h") as? String
+        val publicValue = obj.opt("p") as? String
+        val code = obj.opt("c") as? String
+        val expiresSec = safeInteger(obj.opt("x"))
+        if (version != 3 ||
+            deviceId == null || !DEVICE_ID.matches(deviceId) ||
+            lanValue == null || publicValue == null ||
+            code == null || !PAIRING_CODE.matches(code) ||
+            expiresSec == null || expiresSec <= 0 || expiresSec > 9_007_199_254_740L
+        ) {
+            fail("二维码无效")
+        }
+        val lanHost = compactHost(lanValue)
+        val publicHost = compactHost(publicValue)
+        val expiresAt = expiresSec * 1000
+        val issuedAt = expiresAt - PAIRING_TTL_MS
+        if (issuedAt > now + MAX_CLOCK_SKEW_MS) fail("二维码无效")
+        if (expiresAt <= now) fail("二维码已过期，请在电脑刷新")
+        val lanEndpoint = validateEndpoint(
+            JSONObject().put("url", "ws://$lanHost/ws").put("scope", "lan"),
+        )
+        val publicHostname = hostOf("wss://$publicHost/ws") ?: fail("连接端点无效")
+        val isIpHost = IPV4.matches(publicHostname) || publicHostname.contains(':')
+        val publicEndpoint = if (isIpHost) {
+            validateEndpoint(
+                JSONObject()
+                    .put("url", "wss://$publicHost/ws")
+                    .put("scope", "public")
+                    .put("trustMode", "pinned")
+                    .put("pin", JSONObject().put("algorithm", RemotePin.ALGORITHM).put("value", obj.opt("k"))),
+            )
+        } else {
+            if (obj.has("k")) fail("域名公网端点不能携带 pin")
+            validateEndpoint(
+                JSONObject().put("url", "wss://$publicHost/ws").put("scope", "public").put("trustMode", "system"),
+            )
+        }
+        val profile = RemoteProfile(
+            schemaVersion = 2,
+            deviceId = deviceId,
+            deviceName = "电脑",
+            updatedAt = issuedAt,
+            endpoints = listOf(lanEndpoint, publicEndpoint),
         )
         return PairingQr(profile, code, issuedAt, expiresAt)
     }
