@@ -847,7 +847,9 @@ export function AgentView({ sessionId, pocketMode = false, hideAgentHeader = fal
   const setInputContent = React.useCallback((value: string) => {
     setDraftsMap((prev) => {
       const map = new Map(prev)
-      if (value.trim() === '') {
+      // 只有真正空串才删草稿：纯空格/换行也是用户正在输入的内容，
+      // 删掉会让输入框同步逻辑判定为外部清空，直接 clearContent 丢字
+      if (value === '') {
         map.delete(sessionId)
       } else {
         map.set(sessionId, value)

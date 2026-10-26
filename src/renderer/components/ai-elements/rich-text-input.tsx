@@ -17,6 +17,7 @@
 import { useState, useEffect, useRef, useMemo } from 'react'
 import { useAtomValue } from 'jotai'
 import { useEditor, EditorContent } from '@tiptap/react'
+import type { Editor } from '@tiptap/core'
 import StarterKit from '@tiptap/starter-kit'
 import Placeholder from '@tiptap/extension-placeholder'
 import Underline from '@tiptap/extension-underline'
@@ -69,6 +70,17 @@ function countEditorLines(editor: ReturnType<typeof useEditor>): number {
   })
 
   return lineCount
+}
+
+/**
+ * setContent 会整篇替换文档，ProseMirror 会把选区映射到旧位置；
+ * 外部同步后把光标恢复到原处，越界则夹到文档末尾。
+ */
+function restoreEditorSelection(editor: Editor, from: number, to: number): void {
+  const max = Math.max(editor.state.doc.content.size, 1)
+  const nextFrom = Math.min(Math.max(from, 1), max)
+  const nextTo = Math.min(Math.max(to, nextFrom), max)
+  editor.commands.setTextSelection({ from: nextFrom, to: nextTo })
 }
 
 // ===== 组件接口 =====
@@ -178,6 +190,52 @@ export function RichTextInput({
   // 保持 onHtmlChange 引用最新
   const onHtmlChangeRef = useRef(onHtmlChange)
   onHtmlChangeRef.current = onHtmlChange
+  // 保持 onChange 引用最新（兜底提交 / 卸载提交用）
+  const onChangeRef = useRef(onChange)
+  onChangeRef.current = onChange
+  // 组合输入期间的最新内容：延迟到 compositionend 再向上提交。
+  // 组合期父组件重渲染会推动 ProseMirror 刷新视图、打断 IME 组合，
+  // 结果是文字已插入、光标被恢复成组合前的位置。
+  const pendingCompositionRef = useRef<{ markdown: string; html: string } | null>(null)
+  // 组合输入期间收到外部同步请求时置位，compositionend 后补做一次
+  const pendingSyncRef = useRef(false)
+  // 补做外部同步的触发信号（组合结束后 value/htmlValue 可能没变，effect 不会自己重跑）
+  const [externalSyncNonce, setExternalSyncNonce] = useState(0)
+
+  // 行数检查：rAF 节流；组合输入期间不切高度，避免打断 IME
+  const scheduleLineCheck = (ed: Editor): void => {
+    if (lineCheckHandleRef.current !== null) {
+      cancelAnimationFrame(lineCheckHandleRef.current)
+    }
+    lineCheckHandleRef.current = requestAnimationFrame(() => {
+      lineCheckHandleRef.current = null
+      if (isComposingRef.current) return
+      const nextExpanded = countEditorLines(ed) > 5
+      if (nextExpanded !== isExpandedRef.current) {
+        isExpandedRef.current = nextExpanded
+        setIsExpanded(nextExpanded)
+      }
+    })
+  }
+
+  // 把编辑器内容提交给父组件：正常输入、组合输入结束、失焦兜底共用
+  const commitEditorValueRef = useRef<(ed: Editor, markdown: string, html: string) => void>(() => {})
+  commitEditorValueRef.current = (ed, markdown, html) => {
+    if (html === '') {
+      onChangeRef.current('')
+      onHtmlChangeRef.current?.('')
+      if (isExpandedRef.current) {
+        isExpandedRef.current = false
+        setIsExpanded(false)
+      }
+      setIsManuallyCollapsed(false)
+      return
+    }
+    onChangeRef.current(markdown)
+    onHtmlChangeRef.current?.(html)
+    scheduleLineCheck(ed)
+  }
+
   // 发送模式引用
   const sendWithCmdEnterRef = useRef(sendWithCmdEnter)
   sendWithCmdEnterRef.current = sendWithCmdEnter
@@ -356,6 +414,29 @@ export function RichTextInput({
         },
         compositionend: () => {
           isComposingRef.current = false
+          // 组合结束：把期间暂存的内容一次性提交给父组件
+          const pending = pendingCompositionRef.current
+          pendingCompositionRef.current = null
+          if (pending && editor) {
+            commitEditorValueRef.current(editor, pending.markdown, pending.html)
+          }
+          // 组合期间被推迟的外部同步在这里补做
+          if (pendingSyncRef.current) {
+            pendingSyncRef.current = false
+            setExternalSyncNonce((nonce) => nonce + 1)
+          }
+          return false
+        },
+        blur: () => {
+          // 兜底：组合输入没正常结束（切应用、点别处）时把最后内容提交，避免丢字
+          if (isComposingRef.current) {
+            isComposingRef.current = false
+          }
+          const pending = pendingCompositionRef.current
+          pendingCompositionRef.current = null
+          if (pending && editor) {
+            commitEditorValueRef.current(editor, pending.markdown, pending.html)
+          }
           return false
         },
         copy: (_view, event) => {
@@ -550,35 +631,19 @@ export function RichTextInput({
     },
     onUpdate: ({ editor: ed }) => {
       const html = ed.getHTML()
-      if (html === '<p></p>') {
-        lastEditorValueRef.current = ''
-        onChange('')
-        onHtmlChangeRef.current?.('')
-        if (isExpandedRef.current) {
-          isExpandedRef.current = false
-          setIsExpanded(false)
-        }
-        setIsManuallyCollapsed(false)
-      } else {
-        const markdown = htmlToMarkdown(html, { skipMarkdownEscape: !richTextEnabled })
-        lastEditorValueRef.current = markdown
-        onChange(markdown)
-        onHtmlChangeRef.current?.(html)
+      const isEmpty = html === '<p></p>'
+      const markdown = isEmpty ? '' : htmlToMarkdown(html, { skipMarkdownEscape: !richTextEnabled })
+      lastEditorValueRef.current = markdown
 
-        // 行数检查用 rAF 节流：每键 doc.descendants 全文遍历 + setState 重渲染会让
-        // 输入热路径变重；延后到下一帧合并连续按键，对 UX 无影响。
-        if (lineCheckHandleRef.current !== null) {
-          cancelAnimationFrame(lineCheckHandleRef.current)
-        }
-        lineCheckHandleRef.current = requestAnimationFrame(() => {
-          lineCheckHandleRef.current = null
-          const nextExpanded = countEditorLines(ed) > 5
-          if (nextExpanded !== isExpandedRef.current) {
-            isExpandedRef.current = nextExpanded
-            setIsExpanded(nextExpanded)
-          }
-        })
+      // 组合输入（中文输入法选词）期间只记录最新值，等 compositionend 统一提交：
+      // 组合期父组件重渲染会推动 ProseMirror 刷新视图、打断 IME 组合，
+      // 结果是文字已插入、光标被恢复成组合前的位置（停在输入内容之前）。
+      if (isComposingRef.current) {
+        pendingCompositionRef.current = { markdown, html: isEmpty ? '' : html }
+        return
       }
+
+      commitEditorValueRef.current(ed, markdown, isEmpty ? '' : html)
     },
   }, [richTextEnabled])
 
@@ -588,6 +653,13 @@ export function RichTextInput({
       if (lineCheckHandleRef.current !== null) {
         cancelAnimationFrame(lineCheckHandleRef.current)
         lineCheckHandleRef.current = null
+      }
+      // 卸载兜底：组合输入中途被卸载时，把最后内容交给父组件，避免丢字
+      const pending = pendingCompositionRef.current
+      pendingCompositionRef.current = null
+      if (pending) {
+        onChangeRef.current(pending.markdown)
+        onHtmlChangeRef.current?.(pending.html)
       }
     }
   }, [])
@@ -600,6 +672,11 @@ export function RichTextInput({
       const controllerValue = value
       const isEditorRecreated = editor !== editorInstanceRef.current
       editorInstanceRef.current = editor
+      // 组合输入期间不碰编辑器：等 compositionend 之后再同步，避免打断 IME
+      if (isComposingRef.current) {
+        pendingSyncRef.current = true
+        return
+      }
       // 如果值是编辑器自己设置的，跳过同步
       // 但编辑器重建后必须强制同步（即使 value 未变，htmlValue 草稿可能不同）
       if (!isEditorRecreated && controllerValue === lastEditorValueRef.current) {
@@ -614,8 +691,15 @@ export function RichTextInput({
         setIsManuallyCollapsed(false)
       } else if (htmlValue) {
         // 优先使用 HTML 草稿恢复（保留 mention 等富文本节点）
+        // 内容已一致就不要 setContent：整篇替换会把选区映射到旧位置，光标会跳
+        if (!isEditorRecreated && editor.getHTML() === htmlValue) {
+          lastEditorValueRef.current = controllerValue
+          return
+        }
+        const { from, to } = editor.state.selection
         editor.commands.setContent(htmlValue)
         lastEditorValueRef.current = controllerValue
+        restoreEditorSelection(editor, from, to)
       } else {
         const html = controllerValue
           .split(/\n\n+/)
@@ -625,7 +709,7 @@ export function RichTextInput({
         lastEditorValueRef.current = controllerValue
       }
     }
-  }, [editor, value])
+  }, [editor, value, htmlValue, externalSyncNonce])
 
   // 同步 disabled 状态
   useEffect(() => {
