@@ -17,6 +17,7 @@ import {
   applyGradleDefaultConfig,
   assertPackageVersionsMatchReleaseConfig,
   deriveDevVersion,
+  deriveInternalVersion,
   loadReleaseConfig,
   restoreGradleDevConfig,
 } from './release-utils.mjs'
@@ -50,11 +51,17 @@ const VARIANTS = {
   },
 }
 const DEV_CFG = VARIANTS.dev
+const INTERNAL_SEQUENCE = 1
+const INTERNAL_CFG = {
+  appId: 'com.profer.pocket.dev',
+  appName: 'Profer Pocket（内测版）',
+  ...deriveInternalVersion(releaseConfig, INTERNAL_SEQUENCE),
+}
 const variantArg = process.argv.find((arg) => arg.startsWith('--variant='))
 const variant = variantArg ? variantArg.slice('--variant='.length) : 'dev'
-const cfg = VARIANTS[variant]
+const cfg = variant === 'internal' ? INTERNAL_CFG : VARIANTS[variant]
 if (!cfg) {
-  console.error(`[build-apk] 未知 variant: "${variant}"（可选 dev / release）`)
+  console.error(`[build-apk] 未知 variant: "${variant}"（可选 dev / internal / release）`)
   process.exit(1)
 }
 

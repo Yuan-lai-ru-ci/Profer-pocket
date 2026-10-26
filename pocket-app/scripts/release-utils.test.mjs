@@ -8,6 +8,7 @@ import {
   assertPackageVersionsMatchReleaseConfig,
   cleanupGeneratedManifestAfterPublishFailure,
   deriveDevVersion,
+  deriveInternalVersion,
   buildPublishArgs,
   restoreGradleDevConfig,
   createUpdateManifest,
@@ -49,6 +50,13 @@ test('asserts root and pocket package versions match release config', () => {
 
 test('derives dev version independently from release version', () => {
   assert.deepEqual(deriveDevVersion(config), { versionName: '0.1.11-dev', versionCode: 1010 })
+})
+
+test('derives internal versionName and five-digit versionCode from the stable release', () => {
+  assert.deepEqual(deriveInternalVersion(config, 1), { versionName: '0.1.11-internal.1', versionCode: 11101 })
+  assert.deepEqual(deriveInternalVersion({ ...config, versionName: '0.1.19', versionCode: 18 }, 2), { versionName: '0.1.19-internal.2', versionCode: 11902 })
+  assert.throws(() => deriveInternalVersion(config, 0), /1 to 99/)
+  assert.throws(() => deriveInternalVersion(config, 100), /1 to 99/)
 })
 
 test('applies release Gradle config and restores dynamic dev expressions', () => {

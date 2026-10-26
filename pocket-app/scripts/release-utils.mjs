@@ -64,6 +64,31 @@ export function deriveDevVersion(releaseConfig) {
   }
 }
 
+export function deriveInternalVersion(releaseConfig, sequence) {
+  validateReleaseConfig(releaseConfig)
+  if (!Number.isSafeInteger(sequence) || sequence <= 0 || sequence > 99) {
+    throw new Error('internal sequence must be an integer from 1 to 99')
+  }
+  const internalMatch = /^(\d+)\.(\d+)\.(\d+)-internal\.(\d+)$/.exec(releaseConfig.versionName)
+  if (internalMatch) {
+    const [, major, minor, patch, configuredSequence] = internalMatch
+    const versionBase = Number(major) * 10000 + Number(minor) * 100 + Number(patch)
+    const expectedVersionCode = versionBase * 100 + Number(configuredSequence)
+    if (releaseConfig.versionCode !== expectedVersionCode) {
+      throw new Error(`internal versionCode must be ${expectedVersionCode} for ${releaseConfig.versionName}`)
+    }
+    return { versionName: releaseConfig.versionName, versionCode: releaseConfig.versionCode }
+  }
+  const match = /^(\d+)\.(\d+)\.(\d+)$/.exec(releaseConfig.versionName)
+  if (!match) throw new Error('internal builds require a stable semantic version without a prerelease suffix')
+  const [, major, minor, patch] = match
+  const versionBase = Number(major) * 10000 + Number(minor) * 100 + Number(patch)
+  return {
+    versionName: `${releaseConfig.versionName}-internal.${sequence}`,
+    versionCode: versionBase * 100 + sequence,
+  }
+}
+
 export function applyGradleDefaultConfig(source, config) {
   const withAppId = source.replace(/(^\s*applicationId\s+")[^"]+("\s*$)/m, `$1${config.appId}$2`)
   const withVersionCode = withAppId.replace(/(^\s*versionCode\s+)[^\r\n]+/m, `$1${config.versionCode}`)
