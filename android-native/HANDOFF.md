@@ -48,6 +48,26 @@ android-native/
 | `:app:assembleDebug` | 通过 |
 | 模拟器安装 + 冷启动 | 通过（`am start -W` 2.2s，进入已连接会话） |
 
+2026-10-28 规范补强后复验（API 35 AVD，720×1280 / 320dpi）：
+
+| 项 | 结果 |
+|---|---|
+| `./gradlew test` | 458 个用例（debug+release 双变体），0 失败 |
+| `:app:lintDebug`（含 `checkDependencies`） | 0 errors，8 warnings（3 条为导航库 lint jar 版本告警，其余为未用/重复资源） |
+| `:app:connectedDebugAndroidTest` | 2/2 通过（输入→发送、图标 48dp 热区） |
+| 冷启动 + 抽屉开关 + 返回键 | 通过，返回键关抽屉不退出 App |
+| 键盘弹起 | `mInputShown=true`，输入区在键盘上方，无遮挡 |
+| 浅色 / 深色 | 截图 `screenshots/2026-10-28-audit/` |
+| 2.0× 大字号 | 顶栏、抽屉行、输入区均无截断/重叠 |
+| 240 条长列表 | 可滚动，位置稳定 |
+
+未复验（仍受环境限制）：真实会话正文/工具卡/文件徽标的深色渲染——本轮桌面端 token 不可读，
+没有可用的配对凭据，只验证到空会话 + 抽屉列表；下次有真机联调时补拍。
+
+预测性返回：`keyevent BACK` 路径已验证（关抽屉、不退出 App）；左边缘手势在模拟器上
+用 `adb shell input swipe` 不会触发系统返回手势（无 handler 时同样不退出），
+需要在真机上手动确认回弹动画。
+
 未验证：
 
 - Release 签名包安装与升级（当前 release 为 unsigned，fail-closed）。
@@ -79,6 +99,94 @@ JAVA_HOME=/opt/homebrew/opt/openjdk@21/libexec/openjdk.jdk/Contents/Home \
 - 移除 Typography 里的负字距，避免中文与大字号下字面挤压。
 - M3 `ProferShapes` 收敛为 8/12/16/20/28；`ProferCardShape` 改为 16dp。
 - 抽屉列表行、顶栏、搜索框等导航类控件从 40/44dp 提升到 48dp。
+
+## 4.1 安卓规范补强（2026-10-28）
+
+平台契约：
+
+- **备份规则**：新增 `res/xml/backup_rules.xml`（API 26–30）与 `data_extraction_rules.xml`（API 31+），
+  只备份 `profer_pocket_settings`。凭据、设备指纹、会话快照、草稿、待发送队列、已读位置
+  既不进云备份也不随换机迁移 —— Keystore 密钥不迁移，搬过去也解不开。
+- **前台服务类型**：API 34+ 改用 `remoteMessaging`，API 29–33 回落 `dataSync`。
+  targetSdk 35 上 `dataSync` 有「24 小时内累计 6 小时」上限，长连接会被系统掐断；
+  `remoteMessaging` 无此上限。清单同时声明两个类型与两个权限。
+- **通知文案资源化**：渠道名/描述、常驻通知标题与正文进 `strings.xml`（渠道名常驻系统设置页）。
+- **Debug StrictMode**：主线程磁盘/网络访问、未关闭 Closeable 只记日志，不崩溃。
+
+Compose 规范：
+
+- **IME insets 不再进组合**：`WindowInsets.ime.getBottom()` 原本在组合期直接读，键盘动画每一帧
+  都会让整页重组；改成 `derivedStateOf { ime.getBottom(density) > 0 }`，只暴露「是否弹起」。
+- **滚动副作用按键收敛**：`LaunchedEffect` 的 key 从整段草稿改成换行数，避免每敲一个字重启滚动。
+- **预测性返回**：抽屉在 API 34+ 走 `PredictiveBackHandler`，手势进度直接驱动抽屉位移，
+  取消回弹、完成收尾；更低版本保留 `BackHandler`（两个回调不能同时注册）。
+- **触控热区**：待发送附件的移除按钮从 18dp 点击区改为 48dp 热区（视觉仍 18dp）。
+- **无障碍**：`ProferIconAction`/发送键把 `contentDescription` 放在可点击节点上（原先在 22dp 图标子节点上，
+  读屏焦点会落到一个没有点击动作的节点）；`ProferPill`/连接条动作补 `Role.Button`；
+  `ProferPill` 暴露 `selected` 状态；`ProferSectionLabel` 加 `heading()`；
+  输入区选择器在窄屏隐藏文字时仍保留 `contentDescription`；流式消息暴露「正在生成」`stateDescription`。
+- **触感**：项目行/会话行长按弹菜单前给 `HapticFeedbackType.LongPress`（`rememberLongPressFeedback`）。
+- **Modifier 参数位置**：`ChatScreen`、`ConversationScreen`、`ConversationBody`、`ProferComposer`
+  的 `modifier` 提到第一个可选参数位置，消除 `ModifierParameter` 告警。
+
+设计 token：
+
+- 新增 `ProferFileBadgeColors`（亮/暗各一套）与 `ProferThemeExtras.fileBadges`，
+  文件类型徽标不再写死品牌色；深色底用提亮版本，避免 2:1 对比度。
+- 模型 logo 衬底色进 `ProferSemanticColors.modelLogoPlate`，特性模块不再出现 `Color(0xFF…)`。
+
+构建与测试：
+
+- `kotlinOptions` → `kotlin { compilerOptions { jvmTarget } }`。
+- `lint { checkDependencies = true; checkReleaseBuilds = true; abortOnError = true }`，
+  特性模块的问题在 app 构建阶段就会失败。
+- 新增 `androidTest`：`ComposerInteractionTest` 覆盖「输入 → 发送」与「图标按钮 48dp 热区」。
+- 清理 lint 告警：`commit()` → `apply()`、`PinnedTrustManager` 显式说明、
+  去掉 minSdk 26 下的死分支、debug 导出 receiver 标注理由。
+
+## 4.2 设置/连接页文案极简（2026-10-28）
+
+原则：页面只留「标签 + 状态 + 操作」，解释性段落一律去掉；不可自明的信息压进 placeholder
+或一行短提示。
+
+设置页：
+
+- 删除外观卡片下方整段配色说明；删除通知、自动重连、后台保持连接的副标题；
+  删除「从 GitHub 检查正式版」兑底文案（`updateLabel` 有值才显示）；
+  删除开发者入口的「240 条会话…」；连接行未连接时不再显示「去连接一台电脑」。
+- `SettingsSwitchRow` / `SettingsActionRow` 的 `subtitle` 改为可空，空则不占位；
+  行高仍保持 64dp，大字号下不会因为少一行而拥挤。
+
+连接页：
+
+- 删除 `Intro()`（大标题 + 「手机负责发起，执行留在电脑上。」）与底部「同一 Wi-Fi 下…」段落。
+- 扫码入口去掉卡片外壳与两段说明，只留全宽主按钮 + 配对状态行。
+- 手动填写面板删掉一百多字的说明段，改为一行「自签证书填指纹；无 TLS 的隧道用 ws://」；
+  指纹 placeholder 缩为「证书指纹（自签必填）」。
+- 「扫码连接另一台电脑」去掉副标题。
+
+顺带：三处 `Icons.Outlined.ArrowBack` 换成 `Icons.AutoMirrored.Outlined.ArrowBack`（RTL 镜像）。
+
+验证：`assembleDebug` / `test` / `lintDebug` 全过（0 error）；截图见
+`screenshots/2026-10-28-audit/13–16`（设置页顶/底、连接页默认态、手动填写展开）。
+
+## 4.3 点击反馈形状修正（2026-10-28）
+
+Compose 的 `clickable` 指示层按节点边界绘制：**先 `clickable` 后 `clip`（或压根没 `clip`）时，
+ripple 就是矩形**。约定：可点击的圆形/胶囊/文字按钮一律 `clip(形状)` 后再 `clickable`。
+
+已修：
+
+- `ProferIconAction`（顶栏菜单/更多/返回/关闭等 ≈20 处）—— 之前是 48dp 方角 ripple，现为圆形。
+- 权限卡的「允许/拒绝」胶囊按钮（`ChatComponents`）—— `Surface` 的 shape 不管 ripple，需自己 clip。
+- 连接页「断开连接 / 知道了 / 移除 / 重试」与已绑定设备行。
+- 连接状态条的「重连」文字按钮。
+- 思考过程折叠行。
+
+保持矩形（符合 Material 列表项行为）：设置页条目、抽屉/弹层列表行、全宽提示条。
+
+验证：`assembleDebug` / `test` / `lintDebug` 全过；按住截图见
+`screenshots/2026-10-28-audit/17-ripple-icon.png`（图标按钮圆形）、`18-ripple-banner.png`（文字按钮圆角）。
 
 ## 5. 建议的系统化顺序
 
