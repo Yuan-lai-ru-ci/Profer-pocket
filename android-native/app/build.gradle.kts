@@ -35,7 +35,7 @@ fun pocketVersionCodeOf(versionName: String): Int {
 }
 
 // 正式版默认版本号；测试包构建时传 -PpocketVersionName=0.1.24-internal.1 覆盖，不改文件。
-val pocketVersionName = providers.gradleProperty("pocketVersionName").orNull ?: "0.1.23"
+val pocketVersionName = providers.gradleProperty("pocketVersionName").orNull ?: "0.1.24"
 val pocketVersionCode = pocketVersionCodeOf(pocketVersionName)
 
 val signingProperties = Properties()
