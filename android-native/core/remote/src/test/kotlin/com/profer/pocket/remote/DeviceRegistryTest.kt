@@ -51,6 +51,46 @@ class DeviceRegistryTest {
     }
 
     @Test
+    fun `manual domain connection with pin survives save and reload`() {
+        val storage = MemoryStorage()
+        val registry = registry(storage)
+        // 桌面自签证书的 SAN 只有 IP；手动通道允许「域名 + 指纹」。
+        val profile = registry.manualProfile(
+            endpoint = "wss://yuan.profer.cn/ws",
+            deviceId = "legacy-uuid-1",
+            pin = "sha256/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+        )
+        assertEquals(2, profile.schemaVersion)
+        registry.save(profile, "manual-token", TransportMode.LEGACY_QUERY)
+
+        // 读盘路径必须按同一套放宽规则解析，否则重启后设备会被当成损坏资料丢掉。
+        val reloaded = registry(storage).load()
+        assertEquals(1, reloaded.devices.size)
+        val endpoint = reloaded.devices[0].profile.endpoints.single()
+        assertEquals("wss://yuan.profer.cn/ws", endpoint.url)
+        assertEquals(TrustMode.PINNED, endpoint.trustMode)
+        assertEquals("manual-token", registry(storage).credential("legacy-uuid-1"))
+    }
+
+    @Test
+    fun `manual cleartext tunnel profile round-trips as schema v1`() {
+        val storage = MemoryStorage()
+        val registry = registry(storage)
+        // 明文 ws（frp / SSH 隧道）没有 TLS 信任模式，不能写 schemaVersion 2，
+        // 否则读盘时会被「v2 公网端点必须指定信任模式」判成资料损坏。
+        val profile = registry.manualProfile("ws://yuan.profer.cn:24221/ws", "legacy-uuid-2")
+        assertEquals(1, profile.schemaVersion)
+        registry.save(profile, "manual-token", TransportMode.LEGACY_QUERY)
+
+        val reloaded = registry(storage).load()
+        assertEquals(1, reloaded.devices.size)
+        val endpoint = reloaded.devices[0].profile.endpoints.single()
+        assertEquals("ws://yuan.profer.cn:24221/ws", endpoint.url)
+        assertEquals(null, endpoint.trustMode)
+        assertEquals(EndpointScope.PUBLIC, endpoint.scope)
+    }
+
+    @Test
     fun `select switches active device and validates credential`() {
         val storage = MemoryStorage()
         val registry = registry(storage)

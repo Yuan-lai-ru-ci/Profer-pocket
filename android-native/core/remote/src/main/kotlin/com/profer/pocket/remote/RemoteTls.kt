@@ -1,5 +1,6 @@
 package com.profer.pocket.remote
 
+import android.annotation.SuppressLint
 import okhttp3.OkHttpClient
 import java.security.MessageDigest
 import java.security.cert.CertificateException
@@ -19,9 +20,13 @@ import javax.net.ssl.X509TrustManager
  * - 有效期必须有效，SPKI SHA-256 与 pin 常量时间比较；
  * - 任何异常一律 fail closed，绝不放行。
  *
- * 不安装全局 SSLContext、不设置恒真 HostnameVerifier：OkHttp 仍按 URL 主机名
- * 校验证书，pinned 端点必须自带对应 IP 的 SAN。
+ * 不安装全局 SSLContext；主机名校验只在 [RemoteTls.clientFor] 里对「pinned + 非 IP 主机」
+ * 逐个 client 关闭（桌面自签证书的 SAN 只有 IP，域名场景由 pin 取代主机名校验）。
+ * IP 端点仍要求证书自带对应 SAN。
  */
+// lint 对自定义 TrustManager 默认视为「关闭了证书校验」；这里是反向的：
+// 只信任唯一一张白名单叶证书，比系统 CA 集更严，因此显式压制并保留理由。
+@SuppressLint("CustomX509TrustManager")
 class PinnedTrustManager(pin: RemotePin) : X509TrustManager {
 
     private val expected: ByteArray
@@ -104,6 +109,23 @@ object RemoteTls {
         val trust = PinnedTrustManager(pin)
         val context = SSLContext.getInstance("TLS")
         context.init(null, arrayOf<X509TrustManager>(trust), null)
-        return builder.sslSocketFactory(context.socketFactory, trust).build()
+        builder.sslSocketFactory(context.socketFactory, trust)
+        // 桌面自签证书的 SAN 只有公网 IP（`remote-tls-identity.ts` 只写 IP），用户把同一条
+        // 链路挂在自己的域名/穿透后面时，主机名必然对不上。此时身份已由 SPKI pin 锚定，
+        // 比主机名更强，所以只对「pinned + 非 IP 主机」这一个 client 关闭主机名校验；
+        // 系统可信端点与 IP 端点仍按 OkHttp 默认严格校验。
+        if (!isIpLiteral(endpoint.url)) builder.hostnameVerifier { _, _ -> true }
+        return builder.build()
+    }
+
+    private val IPV4 = Regex("^\\d+\\.\\d+\\.\\d+\\.\\d+$")
+
+    private fun isIpLiteral(url: String): Boolean {
+        val host = try {
+            java.net.URI(url).host?.removePrefix("[")?.removeSuffix("]")
+        } catch (_: Exception) {
+            null
+        } ?: return false
+        return IPV4.matches(host) || host.contains(':')
     }
 }

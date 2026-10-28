@@ -69,13 +69,19 @@ class DeviceRegistry(
             for (index in 0 until array.length()) {
                 val entry = array.opt(index)
                 if (entry !is JSONObject) throw RemoteRegistryException("设备资料损坏，请重新扫码")
+                val mode = TransportMode.fromWire(entry.stringOrNull("transportMode"))
+                    ?: throw RemoteRegistryException("设备资料损坏，请重新扫码")
                 val profile = try {
-                    RemoteValidation.parseProfile(entry.opt("profile"))
+                    // 手动连接允许「域名 + 指纹」，读盘时按同一套放宽规则解析；
+                    // 扫码设备仍走严格校验，不与桌面生成规则漂移。
+                    if (mode == TransportMode.LEGACY_QUERY) {
+                        RemoteValidation.parseManualProfile(entry.opt("profile"))
+                    } else {
+                        RemoteValidation.parseProfile(entry.opt("profile"))
+                    }
                 } catch (error: RemoteValidationException) {
                     throw RemoteRegistryException("设备资料损坏，请重新扫码", error)
                 }
-                val mode = TransportMode.fromWire(entry.stringOrNull("transportMode"))
-                    ?: throw RemoteRegistryException("设备资料损坏，请重新扫码")
                 add(RemoteDevice(profile, mode))
             }
         }
@@ -200,8 +206,9 @@ class DeviceRegistry(
             null
         } ?: throw RemoteValidationException("地址格式不正确")
         val scope = if (RemoteValidation.isPrivateHost(host)) EndpointScope.LAN else EndpointScope.PUBLIC
+        val isWss = endpoint.startsWith("wss://", ignoreCase = true)
         val endpointJson = JSONObject().put("url", endpoint).put("scope", scope.wire)
-        if (scope == EndpointScope.PUBLIC) {
+        if (scope == EndpointScope.PUBLIC && isWss) {
             // 公网自签端点必须带 pin；不带 pin 则按系统可信证书处理（用户自己的反代）。
             if (pin != null) {
                 endpointJson
@@ -210,10 +217,15 @@ class DeviceRegistry(
             } else {
                 endpointJson.put("trustMode", TrustMode.SYSTEM.wire)
             }
+        } else if (pin != null) {
+            // 明文 ws（frp / SSH 隧道）没有 TLS，指纹无意义。
+            throw RemoteValidationException("明文 ws:// 连接不使用证书指纹，请清空指纹")
         }
-        val validated = RemoteValidation.validateEndpoint(endpointJson)
+        val validated = RemoteValidation.validateManualEndpoint(endpointJson)
         return RemoteProfile(
-            schemaVersion = if (scope == EndpointScope.PUBLIC) 2 else 1,
+            // 与桌面 `getConnectionProfile` 同一规则：有信任模式才需要 v2。
+            // 明文 ws 没有 trustMode，写 v2 会被「v2 公网端点必须指定信任模式」判为资料损坏。
+            schemaVersion = if (validated.trustMode != null) 2 else 1,
             deviceId = deviceId,
             deviceName = "手动连接",
             updatedAt = updatedAt,

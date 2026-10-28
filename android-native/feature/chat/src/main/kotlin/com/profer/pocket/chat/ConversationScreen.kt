@@ -79,14 +79,16 @@ import kotlinx.coroutines.launch
 @Composable
 fun ConversationScreen(
     state: ConversationUiState,
+    /** 当前草稿：由宿主从同步草稿流传入，不走 state 的后台映射，避免输入回声滞后。 */
+    draft: String,
     drawerContent: @Composable (onCloseDrawer: () -> Unit) -> Unit,
     onInputChange: (String) -> Unit,
     onSend: () -> Unit,
     onStop: () -> Unit,
     onNewConversation: () -> Unit,
+    modifier: Modifier = Modifier,
     modelOptions: List<ModelOption> = emptyList(),
     onSelectModel: (ModelOption) -> Unit = {},
-    modifier: Modifier = Modifier,
     onRetryConnection: () -> Unit = {},
     drawerState: PocketDrawerState = rememberPocketDrawerState(),
     chatTools: List<com.profer.pocket.model.ChatToolSummary> = emptyList(),
@@ -98,7 +100,10 @@ fun ConversationScreen(
     val clipboard = LocalClipboardManager.current
     val keyboard = LocalSoftwareKeyboardController.current
     val density = LocalDensity.current
-    val imeBottom = WindowInsets.ime.getBottom(density)
+    // 同 ChatScreen：IME 高度不进组合，只保留「是否弹起」。
+    val ime = WindowInsets.ime
+    val imeVisible by remember(ime) { derivedStateOf { ime.getBottom(density) > 0 } }
+    val draftLines = remember(draft) { draft.count { it == '\n' } }
     val atBottom by remember { derivedStateOf { !listState.canScrollForward } }
     var toolSheetOpen by remember { mutableStateOf(false) }
     var modelSheetOpen by remember { mutableStateOf(false) }
@@ -148,7 +153,7 @@ fun ConversationScreen(
     }
 
     // 新消息、开始生成、输入框增高或键盘顶起时，只在贴近底部时把列表重新锚到底部。
-    LaunchedEffect(state.messages.size, state.streaming, state.draft, imeBottom, state.error) {
+    LaunchedEffect(state.messages.size, state.streaming, draftLines, imeVisible, state.error) {
         val lastIndex = state.messages.lastIndex
         if (lastIndex < 0) return@LaunchedEffect
         val lastVisible = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1
@@ -197,7 +202,7 @@ fun ConversationScreen(
             },
             bottomBar = {
                 ProferComposer(
-                    value = state.draft,
+                    value = draft,
                     onValueChange = onInputChange,
                     onSend = onSend,
                     onStop = onStop,
@@ -249,7 +254,7 @@ fun ConversationScreen(
                             modifier = Modifier.fillMaxSize(),
                         )
 
-                        if (!atBottom && state.messages.isNotEmpty() && imeBottom == 0) {
+                        if (!atBottom && state.messages.isNotEmpty() && !imeVisible) {
                             Box(
                                 modifier = Modifier
                                     .align(Alignment.BottomEnd)

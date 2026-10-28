@@ -12,6 +12,8 @@ data class SessionGroup(
     val kind: SessionGroupKind,
     val workspaceId: String?,
     val sessions: List<SessionSummary>,
+    /** 手机端本地置顶的常用项目；不来自桌面。 */
+    val pinned: Boolean = false,
 ) {
     val runningCount: Int get() = sessions.count { it.isActive }
     val isEmptyProject: Boolean get() = kind == SessionGroupKind.Project && sessions.isEmpty()
@@ -37,6 +39,7 @@ object SessionCatalog {
         workspaces: List<WorkspaceSummary>,
         query: String = "",
         runningIds: Set<String> = emptySet(),
+        pinnedProjectIds: Set<String> = emptySet(),
     ): List<SessionGroup> {
         val keyword = query.trim()
         val archivedWorkspaceIds = workspaces.filter { it.archived }.map { it.id }.toSet()
@@ -78,9 +81,13 @@ object SessionCatalog {
             .filter { it.workspaceId != null && !it.isDraft && !it.isArchived }
             .groupingBy { it.workspaceId!! }
             .fold(0L) { acc, item -> maxOf(acc, item.updatedAt) }
-        val orderedProjects = projects.sortedByDescending { workspace ->
-            recencyByWorkspace[workspace.id]?.takeIf { it > 0 } ?: workspace.updatedAt
-        }
+        val orderedProjects = projects.sortedWith(
+            // 手机端置顶的项目永远在前；其余仍按最近活动，避免整个列表随活动频繁跳动。
+            compareByDescending<WorkspaceSummary> { if (it.id in pinnedProjectIds) 1 else 0 }
+                .thenByDescending { workspace ->
+                    recencyByWorkspace[workspace.id]?.takeIf { it > 0 } ?: workspace.updatedAt
+                },
+        )
         val projectGroups = orderedProjects.mapNotNull { workspace ->
             val list = (grouped[workspace.id] ?: emptyList())
                 .filter { matches(it, workspace.id) }
@@ -94,6 +101,7 @@ object SessionCatalog {
                 kind = SessionGroupKind.Project,
                 workspaceId = workspace.id,
                 sessions = list,
+                pinned = workspace.id in pinnedProjectIds,
             )
         }
 

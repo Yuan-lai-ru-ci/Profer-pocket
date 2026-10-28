@@ -46,6 +46,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.profer.pocket.designsystem.component.ProferEmptyState
+import com.profer.pocket.designsystem.component.rememberLongPressFeedback
 import com.profer.pocket.designsystem.theme.ProferSpacing
 
 /** 抽屉的两种模式；feature 层不依赖 core:model。 */
@@ -83,7 +84,7 @@ fun DrawerModeSwitch(
 ) {
     Row(
         modifier = modifier
-            .then(if (compact) Modifier.width(108.dp) else Modifier.fillMaxWidth())
+            .then(if (compact) Modifier.width(96.dp) else Modifier.fillMaxWidth())
             .heightIn(min = 28.dp)
             .clip(CircleShape)
             .background(MaterialTheme.colorScheme.surfaceContainer)
@@ -146,8 +147,8 @@ fun ConversationBody(
     onSelect: (String) -> Unit,
     onRefresh: () -> Unit,
     onNewConversation: () -> Unit,
-    onDelete: (ConversationItem) -> Unit = {},
     modifier: Modifier = Modifier,
+    onDelete: (ConversationItem) -> Unit = {},
 ) {
     PullToRefreshBox(
         isRefreshing = state.refreshing,
@@ -216,6 +217,7 @@ private fun ConversationRow(
     onDelete: () -> Unit,
 ) {
     var menuOpen by remember { mutableStateOf(false) }
+    val longPressFeedback = rememberLongPressFeedback()
     Box {
     Row(
         modifier = Modifier
@@ -224,7 +226,10 @@ private fun ConversationRow(
             .clip(MaterialTheme.shapes.small)
             .combinedClickable(
                 onClick = onClick,
-                onLongClick = { menuOpen = true },
+                onLongClick = {
+                    longPressFeedback()
+                    menuOpen = true
+                },
             )
             .background(
                 if (item.selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.045f) else Color.Transparent,
@@ -281,7 +286,11 @@ private fun ConversationRow(
             modifier = Modifier.widthIn(min = 34.dp),
         )
     }
-        DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+        DropdownMenu(
+            expanded = menuOpen,
+            onDismissRequest = { menuOpen = false },
+            containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+        ) {
             DropdownMenuItem(
                 text = { Text("删除对话", style = MaterialTheme.typography.bodyMedium) },
                 leadingIcon = {

@@ -19,6 +19,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.profer.pocket.designsystem.theme.ProferFileBadgeColors
+import com.profer.pocket.designsystem.theme.ProferThemeExtras
 
 /**
  * 文件路径识别与文件 chip。
@@ -83,28 +85,28 @@ internal fun splitFileRefs(raw: String): List<FileRefSegment> {
     return segments
 }
 
-private fun badgeFor(filename: String): Pair<String, Color> {
+private fun badgeFor(filename: String, colors: ProferFileBadgeColors): Pair<String, Color> {
     val extension = filename.substringAfterLast('.', "").lowercase()
     return when (extension) {
-        "ts", "tsx" -> "TS" to Color(0xFF3178C6)
-        "js", "jsx", "mjs", "cjs" -> "JS" to Color(0xFFB8A600)
-        "py" -> "PY" to Color(0xFF3776AB)
-        "json", "jsonc", "json5" -> "{}" to Color(0xFF8A7A00)
-        "md", "markdown" -> "MD" to Color(0xFF3D7EA6)
-        "kt", "java" -> "KT" to Color(0xFF8B5CF6)
-        "css", "scss", "less" -> "CSS" to Color(0xFF7C4D9E)
-        "html", "htm" -> "<>" to Color(0xFFC2410C)
-        "sh", "bash", "zsh", "fish" -> "SH" to Color(0xFF4E8F35)
-        "png", "jpg", "jpeg", "gif", "webp", "svg", "bmp" -> "IMG" to Color(0xFF7C3AED)
-        "pdf", "docx" -> "DOC" to Color(0xFFB91C1C)
-        else -> extension.take(2).uppercase().ifBlank { "FILE" } to Color(0xFF6B7280)
+        "ts", "tsx" -> "TS" to colors.typescript
+        "js", "jsx", "mjs", "cjs" -> "JS" to colors.javascript
+        "py" -> "PY" to colors.python
+        "json", "jsonc", "json5" -> "{}" to colors.json
+        "md", "markdown" -> "MD" to colors.markdown
+        "kt", "java" -> "KT" to colors.kotlin
+        "css", "scss", "less" -> "CSS" to colors.stylesheet
+        "html", "htm" -> "<>" to colors.html
+        "sh", "bash", "zsh", "fish" -> "SH" to colors.shell
+        "png", "jpg", "jpeg", "gif", "webp", "svg", "bmp" -> "IMG" to colors.image
+        "pdf", "docx" -> "DOC" to colors.document
+        else -> extension.take(2).uppercase().ifBlank { "FILE" } to colors.fallback
     }
 }
 
 @Composable
 internal fun FileRefChip(display: String, onClick: (() -> Unit)? = null) {
     val primary = MaterialTheme.colorScheme.primary
-    val (badge, badgeColor) = badgeFor(display)
+    val (badge, badgeColor) = badgeFor(display, ProferThemeExtras.fileBadges)
     Row(
         modifier = Modifier
             .height(21.dp)

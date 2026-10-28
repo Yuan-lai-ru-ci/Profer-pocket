@@ -9,6 +9,7 @@ import com.profer.pocket.data.store.AndroidCredentialStore
 import com.profer.pocket.data.store.AndroidDraftStore
 import com.profer.pocket.data.store.AndroidLastSessionStore
 import com.profer.pocket.data.store.AndroidOutgoingQueueStore
+import com.profer.pocket.data.store.AndroidProjectPinStore
 import com.profer.pocket.data.store.AndroidReadStateStore
 import com.profer.pocket.data.store.AndroidRegistryStorage
 import com.profer.pocket.data.store.KeystoreRegistryCipher
@@ -36,6 +37,7 @@ class AppContainer(context: Context) {
     val draftStore = AndroidDraftStore(appContext)
     val readStateStore = AndroidReadStateStore(appContext)
     val lastSessionStore = AndroidLastSessionStore(appContext)
+    val projectPinStore = AndroidProjectPinStore(appContext)
 
     private val connection = PocketConnection(
         transports = OkHttpSocketTransport.factory(),

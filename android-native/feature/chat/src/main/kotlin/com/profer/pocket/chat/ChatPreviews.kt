@@ -11,6 +11,7 @@ private fun ChatLightPreview() {
     ProferTheme(darkTheme = false) {
         ChatScreen(
             state = ChatPreviewData.connected,
+            draft = "",
             drawerContent = { _ -> },
             onInputChange = {},
             onSend = {},
@@ -34,6 +35,7 @@ private fun ChatDarkPreview() {
     ProferTheme(darkTheme = true) {
         ChatScreen(
             state = ChatPreviewData.connected,
+            draft = "",
             drawerContent = { _ -> },
             onInputChange = {},
             onSend = {},
@@ -51,6 +53,7 @@ private fun ChatLargeFontPreview() {
     ProferTheme(darkTheme = false) {
         ChatScreen(
             state = ChatPreviewData.offline,
+            draft = "",
             drawerContent = { _ -> },
             onInputChange = {},
             onSend = {},
@@ -68,6 +71,7 @@ private fun ChatEmptyPreview() {
     ProferTheme(darkTheme = false) {
         ChatScreen(
             state = ChatPreviewData.empty,
+            draft = "",
             drawerContent = { _ -> },
             onInputChange = {},
             onSend = {},

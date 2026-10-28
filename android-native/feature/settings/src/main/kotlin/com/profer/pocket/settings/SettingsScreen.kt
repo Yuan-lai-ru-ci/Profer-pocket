@@ -18,7 +18,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.ArrowBack
+import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.ChevronRight
 import androidx.compose.material.icons.outlined.DesktopWindows
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -112,7 +112,7 @@ fun SettingsScreen(
                 },
                 navigationIcon = {
                     ProferIconAction(
-                        icon = Icons.Outlined.ArrowBack,
+                        icon = Icons.AutoMirrored.Outlined.ArrowBack,
                         contentDescription = "返回",
                         onClick = onBack,
                     )
@@ -159,12 +159,6 @@ fun SettingsScreen(
                             }
                         }
                     }
-                    Text(
-                        text = "浅色是云朵舞者的暖纸底，深色是同色相的暖墨；两套都用同一支砖红主操作。",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(top = ProferSpacing.sm, start = 2.dp, end = 2.dp),
-                    )
                 }
             }
 
@@ -172,7 +166,7 @@ fun SettingsScreen(
             SettingsCard {
                 SettingsActionRow(
                     title = "检查更新",
-                    subtitle = updateLabel ?: "从 GitHub 检查正式版",
+                    subtitle = updateLabel,
                     onClick = onCheckUpdate,
                 )
                 if (internalUpdateLabel != null) {
@@ -185,14 +179,12 @@ fun SettingsScreen(
             SettingsCard {
                 SettingsSwitchRow(
                     title = "任务完成通知",
-                    subtitle = "会话在后台跑完时提醒我",
                     checked = notificationsEnabled,
                     onCheckedChange = onNotificationsChange,
                 )
                 ProferDivider(insetStart = 16.dp)
                 SettingsSwitchRow(
                     title = "需要你决定时提醒",
-                    subtitle = "权限请求、计划确认不会被静音",
                     checked = permissionAlertsEnabled,
                     onCheckedChange = onPermissionAlertsChange,
                 )
@@ -202,14 +194,12 @@ fun SettingsScreen(
             SettingsCard {
                 SettingsSwitchRow(
                     title = "自动重连",
-                    subtitle = "断网或网络恢复时立即重试；连不上电脑时最长隔 60 秒重试一次",
                     checked = autoReconnect,
                     onCheckedChange = onAutoReconnectChange,
                 )
                 ProferDivider(insetStart = 16.dp)
                 SettingsSwitchRow(
                     title = "后台保持连接",
-                    subtitle = "常驻通知栏，锁屏后仍能接收结果",
                     checked = backgroundConnection,
                     onCheckedChange = onBackgroundConnectionChange,
                 )
@@ -236,23 +226,21 @@ fun SettingsScreen(
                             style = MaterialTheme.typography.bodyLarge,
                             color = MaterialTheme.colorScheme.onSurface,
                         )
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        ) {
-                            ProferStatusDot(
-                                color = if (connected) {
-                                    ProferThemeExtras.semantic.success
-                                } else {
-                                    ProferThemeExtras.semantic.warning
-                                },
-                                size = 5.dp,
-                            )
-                            Text(
-                                text = if (connected) deviceLabel else "去连接一台 Mac",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
+                        if (connected) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            ) {
+                                ProferStatusDot(
+                                    color = ProferThemeExtras.semantic.success,
+                                    size = 5.dp,
+                                )
+                                Text(
+                                    text = deviceLabel,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
                         }
                     }
                     Icon(
@@ -299,11 +287,6 @@ fun SettingsScreen(
                                 text = "长列表滚动检查",
                                 style = MaterialTheme.typography.bodyLarge,
                                 color = MaterialTheme.colorScheme.onSurface,
-                            )
-                            Text(
-                                text = "240 条会话，验证滚动不跳、不丢位置",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         }
                         Icon(
@@ -363,7 +346,7 @@ private fun SettingsCard(content: @Composable () -> Unit) {
 @Composable
 private fun SettingsActionRow(
     title: String,
-    subtitle: String,
+    subtitle: String? = null,
     onClick: () -> Unit,
 ) {
     Row(
@@ -377,7 +360,9 @@ private fun SettingsActionRow(
     ) {
         Column(modifier = Modifier.weight(1f)) {
             Text(title, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurface)
-            Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            if (!subtitle.isNullOrBlank()) {
+                Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
         }
         Icon(Icons.Outlined.ChevronRight, contentDescription = null)
     }
@@ -386,9 +371,9 @@ private fun SettingsActionRow(
 @Composable
 private fun SettingsSwitchRow(
     title: String,
-    subtitle: String,
     checked: Boolean,
     onCheckedChange: (Boolean) -> Unit,
+    subtitle: String? = null,
 ) {
     Row(
         modifier = Modifier
@@ -403,11 +388,13 @@ private fun SettingsSwitchRow(
                 style = MaterialTheme.typography.bodyLarge,
                 color = MaterialTheme.colorScheme.onSurface,
             )
-            Text(
-                text = subtitle,
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+            if (!subtitle.isNullOrBlank()) {
+                Text(
+                    text = subtitle,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
         }
         Box(modifier = Modifier.padding(start = ProferSpacing.sm)) {
             Switch(

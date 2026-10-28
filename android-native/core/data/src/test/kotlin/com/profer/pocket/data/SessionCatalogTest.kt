@@ -3,6 +3,7 @@ package com.profer.pocket.data
 import com.profer.pocket.model.SessionSummary
 import com.profer.pocket.model.WorkspaceSummary
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -149,5 +150,23 @@ class SessionCatalogTest {
         )
         assertEquals(listOf("w2"), groups.map { it.id })
         assertEquals(listOf("b"), groups.flatMap { it.sessions }.map { it.id })
+    }
+
+    @Test
+    fun `本地置顶的项目排在最近活动之前，置顶组仍最前`() {
+        val groups = SessionCatalog.groups(
+            sessions = listOf(
+                session("old", workspaceId = "w1", updatedAt = 10),
+                session("new", workspaceId = "w2", updatedAt = 90),
+                session("pinned", workspaceId = "w2", updatedAt = 50, pinned = true),
+            ),
+            workspaces = workspaces,
+            pinnedProjectIds = setOf("w1"),
+        )
+        // 置顶会话组不受项目置顶影响；w1 虽不活跃，但本地置顶后排在 w2 前面。
+        assertEquals(SessionCatalog.PINNED_GROUP_ID, groups.first().id)
+        assertEquals(listOf("w1", "w2", "w3"), groups.drop(1).map { it.id })
+        assertTrue(groups.first { it.id == "w1" }.pinned)
+        assertFalse(groups.first { it.id == "w2" }.pinned)
     }
 }

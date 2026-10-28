@@ -377,6 +377,20 @@ object FrameCodec {
         )
     }
 
+    /**
+     * 解析桌面端「上次使用的渠道/模型」。
+     *
+     * 旧版桌面不认识 `get_agent_defaults`（ok:false / data 为空），返回 null 让调用方
+     * 继续用「首个可用渠道」兜底，而不是当成「没有默认模型」把已有选择清掉。
+     */
+    fun parseAgentModelSelection(data: Any?): com.profer.pocket.model.AgentModelSelection? {
+        val json = data as? JSONObject ?: return null
+        val channelId = json.optString("channelId", "")
+        val modelId = json.optString("modelId", "")
+        if (channelId.isBlank() || modelId.isBlank()) return null
+        return com.profer.pocket.model.AgentModelSelection(channelId = channelId, modelId = modelId)
+    }
+
     fun parseChannelList(data: Any?): List<com.profer.pocket.model.ChannelSummary> {
         val array = data as? JSONArray ?: return emptyList()
         return buildList {

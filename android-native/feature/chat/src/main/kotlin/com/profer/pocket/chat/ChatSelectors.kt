@@ -242,7 +242,7 @@ private fun ModelIcon(option: ModelOption, size: Dp) {
             .size(size)
             .clip(RoundedCornerShape(if (size >= 26.dp) 8.dp else 7.dp))
             .background(
-                if (dark && darkRes == null) Color(0xFFF2EEE6) else Color.Transparent,
+                if (dark && darkRes == null) ProferThemeExtras.semantic.modelLogoPlate else Color.Transparent,
             ),
         contentAlignment = Alignment.Center,
     ) {

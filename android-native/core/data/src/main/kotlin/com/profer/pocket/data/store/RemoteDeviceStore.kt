@@ -24,7 +24,7 @@ class AndroidRegistryStorage(context: Context) : RegistryStorage {
     }
 
     override fun remove(key: String) {
-        prefs.edit().remove(key).commit()
+        prefs.edit().remove(key).apply()
     }
 
     private companion object {

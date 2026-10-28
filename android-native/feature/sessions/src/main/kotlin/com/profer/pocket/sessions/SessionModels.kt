@@ -26,6 +26,8 @@ data class ProjectGroup(
     val sessions: List<SessionItem>,
     val kind: SessionGroupKind = SessionGroupKind.Project,
     val workspaceId: String? = id,
+    /** 手机端本地置顶：只影响抽屉顺序，不写回桌面。 */
+    val pinned: Boolean = false,
 ) {
     val runningCount: Int get() = sessions.count { it.running }
     val isEmptyProject: Boolean get() = kind == SessionGroupKind.Project && sessions.isEmpty()
@@ -76,6 +78,7 @@ object SessionPreviewData {
                 id = "p2",
                 name = "website",
                 branchLabel = "main",
+                pinned = true,
                 sessions = listOf(
                     SessionItem(
                         id = "s4",

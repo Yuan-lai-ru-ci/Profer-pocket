@@ -99,3 +99,14 @@ data class ChannelSummary(
 ) {
     val firstModelId: String? get() = models.firstOrNull()?.id
 }
+
+/**
+ * 电脑端「上次使用的渠道/模型」。
+ *
+ * 移动端没有默认模型设置页，也不该自己猜第一个渠道：桌面每次切换模型都会写进
+ * settings.json，新建会话继承的就是这份记录。
+ */
+data class AgentModelSelection(
+    val channelId: String,
+    val modelId: String,
+)

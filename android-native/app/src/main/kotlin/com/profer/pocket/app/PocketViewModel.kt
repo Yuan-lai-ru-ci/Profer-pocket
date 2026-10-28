@@ -71,6 +71,17 @@ class PocketViewModel(application: Application) : AndroidViewModel(application) 
     private val _drafts = MutableStateFlow<Map<String, String>>(emptyMap())
     private var draftSaveJob: Job? = null
 
+    /**
+     * 输入草稿：sessionId → 未发送文本。
+     *
+     * 单独暴露成 StateFlow，不并进 [chatUiState] / [conversationUiState]：
+     * 那两个状态经过后台映射（flowOn(Default)）再回主线程，输入框会把「上一帧的旧文本」
+     * 当成外部更新写回 BasicTextField，光标被顶回旧位置、连打时字符会错位。
+     * 草稿是同步 UI 状态，只走主线程的 StateFlow。
+     */
+    val drafts: StateFlow<Map<String, String>> = _drafts.asStateFlow()
+    val conversationDrafts: StateFlow<Map<String, String>> = _conversationDrafts.asStateFlow()
+
     /** 本机阅读位置：sessionId → 最后一条已读消息 id。 */
     private val _readPositions = MutableStateFlow<Map<String, String>>(emptyMap())
     val readPositions: StateFlow<Map<String, String>> = _readPositions.asStateFlow()
@@ -108,9 +119,8 @@ class PocketViewModel(application: Application) : AndroidViewModel(application) 
         chatInputs,
         _selectedSessionId,
         _selectionRestored,
-        _drafts,
         repository.presets,
-    ) { inputs, selected, restored, drafts, presets ->
+    ) { inputs, selected, restored, presets ->
         // 恢复完成前不要用「目录第一条」冒充当前会话，避免启动时闪一下别的会话。
         val id = if (restored) selected ?: inputs.sessions.firstOrNull()?.id else null
         UiMapping.chatState(
@@ -120,7 +130,6 @@ class PocketViewModel(application: Application) : AndroidViewModel(application) 
             workspaces = inputs.workspaces,
             status = inputs.status,
             queuedSends = inputs.pendingSends,
-            draft = drafts[id].orEmpty(),
             presets = presets,
         )
     }
@@ -203,13 +212,11 @@ class PocketViewModel(application: Application) : AndroidViewModel(application) 
     val conversationUiState: StateFlow<ConversationUiState> = combine(
         conversationInputs,
         _activeConversationId,
-        _conversationDrafts,
-    ) { inputs, active, drafts ->
+    ) { inputs, active ->
         UiMapping.conversationUiState(
             conversation = inputs.conversations.firstOrNull { it.id == active },
             messages = inputs.messages[active].orEmpty(),
             stream = inputs.streams[active],
-            draft = drafts[active].orEmpty(),
             status = inputs.status,
             queuedSends = inputs.pendingSends,
         )
@@ -219,6 +226,10 @@ class PocketViewModel(application: Application) : AndroidViewModel(application) 
     private val _busy = MutableStateFlow(false)
     val busy: StateFlow<Boolean> = _busy.asStateFlow()
 
+    /** 手机端置顶的常用项目：只影响抽屉顺序，不写回桌面。 */
+    private val _pinnedProjectIds = MutableStateFlow<Set<String>>(emptySet())
+    val pinnedProjectIds: StateFlow<Set<String>> = _pinnedProjectIds.asStateFlow()
+
     private val _message = MutableStateFlow<String?>(null)
     val message: StateFlow<String?> = _message.asStateFlow()
 
@@ -227,7 +238,8 @@ class PocketViewModel(application: Application) : AndroidViewModel(application) 
         _selectedSessionId,
         _sessionQuery,
         _refreshing,
-    ) { inputs, selected, query, refreshing ->
+        _pinnedProjectIds,
+    ) { inputs, selected, query, refreshing, pinnedProjectIds ->
         UiMapping.sessionListState(
             sessions = inputs.sessions,
             workspaces = inputs.workspaces,
@@ -237,9 +249,12 @@ class PocketViewModel(application: Application) : AndroidViewModel(application) 
             runningSessionIds = inputs.runningIds,
             endpoint = (inputs.status as? ConnectionStatus.Connected)?.endpoint,
             refreshing = refreshing,
+            pinnedProjectIds = pinnedProjectIds,
         )
     }
-        .flowOn(Dispatchers.Default)
+        // 不切后台线程：这份状态里带着抽屉搜索框的实时文本，异步回主线程会让输入框
+        // 拿到上一帧的旧文本（BasicTextField 会保留光标位置套用旧文本 → 光标错位）。
+        // 会话目录映射本身只是过滤/分组，量级远小于对话消息，留在主线程更安全。
         .stateIn(
             viewModelScope,
             SharingStarted.Eagerly,
@@ -332,10 +347,16 @@ class PocketViewModel(application: Application) : AndroidViewModel(application) 
             }
         }
         viewModelScope.launch(Dispatchers.IO) {
-            _drafts.value = container.draftStore.load()
+            val stored = container.draftStore.load()
+            // 读盘慢于用户输入时，以内存里的新草稿为准，不用磁盘快照整体覆盖。
+            _drafts.update { current -> stored + current }
         }
         viewModelScope.launch(Dispatchers.IO) {
             _readPositions.value = container.readStateStore.load()
+        }
+        viewModelScope.launch(Dispatchers.IO) {
+            val pinned = runCatching { container.projectPinStore.load() }.getOrDefault(emptySet())
+            _pinnedProjectIds.value = pinned
         }
         viewModelScope.launch(Dispatchers.IO) {
             val last = runCatching { container.lastSessionStore.load() }
@@ -462,6 +483,20 @@ class PocketViewModel(application: Application) : AndroidViewModel(application) 
         runOperation { repository.moveSessionToWorkspace(sessionId, targetWorkspaceId) }
     }
 
+    /**
+     * 置顶/取消置顶常用项目。只存本机，不调远程命令：
+     * 远程协议没有项目排序能力，也不应该让手机端改桌面的项目结构。
+     */
+    fun toggleProjectPin(projectId: String) {
+        val next = _pinnedProjectIds.value.let { current ->
+            if (projectId in current) current - projectId else current + projectId
+        }
+        _pinnedProjectIds.value = next
+        viewModelScope.launch(Dispatchers.IO) {
+            runCatching { container.projectPinStore.save(next) }
+        }
+    }
+
     fun deleteSession(sessionId: String) {
         runOperation { repository.deleteSession(sessionId) }
     }
@@ -559,6 +594,8 @@ class PocketViewModel(application: Application) : AndroidViewModel(application) 
     private fun currentChatModel(): Pair<String?, String?> {
         val state = chatUiState.value
         if (state.channelId != null) return state.channelId to state.modelId
+        // 没有打开任何会话时（冷启动直接建对话），沿用桌面端上次使用的渠道/模型。
+        repository.agentDefaults.value?.let { return it.channelId to it.modelId }
         val channel = repository.channels.value.firstOrNull { it.enabled && it.firstModelId != null }
         return channel?.id to channel?.firstModelId
     }
@@ -897,8 +934,10 @@ class PocketViewModel(application: Application) : AndroidViewModel(application) 
     // ===== 连接 =====
 
     fun connect() {
+        // 地址空着不是「格式错误」：留空传给数据层报「请填写电脑地址」，别拼成 ":7788" 推进失败页。
+        val endpoint = if (_urlInput.value.isBlank()) "" else composeEndpoint(_urlInput.value, _portInput.value)
         val ok = repository.connect(
-            endpointInput = composeEndpoint(_urlInput.value, _portInput.value),
+            endpointInput = endpoint,
             tokenInput = _tokenInput.value,
             pinInput = _pinInput.value.ifBlank { null },
         )
@@ -924,21 +963,11 @@ class PocketViewModel(application: Application) : AndroidViewModel(application) 
         _pinInput.value = pin.trim()
     }
 
-    /** 地址 + 端口拼成连接地址：已带 scheme 时原样使用，方便直接粘贴完整 URL。 */
-    private fun composeEndpoint(host: String, port: String): String {
-        val trimmed = host.trim()
-        if (trimmed.contains("://")) return trimmed
-        val p = port.trim()
-        return if (p.isEmpty()) trimmed else "$trimmed:$p"
-    }
+    /** 地址 + 端口拼成连接地址：已带 scheme 时保留 scheme，缺端口时补上端口。 */
+    private fun composeEndpoint(host: String, port: String): String = ManualAddress.compose(host, port)
 
-    /** 回显已保存地址：拆成「主机」与「端口」两个输入框。 */
-    private fun splitEndpoint(url: String): Pair<String, String> {
-        if (url.isBlank()) return "" to ""
-        val uri = runCatching { java.net.URI(url) }.getOrNull() ?: return url to ""
-        val host = uri.host?.removePrefix("[")?.removeSuffix("]") ?: return url to ""
-        return host to if (uri.port > 0) uri.port.toString() else ""
-    }
+    /** 回显已保存地址：拆成「地址」与「端口」两个输入框，保留显式 scheme。 */
+    private fun splitEndpoint(url: String): Pair<String, String> = ManualAddress.split(url)
 
     /** 仅 debug：验收/自动化用启动参数直接配置连接，不经过输入框。 */
     fun connectWith(endpoint: String, token: String) {

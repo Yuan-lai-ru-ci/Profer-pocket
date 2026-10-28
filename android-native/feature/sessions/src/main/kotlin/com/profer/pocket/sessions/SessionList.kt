@@ -79,6 +79,7 @@ import androidx.compose.ui.unit.sp
 import com.profer.pocket.designsystem.component.ProferEmptyState
 import com.profer.pocket.designsystem.component.ProferMark
 import com.profer.pocket.designsystem.component.ProferStatusDot
+import com.profer.pocket.designsystem.component.rememberLongPressFeedback
 import com.profer.pocket.designsystem.theme.ProferSerif
 import com.profer.pocket.designsystem.theme.ProferSizes
 import com.profer.pocket.designsystem.theme.ProferSpacing
@@ -122,18 +123,39 @@ fun SessionListContent(
     onToggleRead: (SessionItem) -> Unit = {},
     onMoveSession: (SessionItem) -> Unit = {},
     onDeleteSession: (SessionItem) -> Unit = {},
+    onToggleProjectPin: (String) -> Unit = {},
 ) {
     var searchOpen by rememberSaveable { mutableStateOf(false) }
-    // 项目是一级列表：默认只展开当前会话所在项目与置顶组，其余收起。
-    var expandedProjects by remember { mutableStateOf(setOf<String>()) }
+    // 展开状态要跟着配置变化/进程重建活下来：抽屉最烦的就是每次回来项目全收起。
+    var expandedProjects by rememberSaveable { mutableStateOf(emptyList<String>()) }
+    var defaultsApplied by rememberSaveable { mutableStateOf(false) }
     val forceExpand = state.query.isNotBlank()
 
-    LaunchedEffect(state.currentSessionId, state.projects) {
-        val currentProject = state.projects.firstOrNull { group ->
-            group.sessions.any { it.id == state.currentSessionId }
-        }?.id
-        val pinned = state.projects.firstOrNull { it.kind == SessionGroupKind.Pinned }?.id
-        expandedProjects = expandedProjects + listOfNotNull(currentProject, pinned)
+    // 首屏必须有会话可点：默认展开当前会话所属项目、置顶项目、最近活动的项目与「置顶」组。
+    // 只在第一次拿到项目目录时铺默认值，之后尊重用户手动收起。
+    LaunchedEffect(state.projects, state.currentSessionId) {
+        if (defaultsApplied || state.projects.isEmpty()) return@LaunchedEffect
+        defaultsApplied = true
+        val currentSession = state.projects.asSequence()
+            .flatMap { it.sessions.asSequence() }
+            .firstOrNull { it.id == state.currentSessionId }
+        // 置顶会话的 group.workspaceId 是 null，要用会话自己的 workspaceId 找回项目。
+        val currentProjectId = currentSession?.workspaceId
+            ?: state.projects.firstOrNull { group ->
+                group.kind == SessionGroupKind.Project &&
+                    group.sessions.any { it.id == state.currentSessionId }
+            }?.id
+        val pinnedGroupId = state.projects.firstOrNull { it.kind == SessionGroupKind.Pinned }?.id
+        val pinnedProjectIds = state.projects
+            .filter { it.kind == SessionGroupKind.Project && it.pinned }
+            .map { it.id }
+        // projects 已按「置顶项目 → 最近活动」排好，第一个 Project 就是最近在用的项目。
+        val recentProjectId = state.projects.firstOrNull { it.kind == SessionGroupKind.Project }?.id
+        expandedProjects = (
+            expandedProjects +
+                listOfNotNull(currentProjectId, pinnedGroupId, recentProjectId) +
+                pinnedProjectIds
+            ).distinct()
     }
 
     Column(
@@ -221,31 +243,28 @@ fun SessionListContent(
 
                 state.projects.forEach { group ->
                     val expanded = forceExpand || group.id in expandedProjects
-                    item(key = "group-${group.id}", contentType = "group") {
-                        Box(
-                            modifier = Modifier.animateItem(
-                                fadeInSpec = tween(180, easing = ClearEase),
-                                placementSpec = tween(260, easing = ClearEase),
-                                fadeOutSpec = tween(120),
-                            ),
-                        ) {
-                            ProjectHeader(
-                                group = group,
-                                expanded = expanded,
-                                onToggle = {
-                                    expandedProjects = if (group.id in expandedProjects) {
-                                        expandedProjects - group.id
-                                    } else {
-                                        expandedProjects + group.id
-                                    }
-                                },
-                                onCreateSession = if (group.kind == SessionGroupKind.Project) {
-                                    { onNewSessionInProject(group.workspaceId ?: group.id) }
+                    stickyHeader(key = "group-${group.id}", contentType = "group") {
+                        ProjectHeader(
+                            group = group,
+                            expanded = expanded,
+                            onToggle = {
+                                expandedProjects = if (group.id in expandedProjects) {
+                                    expandedProjects - group.id
                                 } else {
-                                    null
-                                },
-                            )
-                        }
+                                    expandedProjects + group.id
+                                }
+                            },
+                            onCreateSession = if (group.kind == SessionGroupKind.Project) {
+                                { onNewSessionInProject(group.workspaceId ?: group.id) }
+                            } else {
+                                null
+                            },
+                            onTogglePin = if (group.kind == SessionGroupKind.Project) {
+                                { onToggleProjectPin(group.workspaceId ?: group.id) }
+                            } else {
+                                null
+                            },
+                        )
                     }
                     if (expanded && group.isEmptyProject) {
                         item(key = "empty-${group.id}", contentType = "empty-project") {
@@ -336,13 +355,13 @@ private fun SessionListHeader(
             // 品牌字是这张「扉页」上唯一的题名，用衬线；其余文字保持无衬线。
             style = MaterialTheme.typography.titleLarge.copy(
                 fontFamily = ProferSerif,
-                fontSize = 20.sp,
-                letterSpacing = 0.2.sp,
+                fontSize = 16.sp,
+                letterSpacing = 0.3.sp,
             ),
             color = MaterialTheme.colorScheme.onSurface,
             maxLines = 1,
         )
-        Spacer(Modifier.width(10.dp))
+        Spacer(Modifier.width(8.dp))
         DrawerModeSwitch(
             chatSelected = mode == DrawerMode.Chat,
             onSelectAgent = { onModeChange(DrawerMode.Agent) },
@@ -487,30 +506,42 @@ private fun SearchField(
 }
 
 /** 一级项目行：整行可点开合；标题只比会话多半档字重，靠留白建立层级。 */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun ProjectHeader(
     group: ProjectGroup,
     expanded: Boolean,
     onToggle: () -> Unit,
     onCreateSession: (() -> Unit)?,
+    onTogglePin: (() -> Unit)?,
 ) {
+    // 菜单开合不参与状态恢复：进程重建后不应该自己弹出一个操作菜单。
+    var menuOpen by remember(group.id) { mutableStateOf(false) }
+    val longPressFeedback = rememberLongPressFeedback()
     val rotation by animateFloatAsState(
         targetValue = if (expanded) 0f else -90f,
         animationSpec = tween(durationMillis = 220, easing = ClearEase),
         label = "group-chevron",
     )
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = ProferSpacing.xs)
-            .clip(MaterialTheme.shapes.medium),
-    ) {
+    Box {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .clickable(onClick = onToggle)
+                // sticky 项目头会盖在会话行上，底色必须不透明。
+                .background(MaterialTheme.colorScheme.surfaceContainerHigh)
+                .padding(horizontal = ProferSpacing.xs)
+                .clip(MaterialTheme.shapes.medium)
+                .combinedClickable(
+                    onClick = onToggle,
+                    onLongClick = {
+                        if (onCreateSession != null || onTogglePin != null) {
+                            longPressFeedback()
+                            menuOpen = true
+                        }
+                    },
+                )
                 .heightIn(min = ProferSizes.minTouchTarget)
-                .padding(start = 2.dp, end = 2.dp),
+                .padding(start = 2.dp, end = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Box(
@@ -535,7 +566,18 @@ private fun ProjectHeader(
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f),
             )
+            if (group.pinned) {
+                Icon(
+                    imageVector = Icons.Outlined.PushPin,
+                    contentDescription = "已置顶项目",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.45f),
+                    modifier = Modifier
+                        .padding(start = 6.dp)
+                        .size(13.dp),
+                )
+            }
             if (group.kind == SessionGroupKind.Project && group.runningCount > 0) {
+                Spacer(Modifier.width(8.dp))
                 Surface(
                     shape = CircleShape,
                     color = ProferThemeExtras.semantic.success.copy(alpha = 0.12f),
@@ -558,32 +600,25 @@ private fun ProjectHeader(
                     }
                 }
             }
-            if (group.sessions.isNotEmpty()) {
-                Text(
-                    text = "${group.sessions.size}",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
-                    textAlign = TextAlign.End,
-                    modifier = Modifier
-                        .padding(start = 8.dp)
-                        .widthIn(min = 14.dp),
+        }
+        DropdownMenu(
+            expanded = menuOpen,
+            onDismissRequest = { menuOpen = false },
+            containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+        ) {
+            if (onCreateSession != null) {
+                SessionMenuItem(
+                    label = "在此新建会话",
+                    icon = Icons.Outlined.Add,
+                    onClick = { menuOpen = false; onCreateSession() },
                 )
             }
-            if (onCreateSession != null) {
-                Box(
-                    modifier = Modifier
-                        .size(ProferSizes.minTouchTarget)
-                        .clip(CircleShape)
-                        .clickable(onClick = onCreateSession),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Icon(
-                        imageVector = Icons.Outlined.Add,
-                        contentDescription = "在 ${group.name} 新建会话",
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f),
-                        modifier = Modifier.size(16.dp),
-                    )
-                }
+            if (onTogglePin != null) {
+                SessionMenuItem(
+                    label = if (group.pinned) "取消置顶项目" else "置顶项目",
+                    icon = Icons.Outlined.PushPin,
+                    onClick = { menuOpen = false; onTogglePin() },
+                )
             }
         }
     }
@@ -633,6 +668,7 @@ private fun SessionRow(
 ) {
     // 菜单开合不参与状态恢复：进程重建后不应该自己弹出一个操作菜单。
     var menuOpen by remember(session.id) { mutableStateOf(false) }
+    val longPressFeedback = rememberLongPressFeedback()
     Box {
         Row(
             modifier = Modifier
@@ -641,24 +677,29 @@ private fun SessionRow(
                 .clip(MaterialTheme.shapes.small)
                 .combinedClickable(
                     onClick = onClick,
-                    onLongClick = { menuOpen = true },
+                    onLongClick = {
+                        longPressFeedback()
+                        menuOpen = true
+                    },
                 )
                 .background(
                     if (selected) {
-                        MaterialTheme.colorScheme.primary.copy(alpha = 0.045f)
+                        // 4.5% 的主色叠在抽屉底色上几乎看不见；10% 才能让当前会话有存在感。
+                        MaterialTheme.colorScheme.primary.copy(alpha = 0.10f)
                     } else {
                         Color.Transparent
                     },
                 )
                 .heightIn(min = ProferSizes.minTouchTarget)
-                .padding(start = 18.dp, end = 8.dp),
+                // 二级缩进比一级（项目名 42dp）再深一档：层级用几何分开，不只靠字形。
+                .padding(start = 30.dp, end = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             // 选中标记做成页边的一条短竖线，比整行色块安静。
             Box(
                 modifier = Modifier
-                    .width(2.dp)
-                    .height(15.dp)
+                    .width(3.dp)
+                    .height(18.dp)
                     .background(
                         color = if (selected) {
                             MaterialTheme.colorScheme.primary
@@ -732,6 +773,7 @@ private fun SessionRow(
         DropdownMenu(
             expanded = menuOpen,
             onDismissRequest = { menuOpen = false },
+            containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
         ) {
             SessionMenuItem(
                 label = "重命名",

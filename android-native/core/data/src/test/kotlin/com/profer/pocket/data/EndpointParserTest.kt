@@ -23,6 +23,15 @@ class EndpointParserTest {
     }
 
     @Test
+    fun `显式 ws 保留明文并标记 hadScheme`() {
+        val parsed = EndpointParser.normalize("ws://yuan.profer.cn:24221")
+        assertEquals("ws://yuan.profer.cn:24221/ws", parsed?.wsUrl)
+        assertEquals(true, parsed?.hadScheme)
+        // 没写 scheme 的公网地址仍先归一化成 ws，由仓库层决定是否升 wss。
+        assertEquals(false, EndpointParser.normalize("yuan.profer.cn:24221")?.hadScheme)
+    }
+
+    @Test
     fun `无 scheme 时补 ws`() {
         assertEquals("ws://10.0.0.2:7788/ws", EndpointParser.normalize("10.0.0.2:7788")?.wsUrl)
     }

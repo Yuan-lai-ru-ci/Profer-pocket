@@ -273,4 +273,18 @@ class FrameCodecTest {
         assertTrue(!tools[1].available)
         assertEquals("Brain", tools[0].icon)
     }
+
+    @Test
+    fun `解析桌面默认模型：缺字段或空串视为未下发`() {
+        val selection = FrameCodec.parseAgentModelSelection(
+            JSONObject("""{"channelId":"c2","modelId":"m2"}"""),
+        )
+        assertEquals("c2", selection?.channelId)
+        assertEquals("m2", selection?.modelId)
+
+        // 旧版桌面（无该命令）或未配置默认：不能当成「清空选择」处理。
+        assertEquals(null, FrameCodec.parseAgentModelSelection(null))
+        assertEquals(null, FrameCodec.parseAgentModelSelection(JSONObject("""{"channelId":"","modelId":"m2"}""")))
+        assertEquals(null, FrameCodec.parseAgentModelSelection(JSONObject("""{"channelId":"c2"}""")))
+    }
 }

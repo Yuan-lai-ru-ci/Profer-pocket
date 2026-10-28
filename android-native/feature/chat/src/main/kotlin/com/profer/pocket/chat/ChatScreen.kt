@@ -90,6 +90,9 @@ import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -118,7 +121,10 @@ import kotlinx.coroutines.launch
 @Composable
 fun ChatScreen(
     state: ChatUiState,
+    /** 当前草稿：由宿主从同步草稿流传入，不走 state 的后台映射，避免输入回声滞后。 */
+    draft: String,
     drawerContent: @Composable (onCloseDrawer: () -> Unit) -> Unit,
+    modifier: Modifier = Modifier,
     modelOptions: List<ModelOption> = emptyList(),
     onSelectModel: (ModelOption) -> Unit = {},
     onSelectMode: (String) -> Unit = {},
@@ -155,7 +161,6 @@ fun ChatScreen(
     attachments: List<com.profer.pocket.model.AgentAttachment> = emptyList(),
     onAttach: (() -> Unit)? = null,
     onRemoveAttachment: (String) -> Unit = {},
-    modifier: Modifier = Modifier,
     onRetryConnection: () -> Unit = {},
     onResendText: (String) -> Unit = {},
     message: String? = null,
@@ -169,7 +174,12 @@ fun ChatScreen(
     val scope = rememberCoroutineScope()
     val listState = rememberLazyListState()
     val density = LocalDensity.current
-    val imeBottom = WindowInsets.ime.getBottom(density)
+    // 不要直接在组合里读 getBottom：IME 动画的每一帧都会让整页重组。
+    // 只把「键盘是否弹起」这一位交给 UI，滚动/避让用布尔值就够。
+    val ime = WindowInsets.ime
+    val imeVisible by remember(ime) { derivedStateOf { ime.getBottom(density) > 0 } }
+    // 输入框只在换行数变化时改变高度；按字符变化重启滚动副作用会白白抖动。
+    val draftLines = remember(draft) { draft.count { it == '\n' } }
     val composerFocus = remember { FocusRequester() }
     val snackbarHostState = remember { SnackbarHostState() }
     val clipboard = LocalClipboardManager.current
@@ -255,7 +265,7 @@ fun ChatScreen(
     // 新消息只在用户接近底部时跟随；用户上滑阅读时不抢滚动。
     // 草稿变长（输入框增高）或键盘顶起时，同样把列表重新锚到底部。
     // 工具卡是新消息之外的末层内容，它增加时也要跟随，否则新工具会出现在屏幕外。
-    LaunchedEffect(state.messages.size, state.toolCalls.size, state.streaming, state.draft, imeBottom) {
+    LaunchedEffect(state.messages.size, state.toolCalls.size, state.streaming, draftLines, imeVisible) {
         val lastIndex = state.messages.lastIndex
         if (lastIndex >= 0) {
             val lastVisible = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1
@@ -350,7 +360,7 @@ fun ChatScreen(
                         )
                     }
                     ProferComposer(
-                        value = state.draft,
+                        value = draft,
                         onValueChange = onInputChange,
                         onSend = {
                             onSend()
@@ -488,7 +498,7 @@ fun ChatScreen(
                         }
                     }
 
-                    if (!atBottom && state.messages.isNotEmpty() && imeBottom == 0) {
+                    if (!atBottom && state.messages.isNotEmpty() && !imeVisible) {
                         Box(
                             modifier = Modifier
                                 .align(Alignment.BottomEnd)
@@ -729,6 +739,8 @@ private fun MessageRow(
                 DropdownMenu(
                     expanded = menuOpen,
                     onDismissRequest = { menuOpen = false },
+                    // 菜单是浮起面，取卡片色（桌面 --popover）；surfaceContainer 在本主题里是分段轨道/选中行。
+                    containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
                 ) {
                     DropdownMenuItem(
                         text = { Text("复制") },
@@ -895,7 +907,10 @@ private fun AssistantMessage(
     var thinkingExpanded by rememberSaveable(message.id) { mutableStateOf(false) }
 
     Column(
-        modifier = modifier.fillMaxWidth(),
+        modifier = modifier
+            .fillMaxWidth()
+            // 读屏能听到「正在生成」，不用靠光标闪烁自己猜。
+            .semantics { if (message.streaming) stateDescription = "正在生成" },
         verticalArrangement = Arrangement.spacedBy(ProferSpacing.sm),
     ) {
         message.thinking?.let { thinking ->
@@ -1154,6 +1169,7 @@ private fun ChatTopBar(
         DropdownMenu(
             expanded = menuOpen,
             onDismissRequest = { menuOpen = false },
+            containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
         ) {
             DropdownMenuItem(
                 text = { Text("重命名会话") },
@@ -1221,7 +1237,9 @@ private fun AttachmentStrip(
                 border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.7f)),
             ) {
                 Row(
-                    modifier = Modifier.padding(start = 8.dp, end = 4.dp, top = 4.dp, bottom = 4.dp),
+                    modifier = Modifier
+                        .heightIn(min = ProferSizes.minTouchTarget)
+                        .padding(start = 8.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(4.dp),
                 ) {
@@ -1239,15 +1257,21 @@ private fun AttachmentStrip(
                         overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.widthIn(max = 150.dp),
                     )
-                    Icon(
-                        imageVector = Icons.Outlined.Close,
-                        contentDescription = "移除 ${file.filename}",
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.55f),
+                    // 视觉 18dp、热区 48dp：移除是破坏性操作，不能靠 18dp 的命中区。
+                    Box(
                         modifier = Modifier
-                            .size(18.dp)
-                            .clickable { onRemove(file.path) }
-                            .padding(2.dp),
-                    )
+                            .size(ProferSizes.minTouchTarget)
+                            .clip(CircleShape)
+                            .clickable(role = Role.Button) { onRemove(file.path) },
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(
+                            imageVector = Icons.Outlined.Close,
+                            contentDescription = "移除 ${file.filename}",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.55f),
+                            modifier = Modifier.size(18.dp),
+                        )
+                    }
                 }
             }
         }

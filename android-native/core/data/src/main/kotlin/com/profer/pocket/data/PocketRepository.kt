@@ -25,6 +25,7 @@ import com.profer.pocket.remote.RemoteDevice
 import com.profer.pocket.remote.RemoteRegistryException
 import com.profer.pocket.remote.RemoteValidation
 import com.profer.pocket.remote.TransportMode
+import com.profer.pocket.model.AgentModelSelection
 import com.profer.pocket.model.AgentPresetSummary
 import com.profer.pocket.model.AgentAttachment
 import com.profer.pocket.model.ChannelSummary
@@ -110,6 +111,15 @@ class PocketRepository(
 
     private val _channels = MutableStateFlow<List<ChannelSummary>>(emptyList())
     val channels: StateFlow<List<ChannelSummary>> = _channels.asStateFlow()
+
+    /**
+     * 桌面端「上次使用的渠道/模型」。
+     *
+     * 新建会话继承它：手机没有默认模型设置页，自己猜「第一个渠道」会让桌面上的选择
+     * 在手机上完全不生效。旧版桌面不认该命令，保持 null 时仍按首个可用渠道兜底。
+     */
+    private val _agentDefaults = MutableStateFlow<AgentModelSelection?>(null)
+    val agentDefaults: StateFlow<AgentModelSelection?> = _agentDefaults.asStateFlow()
 
     private val _presets = MutableStateFlow<List<AgentPresetSummary>>(emptyList())
     val presets: StateFlow<List<AgentPresetSummary>> = _presets.asStateFlow()
@@ -279,6 +289,11 @@ class PocketRepository(
      * 公网地址自动改用 `wss://`；带指纹时按 pinned 校验自签证书（与扫码公网端点同一套 TLS 规则）。
      */
     fun connect(endpointInput: String, tokenInput: String?, pinInput: String? = null): Boolean {
+        // 空地址不是「格式错误」而是还没填：回到可编辑表单并说清楚缺什么，别让重试按钮空转。
+        if (endpointInput.isBlank()) {
+            connection.reportConfigurationError(OfflineCause.MissingCredentials, "请填写电脑地址")
+            return false
+        }
         val normalized = EndpointParser.normalize(
             raw = endpointInput,
             fallbackToken = tokenInput?.trim()?.takeIf { it.isNotEmpty() },
@@ -286,10 +301,11 @@ class PocketRepository(
             connection.reportConfigurationError(OfflineCause.Unreachable, "地址格式不正确")
             return false
         }
-        // 公网地址必须走 wss：用户只填 IP:端口 时，这里自动补上加密 scheme。
+        // 没写 scheme 的公网地址默认升级到 wss；但用户显式写了 `ws://` 就尊重原意——
+        // frp / SSH 隧道后面经常是明文 WS（例如 http://域名:端口），强制升级会直接连不上。
         val host = RemoteValidation.hostOf(normalized.wsUrl).orEmpty()
         val isPublic = host.isNotEmpty() && !RemoteValidation.isPrivateHost(host)
-        val url = if (isPublic && normalized.wsUrl.startsWith("ws://")) {
+        val url = if (!normalized.hadScheme && isPublic && normalized.wsUrl.startsWith("ws://")) {
             "wss://" + normalized.wsUrl.removePrefix("ws://")
         } else {
             normalized.wsUrl
@@ -479,6 +495,7 @@ class PocketRepository(
         val sessionsOk = refreshSessions()
         val workspacesOk = refreshWorkspaces()
         refreshChannels()
+        refreshAgentDefaults()
         if (sessionsOk || workspacesOk) lastCatalogRefreshAt = clock()
         return sessionsOk || workspacesOk
     }
@@ -543,6 +560,18 @@ class PocketRepository(
         val result = requestOrNull("list_channels") ?: return
         val list = FrameCodec.parseChannelList(result.data).filter { it.enabled }
         if (list.isNotEmpty()) _channels.value = list
+    }
+
+    /**
+     * 拉取桌面端「上次使用的渠道/模型」。
+     *
+     * 旧版桌面不认识 `get_agent_defaults`：请求失败或返回空时保留上一次结果，
+     * 不清空、不报错，新建会话仍能回落到首个可用渠道。
+     */
+    suspend fun refreshAgentDefaults() {
+        val result = requestOrNull("get_agent_defaults") ?: return
+        if (!result.ok) return
+        FrameCodec.parseAgentModelSelection(result.data)?.let { _agentDefaults.value = it }
     }
 
     /** 拉取当前工作区可见的 Agent 预设；切换项目后重新拉取，避免串用。 */
@@ -659,15 +688,41 @@ class PocketRepository(
     }
 
     /**
+     * 新建会话要提交的渠道/模型。
+     *
+     * 桌面默认（上次使用）优先；默认渠道已删/停用、或默认模型已不属于该渠道时，
+     * 才回落到首个可用渠道的启用模型——与桌面 ModelSelector 的有效性判定同口径。
+     */
+    private fun newSessionSelection(): AgentModelSelection? {
+        val channels = _channels.value.filter { it.enabled }
+        val defaults = _agentDefaults.value
+        val defaultChannel = defaults?.let { selection ->
+            channels.firstOrNull { it.id == selection.channelId }
+        }
+        if (defaultChannel != null && defaults != null &&
+            defaultChannel.models.any { it.id == defaults.modelId }
+        ) {
+            return AgentModelSelection(defaultChannel.id, defaults.modelId)
+        }
+        val channel = defaultChannel
+            ?: channels.firstOrNull { it.firstModelId != null }
+            ?: return null
+        return channel.firstModelId?.let { AgentModelSelection(channel.id, it) }
+    }
+
+    /**
      * 新建会话。
      *
      * 项目内使用桌面同款 `ensure_project_draft_session`：项目已有草稿就复用，
      * 不再每次点击都制造一条空会话；全局新建走 `create_session`。
      */
     suspend fun createSession(workspaceId: String? = null): Result<SessionSummary> = runCatching {
-        // 刚连接就点新建时渠道可能还没落库：先补一次，避免创建出没有模型的空会话。
+        // 刚连接就点新建时渠道/默认值可能还没落库：先补一次，避免创建出没有模型的空会话。
         if (_channels.value.isEmpty()) refreshChannels()
-        val channel = _channels.value.firstOrNull { it.enabled }
+        // 只在还没拿到桌面默认时补拉：目录刷新（连接/回前台）会同步最新选择，
+        // 本地刚切过模型时也不该被一次额外往返覆盖。
+        if (_agentDefaults.value == null) refreshAgentDefaults()
+        val selection = newSessionSelection()
         val result = connection.request(
             if (workspaceId != null) "ensure_project_draft_session" else "create_session",
         ) {
@@ -676,16 +731,18 @@ class PocketRepository(
             } else {
                 put("title", "新会话")
             }
-            if (channel != null) put("channelId", channel.id)
-            channel?.firstModelId?.let { put("modelId", it) }
+            if (selection != null) {
+                put("channelId", selection.channelId)
+                put("modelId", selection.modelId)
+            }
         }
         val created = FrameCodec.parseCreatedSession(result.data)
             ?: throw PocketCommandException(null, "服务端未返回新会话")
         val now = clock()
         val summary = created.copy(
             workspaceId = created.workspaceId ?: workspaceId,
-            channelId = created.channelId ?: channel?.id,
-            modelId = created.modelId ?: channel?.firstModelId,
+            channelId = created.channelId ?: selection?.channelId,
+            modelId = created.modelId ?: selection?.modelId,
             createdAt = created.createdAt.takeIf { it > 0 } ?: now,
             updatedAt = created.updatedAt.takeIf { it > 0 } ?: now,
             draft = created.draft ?: (workspaceId != null),
@@ -788,13 +845,19 @@ class PocketRepository(
         sessionId: String,
         channelId: String,
         modelId: String,
-    ): Result<SessionSummary> = sessionCommand(
-        type = "update_session_model",
-        sessionId = sessionId,
-        fallback = { it.copy(channelId = channelId, modelId = modelId) },
-    ) {
-        put("channelId", channelId)
-        put("modelId", modelId)
+    ): Result<SessionSummary> {
+        val result = sessionCommand(
+            type = "update_session_model",
+            sessionId = sessionId,
+            fallback = { it.copy(channelId = channelId, modelId = modelId) },
+        ) {
+            put("channelId", channelId)
+            put("modelId", modelId)
+        }
+        // 服务端会把这次选择写回 settings.json（与桌面切换模型一致），本地同步一份，
+        // 下一个新建会话不必等目录刷新就能继承。
+        result.onSuccess { _agentDefaults.value = AgentModelSelection(channelId, modelId) }
+        return result
     }
 
     /** 切换权限模式：auto / plan / bypassPermissions。运行中允许切换。 */

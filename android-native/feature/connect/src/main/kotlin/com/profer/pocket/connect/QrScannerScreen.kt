@@ -20,7 +20,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.ArrowBack
+import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.FlashOff
 import androidx.compose.material.icons.outlined.FlashOn
 import androidx.compose.material3.Button
@@ -101,7 +101,7 @@ fun QrScannerScreen(
                 },
                 navigationIcon = {
                     ProferIconAction(
-                        icon = Icons.Outlined.ArrowBack,
+                        icon = Icons.AutoMirrored.Outlined.ArrowBack,
                         contentDescription = "返回",
                         onClick = onBack,
                         tint = Color.White,

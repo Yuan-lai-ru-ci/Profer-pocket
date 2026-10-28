@@ -169,6 +169,7 @@ fun RenameSessionDialog(
     LaunchedEffect(Unit) { focusRequester.requestFocus() }
     AlertDialog(
         onDismissRequest = { if (!busy) onDismiss() },
+        containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
         title = { Text("重命名会话", style = ProferHeadingSerif) },
         text = {
             SessionTextField(
@@ -201,6 +202,7 @@ fun DeleteSessionDialog(
 ) {
     AlertDialog(
         onDismissRequest = { if (!busy) onDismiss() },
+        containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
         title = { Text("删除会话", style = ProferHeadingSerif) },
         text = {
             Text(

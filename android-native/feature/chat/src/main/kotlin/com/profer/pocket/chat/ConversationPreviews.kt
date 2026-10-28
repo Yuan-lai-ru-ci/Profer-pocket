@@ -50,7 +50,6 @@ private val PreviewConversation = ConversationUiState(
             reasoning = "用户只要结构，不需要展开正文。",
         ),
     ),
-    draft = "",
 )
 
 @Preview(name = "对话 · 浅色", showBackground = true, widthDp = 360, heightDp = 780)
@@ -59,6 +58,7 @@ private fun ConversationLightPreview() {
     ProferTheme(darkTheme = false) {
         ConversationScreen(
             state = PreviewConversation,
+            draft = "",
             drawerContent = { _ -> },
             onInputChange = {},
             onSend = {},
@@ -81,6 +81,7 @@ private fun ConversationDarkPreview() {
     ProferTheme(darkTheme = true) {
         ConversationScreen(
             state = PreviewConversation,
+            draft = "",
             drawerContent = { _ -> },
             onInputChange = {},
             onSend = {},
@@ -97,6 +98,7 @@ private fun ConversationLargeFontPreview() {
     ProferTheme(darkTheme = false) {
         ConversationScreen(
             state = PreviewConversation,
+            draft = "",
             drawerContent = { _ -> },
             onInputChange = {},
             onSend = {},
@@ -113,6 +115,7 @@ private fun ConversationOfflinePreview() {
     ProferTheme(darkTheme = false) {
         ConversationScreen(
             state = PreviewConversation.copy(offline = true),
+            draft = "",
             drawerContent = { _ -> },
             onInputChange = {},
             onSend = {},

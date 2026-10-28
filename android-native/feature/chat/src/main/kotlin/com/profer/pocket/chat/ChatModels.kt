@@ -22,7 +22,6 @@ data class ChatUiState(
     /** Agent 追问：问题列表与请求 id，用于表单回答。 */
     val pendingQuestionId: String? = null,
     val pendingQuestions: List<com.profer.pocket.model.AskQuestion> = emptyList(),
-    val draft: String = "",
     val sessionId: String? = null,
     val pinned: Boolean = false,
     /** 会话绑定的 Agent 预设（岗位）；Chat 模式不用。 */

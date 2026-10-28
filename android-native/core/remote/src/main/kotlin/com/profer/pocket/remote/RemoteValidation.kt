@@ -57,7 +57,24 @@ object RemoteValidation {
             (parts[0] == 172 && parts[1] in 16..31)
     }
 
-    fun validateEndpoint(input: Any?): RemoteEndpoint {
+    fun validateEndpoint(input: Any?): RemoteEndpoint = endpoint(input, manual = false)
+
+    /**
+     * 手动连接的端点校验：与 [validateEndpoint] 同一条规则，放宽两处：
+     *
+     * 1. **pinned 主机名**：桌面自签证书的 SAN 只有公网 IP（`remote-tls-identity.ts` 只写 IP），
+     *    用户把这条链路挂在自己的域名/穿透后面时只能「域名 + 指纹」访问，
+     *    此时 pin 已锚定公钥，主机名校验由 pin 取代（见 `RemoteTls`）。
+     * 2. **公网明文 `ws://`**：frp / SSH 隧道后面经常没有 TLS（例如 `http://域名:端口`），
+     *    强制 wss 会直接连不上。只接受用户显式写的 `ws://`，
+     *    没写 scheme 的公网地址仍由仓库层默认升级到 wss。
+     *
+     * 二维码与 v1 资料仍走严格版：那条链路两端规则必须完全一致，
+     * 不能在手机端单方面放宽。
+     */
+    fun validateManualEndpoint(input: Any?): RemoteEndpoint = endpoint(input, manual = true)
+
+    private fun endpoint(input: Any?, manual: Boolean): RemoteEndpoint {
         val e = record(input, ENDPOINT_KEYS)
         val url = e.opt("url")
         val scope = EndpointScope.fromWire(e.stringOrNull("scope"))
@@ -75,7 +92,9 @@ object RemoteValidation {
         if (scope == EndpointScope.LAN && !isPrivateHost(host)) fail("局域网端点必须是私网地址")
         val isWss = scheme == "wss"
         val lanWs = scope == EndpointScope.LAN && scheme == "ws" && isPrivateHost(host)
-        if (!isWss && !lanWs) fail("公网连接必须使用可信 WSS")
+        // 手动连接允许显式的公网明文 ws（隧道后没有 TLS 的场景）。
+        val manualPublicWs = manual && scope == EndpointScope.PUBLIC && scheme == "ws"
+        if (!isWss && !lanWs && !manualPublicWs) fail("公网连接必须使用可信 WSS")
 
         val trustMode = if (e.has("trustMode")) {
             TrustMode.fromWire(e.stringOrNull("trustMode")) ?: fail("未知 TLS 信任模式")
@@ -98,7 +117,9 @@ object RemoteValidation {
             // SHA256 的最后一个 base64 字符必须是规范编码，不能接受模糊等价值。
             if (!PIN_CANONICAL_TAIL.containsMatchIn(value)) fail("pin 编码无效")
             val bareHost = host.removePrefix("[").removeSuffix("]")
-            if (!IPV4.matches(bareHost) && !bareHost.contains(':')) fail("Pinned 地址必须是 IP")
+            if (!manual && !IPV4.matches(bareHost) && !bareHost.contains(':')) {
+                fail("Pinned 地址必须是 IP")
+            }
             return RemoteEndpoint(
                 url = canonicalUrl(uri, scheme),
                 scope = scope,
@@ -124,7 +145,10 @@ object RemoteValidation {
 
     // ===== 连接资料 =====
 
-    fun parseProfile(input: Any?): RemoteProfile = profile(record(input, PROFILE_KEYS))
+    fun parseProfile(input: Any?): RemoteProfile = profile(record(input, PROFILE_KEYS), manual = false)
+
+    /** 手动连接落盘资料的读取：只放宽 pinned 主机名（见 [validateManualEndpoint]）。 */
+    fun parseManualProfile(input: Any?): RemoteProfile = profile(record(input, PROFILE_KEYS), manual = true)
 
     fun parseProfileJson(text: String): RemoteProfile {
         val json = try {
@@ -135,7 +159,7 @@ object RemoteValidation {
         return parseProfile(json)
     }
 
-    private fun profile(p: JSONObject): RemoteProfile {
+    private fun profile(p: JSONObject, manual: Boolean): RemoteProfile {
         val schemaVersion = p.opt("schemaVersion")
         if (schemaVersion !is Int || (schemaVersion != 1 && schemaVersion != 2)) fail("不支持的连接资料版本")
         val deviceId = p.opt("deviceId")
@@ -152,7 +176,7 @@ object RemoteValidation {
             fail("连接端点无效")
         }
         val endpoints = buildList {
-            for (index in 0 until rawEndpoints.length()) add(validateEndpoint(rawEndpoints.opt(index)))
+            for (index in 0 until rawEndpoints.length()) add(endpoint(rawEndpoints.opt(index), manual))
         }
         if (endpoints.map { it.url }.toSet().size != endpoints.size) fail("连接端点重复")
         if (schemaVersion == 1 && endpoints.any { it.trustMode != null || it.pin != null }) {
@@ -176,7 +200,7 @@ object RemoteValidation {
         if (json.opt("v") == 3) return parseCompactPairingQrV3(json, now)
         if (json.opt("v") == 2) return parseCompactPairingQr(json, now)
         val p = record(json, QR_KEYS)
-        val parsed = profile(p)
+        val parsed = profile(p, manual = false)
         val code = p.opt("pairingCode")
         val issuedAt = safeInteger(p.opt("issuedAt"))
         val expiresAt = safeInteger(p.opt("expiresAt"))

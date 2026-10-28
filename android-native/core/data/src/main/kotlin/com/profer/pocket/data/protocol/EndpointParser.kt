@@ -20,12 +20,19 @@ object EndpointParser {
     data class Normalized(
         val wsUrl: String,
         val token: String?,
+        /**
+         * 用户是否显式写了 scheme（`ws://`/`wss://`/`http://`/`https://`）。
+         * 显式的 `ws://` 要原样保留：frp / SSH 隧道后面往往是明文 WS，
+         * 强制升级成 wss 会直接连不上。
+         */
+        val hadScheme: Boolean = false,
     )
 
     fun normalize(raw: String, fallbackToken: String? = null): Normalized? {
         val trimmed = raw.trim()
         if (trimmed.isEmpty()) return null
-        val withScheme = if ("://" in trimmed) trimmed else "ws://$trimmed"
+        val hadScheme = "://" in trimmed
+        val withScheme = if (hadScheme) trimmed else "ws://$trimmed"
         val uri = try {
             URI(withScheme)
         } catch (_: Exception) {
@@ -62,7 +69,7 @@ object EndpointParser {
             append(scheme).append("://").append(authority).append(path)
             if (keptQuery.isNotEmpty()) append('?').append(keptQuery)
         }
-        return Normalized(wsUrl = wsUrl, token = fallbackToken ?: queryToken)
+        return Normalized(wsUrl = wsUrl, token = fallbackToken ?: queryToken, hadScheme = hadScheme)
     }
 
     private fun parseQuery(rawQuery: String?): Map<String, String> {

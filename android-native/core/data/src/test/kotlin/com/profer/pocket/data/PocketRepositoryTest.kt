@@ -5,7 +5,9 @@ import com.profer.pocket.data.net.HeartbeatPolicy
 import com.profer.pocket.data.net.PocketConnection
 import com.profer.pocket.data.store.SessionSnapshotStore
 import com.profer.pocket.model.ChatEntry
+import com.profer.pocket.model.ConnectionStatus
 import com.profer.pocket.model.NotificationKind
+import com.profer.pocket.model.OfflineCause
 import com.profer.pocket.model.PendingInteraction
 import com.profer.pocket.model.PocketNotification
 import com.profer.pocket.model.SessionSummary
@@ -77,6 +79,18 @@ class PocketRepositoryTest {
           "message":{"content":[{"type":"text","text":"$text"}$tools]}
         }}}
     """.trimIndent()
+
+    @Test
+    fun `空地址不进入失败重试而是提示填写地址`() = runTest {
+        val fixture = fixture(backgroundScope, SessionSnapshotStore.Snapshot())
+        val ok = fixture.repository.connect("", "token-1")
+        assertEquals(false, ok)
+        val status = fixture.repository.connectionStatus.value
+        assertTrue("空地址不应进入不可恢复的 Unreachable：$status", status is ConnectionStatus.Offline)
+        val offline = status as ConnectionStatus.Offline
+        assertEquals(OfflineCause.MissingCredentials, offline.cause)
+        assertEquals("请填写电脑地址", offline.message)
+    }
 
     @Test
     fun `冷启动先展示离线快照`() = runTest {
@@ -378,21 +392,28 @@ class PocketRepositoryTest {
         respondCommand(
             fixture,
             "list_channels",
-            """[{"id":"c1","name":"主渠道","enabled":true,"models":[{"id":"m1","name":"Opus"}]}]""",
+            """[{"id":"c1","name":"主渠道","enabled":true,"models":[{"id":"m1","name":"Opus"}]},
+              {"id":"c2","name":"备用渠道","enabled":true,"models":[{"id":"m2","name":"Terra"}]}]""",
         )
         channelsJob.join()
+
+        // 桌面端上次用的是 c2/m2：新建会话必须继承它，而不是第一个渠道的 m1。
+        val defaultsJob = launch { fixture.repository.refreshAgentDefaults() }
+        runCurrent()
+        respondCommand(fixture, "get_agent_defaults", """{"channelId":"c2","modelId":"m2"}""")
+        defaultsJob.join()
 
         val job = launch { fixture.repository.createSession("w1") }
         runCurrent()
         val frame = commandFrame(fixture, "ensure_project_draft_session")
         assertEquals("w1", frame.getString("workspaceId"))
-        assertEquals("c1", frame.getString("channelId"))
-        assertEquals("m1", frame.getString("modelId"))
+        assertEquals("c2", frame.getString("channelId"))
+        assertEquals("m2", frame.getString("modelId"))
         respondCommand(
             fixture,
             "ensure_project_draft_session",
             """{"id":"s2","sessionId":"s2","revision":1,"title":"新 Agent 会话","workspaceId":"w1",
-              "channelId":"c1","modelId":"m1","presetId":"global-project-lead","draft":true,"updatedAt":20}""",
+              "channelId":"c2","modelId":"m2","presetId":"global-project-lead","draft":true,"updatedAt":20}""",
         )
         job.join()
 
@@ -400,6 +421,82 @@ class PocketRepositoryTest {
         assertEquals("w1", created.workspaceId)
         assertEquals("global-project-lead", created.presetId)
         assertEquals(true, created.draft)
+    }
+
+    @Test
+    fun `新建会话时桌面默认渠道已失效则回落首个可用渠道`() = runTest {
+        val fixture = fixture(backgroundScope, SessionSnapshotStore.Snapshot())
+        connect(fixture)
+        runCurrent()
+
+        val channelsJob = launch { fixture.repository.refreshChannels() }
+        runCurrent()
+        respondCommand(
+            fixture,
+            "list_channels",
+            """[{"id":"c1","name":"主渠道","enabled":true,"models":[{"id":"m1","name":"Opus"}]}]""",
+        )
+        channelsJob.join()
+
+        val defaultsJob = launch { fixture.repository.refreshAgentDefaults() }
+        runCurrent()
+        // 桌面默认渠道在手机上已停用/删除：不能用它建会话，回落到首个可用渠道。
+        respondCommand(fixture, "get_agent_defaults", """{"channelId":"gone","modelId":"m9"}""")
+        defaultsJob.join()
+
+        val job = launch { fixture.repository.createSession() }
+        runCurrent()
+        val frame = commandFrame(fixture, "create_session")
+        assertEquals("c1", frame.getString("channelId"))
+        assertEquals("m1", frame.getString("modelId"))
+        respondCommand(
+            fixture,
+            "create_session",
+            """{"id":"s3","sessionId":"s3","revision":1,"title":"新会话","channelId":"c1","modelId":"m1","updatedAt":20}""",
+        )
+        job.join()
+        assertEquals("m1", fixture.repository.sessions.value.first { it.id == "s3" }.modelId)
+    }
+
+    @Test
+    fun `切换模型后新建会话沿用新模型`() = runTest {
+        val fixture = fixture(
+            backgroundScope,
+            SessionSnapshotStore.Snapshot(sessions = listOf(SessionSummary(id = "s1", title = "会话"))),
+        )
+        connect(fixture)
+        runCurrent()
+
+        val channelsJob = launch { fixture.repository.refreshChannels() }
+        runCurrent()
+        respondCommand(
+            fixture,
+            "list_channels",
+            """[{"id":"c1","name":"主渠道","enabled":true,"models":[{"id":"m1","name":"Opus"},{"id":"m2","name":"Sonnet"}]}]""",
+        )
+        channelsJob.join()
+
+        val switch = launch { fixture.repository.updateSessionModel("s1", "c1", "m2") }
+        runCurrent()
+        respondCommand(
+            fixture,
+            "update_session_model",
+            """{"id":"s1","revision":2,"title":"会话","channelId":"c1","modelId":"m2","updatedAt":30}""",
+        )
+        switch.join()
+
+        val job = launch { fixture.repository.createSession() }
+        runCurrent()
+        val frame = commandFrame(fixture, "create_session")
+        assertEquals("c1", frame.getString("channelId"))
+        assertEquals("m2", frame.getString("modelId"))
+        respondCommand(
+            fixture,
+            "create_session",
+            """{"id":"s4","sessionId":"s4","revision":1,"title":"新会话","channelId":"c1","modelId":"m2","updatedAt":40}""",
+        )
+        job.join()
+        assertEquals("m2", fixture.repository.sessions.value.first { it.id == "s4" }.modelId)
     }
 
     @Test
@@ -826,6 +923,22 @@ class PocketRepositoryTest {
         val saved = fixture.repository.devices.value.devices.single().profile.endpoints.single()
         assertEquals(com.profer.pocket.remote.EndpointScope.PUBLIC, saved.scope)
         assertEquals(com.profer.pocket.remote.TrustMode.PINNED, saved.trustMode)
+    }
+
+    @Test
+    fun `显式 ws 的公网地址不再强制升级为 wss`() = runTest {
+        val fixture = fixture(backgroundScope, SessionSnapshotStore.Snapshot())
+        runCurrent()
+
+        // 现场：frp / SSH 隧道后面是明文 WS（http://域名:端口），升级成 wss 直接连不上。
+        assertTrue(fixture.repository.connect("ws://yuan.profer.cn:24221", "t"))
+        val target = fixture.factory.created.single().lastTarget!!
+        assertEquals("ws://yuan.profer.cn:24221/ws?token=t", target.url)
+        assertEquals(null, target.endpoint?.trustMode)
+        assertEquals(null, target.endpoint?.pin)
+        val saved = fixture.repository.devices.value.devices.single().profile.endpoints.single()
+        assertEquals(com.profer.pocket.remote.EndpointScope.PUBLIC, saved.scope)
+        assertEquals(null, saved.trustMode)
     }
 
     @Test
