@@ -54,6 +54,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalClipboardManager
@@ -148,6 +149,7 @@ fun ProferThinkingCard(
             modifier = Modifier
                 .fillMaxWidth()
                 .heightIn(min = ProferSizes.minTouchTarget)
+                .clip(RoundedCornerShape(10.dp))
                 .clickable(onClick = onToggle)
                 .padding(vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically,
@@ -531,6 +533,8 @@ fun ProferPermissionCard(
                     modifier = Modifier
                         .weight(1f)
                         .heightIn(min = ProferSizes.minTouchTarget)
+                        // 先 clip 再 clickable，ripple 才跟胶囊形状走。
+                        .clip(CircleShapeCompatible)
                         .clickable(onClick = onAllow),
                     shape = CircleShapeCompatible,
                     color = MaterialTheme.colorScheme.primary,
@@ -548,6 +552,7 @@ fun ProferPermissionCard(
                     modifier = Modifier
                         .weight(1f)
                         .heightIn(min = ProferSizes.minTouchTarget)
+                        .clip(CircleShapeCompatible)
                         .clickable(onClick = onDeny),
                     shape = CircleShapeCompatible,
                     color = MaterialTheme.colorScheme.surfaceContainerHigh,

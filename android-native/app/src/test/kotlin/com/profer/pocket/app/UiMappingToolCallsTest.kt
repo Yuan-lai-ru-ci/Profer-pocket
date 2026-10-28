@@ -15,7 +15,7 @@ class UiMappingToolCallsTest {
     private val status = ConnectionStatus.Connected("ws://host/ws")
 
     private fun state(chat: SessionChat) =
-        UiMapping.chatState("s1", chat, emptyList(), emptyList(), status, draft = "")
+        UiMapping.chatState("s1", chat, emptyList(), emptyList(), status)
 
     @Test
     fun `每种工具映射成自己的图标分类与状态`() {

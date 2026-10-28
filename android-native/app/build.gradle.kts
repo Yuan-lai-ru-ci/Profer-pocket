@@ -54,6 +54,7 @@ android {
         targetSdk = 35
         versionCode = pocketVersionCode
         versionName = pocketVersionName
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
     signingConfigs {
@@ -80,13 +81,24 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
 
-    kotlinOptions {
-        jvmTarget = "17"
-    }
-
     buildFeatures {
         compose = true
         buildConfig = true
+    }
+
+    lint {
+        // 依赖模块也一起检：feature 模块的问题不该等到合到 app 才暴露。
+        checkDependencies = true
+        checkReleaseBuilds = true
+        abortOnError = true
+        // 已知技术债（Compose 文案未资源化）不在这里压制；
+        // 真出现 HardcodedText 级别的错误，宁可让构建失败。
+    }
+}
+
+kotlin {
+    compilerOptions {
+        jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
     }
 }
 
@@ -118,4 +130,10 @@ dependencies {
     debugImplementation(libs.androidx.compose.ui.tooling)
 
     testImplementation(libs.junit)
+
+    androidTestImplementation(libs.androidx.test.ext.junit)
+    androidTestImplementation(libs.androidx.test.runner)
+    androidTestImplementation(platform(libs.androidx.compose.bom))
+    androidTestImplementation(libs.androidx.compose.ui.test.junit4)
+    debugImplementation(libs.androidx.compose.ui.test.manifest)
 }

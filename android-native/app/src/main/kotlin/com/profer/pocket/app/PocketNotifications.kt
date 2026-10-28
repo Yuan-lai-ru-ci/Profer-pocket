@@ -33,15 +33,14 @@ object PocketNotifications {
     private const val MESSAGE_ID_BASE = 2001
 
     fun ensureChannels(context: Context) {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
         val manager = context.getSystemService(NotificationManager::class.java) ?: return
 
         val keepalive = NotificationChannel(
             CHANNEL_KEEPALIVE,
-            "Profer 后台连接",
+            context.getString(R.string.notification_channel_keepalive),
             NotificationManager.IMPORTANCE_LOW,
         ).apply {
-            description = "保持与电脑上 Profer 的消息连接"
+            description = context.getString(R.string.notification_channel_keepalive_description)
             setShowBadge(false)
             enableVibration(false)
             enableLights(false)
@@ -50,10 +49,10 @@ object PocketNotifications {
 
         val messages = NotificationChannel(
             CHANNEL_MESSAGES,
-            "Profer 消息提醒",
+            context.getString(R.string.notification_channel_messages),
             NotificationManager.IMPORTANCE_HIGH,
         ).apply {
-            description = "权限确认、计划审批、提问与任务完成"
+            description = context.getString(R.string.notification_channel_messages_description)
             setShowBadge(true)
         }
         manager.createNotificationChannel(messages)
@@ -62,8 +61,8 @@ object PocketNotifications {
     fun keepalive(context: Context): Notification =
         NotificationCompat.Builder(context, CHANNEL_KEEPALIVE)
             .setSmallIcon(R.drawable.ic_stat_profer)
-            .setContentTitle("Profer 后台连接")
-            .setContentText("切到其他应用或熄屏后仍保持连接")
+            .setContentTitle(context.getString(R.string.notification_keepalive_title))
+            .setContentText(context.getString(R.string.notification_keepalive_text))
             .setOngoing(true)
             .setSilent(true)
             .setPriority(NotificationCompat.PRIORITY_MIN)

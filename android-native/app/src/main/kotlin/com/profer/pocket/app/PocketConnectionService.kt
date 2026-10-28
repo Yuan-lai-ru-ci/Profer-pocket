@@ -28,10 +28,12 @@ class PocketConnectionService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        // 通道必须先于 startForeground 建好：API 35 上引用不存在的通道会抛
+        // CannotPostForegroundServiceNotificationException（首次安装必现）。
+        PocketNotifications.ensureChannels(this)
         // startForegroundService 只给 5s：onCreate 里第一件事就是满足契约，
         // 不能等 onStartCommand，更不能等通知渠道与仓库订阅准备好。
         startForegroundSafely()
-        PocketNotifications.ensureChannels(this)
         observeRepository()
     }
 
@@ -50,20 +52,32 @@ class PocketConnectionService : Service() {
 
     private fun startForegroundSafely() {
         try {
-            val type = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
-            } else {
-                0
-            }
             ServiceCompat.startForeground(
                 this,
                 PocketNotifications.KEEPALIVE_ID,
                 PocketNotifications.keepalive(this),
-                type,
+                foregroundServiceType(),
             )
         } catch (_: Exception) {
             // 极端情况下（后台启动限制）不崩溃；连接仍由进程内仓库持有。
         }
+    }
+
+    /**
+     * 前台服务类型：API 34+ 用 remoteMessaging，其余回落 dataSync。
+     *
+     * targetSdk 35 上 dataSync 有「24 小时内累计 6 小时」的硬上限，到点系统会回调
+     * onTimeout 并停服务，长连接直接被掐断；remoteMessaging 没有这个上限，
+     * 语义也正是「与另一台设备保持消息通道」。
+     */
+    private fun foregroundServiceType(): Int = when {
+        Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE ->
+            ServiceInfo.FOREGROUND_SERVICE_TYPE_REMOTE_MESSAGING
+
+        Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q ->
+            ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
+
+        else -> 0
     }
 
     private fun observeRepository() {

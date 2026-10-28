@@ -1,6 +1,8 @@
 package com.profer.pocket.chat
 
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.PredictiveBackHandler
+import android.os.Build
 import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.animate
 import androidx.compose.animation.core.tween
@@ -29,10 +31,11 @@ import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.changedToUpIgnoreConsumed
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.input.pointer.positionChange
+import androidx.compose.ui.input.pointer.util.VelocityTracker
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
@@ -45,6 +48,18 @@ private const val DrawerAnimationMs = 300
 private val DrawerCorner = 28.dp
 private val DrawerEdge = 30.dp
 private val DrawerGap = 4.dp
+
+/**
+ * 松手吸附的位移阈值。
+ *
+ * 按屏宽比例算阈值（曾经的 progress >= 0.5）在 360dp 机器上要横拖 180dp 才切换，
+ * 手指根本拖不了那么远；这里对齐 M3 Swipeable 的位置阈值（56dp），取 64dp：
+ * 拉开一个拇指节就吸附，剩下的交给动画。
+ */
+private val DrawerToggleDistance = 64.dp
+
+/** 快速一甩的判定速度（dp/s）：超过它按方向切换，不再看位移。 */
+private val DrawerFlingVelocity = 400.dp
 
 /**
  * 抽屉状态：0 = 完全关闭，1 = 完全打开。
@@ -63,8 +78,10 @@ class PocketDrawerState internal constructor(private val scope: CoroutineScope) 
 
     private var animationJob: Job? = null
 
+    /** 本次拖动开始时的进度：位移不够时回到它，避免「差一点」被反向吸走。 */
+    private var dragStartProgress = 0f
+
     fun open() {
-        isOpen = true
         animateTo(1f)
     }
 
@@ -74,27 +91,36 @@ class PocketDrawerState internal constructor(private val scope: CoroutineScope) 
 
     internal fun beginDrag() {
         animationJob?.cancel()
-        // 手指一碰就把内容挂上，拖动过程才不会出现空抽屉。
-        isOpen = true
+        dragStartProgress = progress
     }
 
     internal fun drag(deltaPx: Float, widthPx: Float) {
         if (widthPx <= 0f) return
         progress = (progress + deltaPx / widthPx).coerceIn(0f, 1f)
+        // 真的拉开才挂载抽屉内容：关闭态向左滑不该把整棵会话列表组合出来。
+        if (progress > 0f) isOpen = true
     }
 
-    internal fun endDrag(velocityX: Float = 0f) {
-        // 快速一甩按方向走，慢速拖动看进度；对应 web 版 64dp 即切换的灵敏度。
-        val shouldOpen = when {
-            velocityX > 700f -> true
-            velocityX < -700f -> false
-            else -> progress >= 0.5f
-        }
+    internal fun endDrag(
+        velocityX: Float,
+        distancePx: Float,
+        toggleDistancePx: Float,
+        flingVelocityPx: Float,
+    ) {
+        val shouldOpen = resolveDrawerTarget(
+            velocityX = velocityX,
+            distancePx = distancePx,
+            toggleDistancePx = toggleDistancePx,
+            flingVelocityPx = flingVelocityPx,
+            startProgress = dragStartProgress,
+        )
         animateTo(if (shouldOpen) 1f else 0f)
     }
 
     private fun animateTo(target: Float) {
         animationJob?.cancel()
+        // 展开动画一开始就要有内容，否则动画前几帧是空抽屉。
+        if (target > 0f) isOpen = true
         animationJob = scope.launch {
             animate(
                 initialValue = progress,
@@ -106,6 +132,36 @@ class PocketDrawerState internal constructor(private val scope: CoroutineScope) 
             if (target == 0f) isOpen = false
         }
     }
+
+    /**
+     * 预测性返回：手势进行中直接跟随进度，不走动画。
+     * 手势取消时由调用方 [open] 回弹，完成时由 [close] 收尾。
+     */
+    internal fun previewProgress(value: Float) {
+        animationJob?.cancel()
+        isOpen = true
+        progress = value.coerceIn(0f, 1f)
+    }
+}
+
+/**
+ * 松手吸附的判定（纯函数，便于单测）：
+ * - 速度够快按方向走（一甩即开、即合）；
+ * - 否则看这次拖动的总位移，越过 [DrawerToggleDistance] 就切换；
+ * - 都不满足时回到拖动前的状态，不会因为「差一点」被反向吸走。
+ */
+internal fun resolveDrawerTarget(
+    velocityX: Float,
+    distancePx: Float,
+    toggleDistancePx: Float,
+    flingVelocityPx: Float,
+    startProgress: Float,
+): Boolean = when {
+    velocityX > flingVelocityPx -> true
+    velocityX < -flingVelocityPx -> false
+    distancePx >= toggleDistancePx -> true
+    distancePx <= -toggleDistancePx -> false
+    else -> startProgress >= 0.5f
 }
 
 @Composable
@@ -131,6 +187,9 @@ fun PocketDrawerLayout(
         modifier = modifier
             .fillMaxSize()
             .clipToBounds()
+            // 手势挂在静止的外层：挂在会跟着手势位移的内容层上，坐标系会跟着动，
+            // 手指拖 1px 只算出不到 1px 的位移，抽屉跟手变“滞”，阈值也就变得很远。
+            .drawerDrag(drawerState)
             // 与抽屉同色：卡片缩小时露出的缝隙不能比抽屉更深，否则会显脏。
             .background(MaterialTheme.colorScheme.surfaceContainerHigh),
     ) {
@@ -146,8 +205,7 @@ fun PocketDrawerLayout(
                 .fillMaxHeight()
                 .offset { IntOffset((drawerWidthPx * (drawerState.progress - 1f)).roundToInt(), 0) }
                 // 抽屉底色比内容卡片深：卡片缩小时四周的留白才看得出层次。
-                .background(MaterialTheme.colorScheme.surfaceContainerHigh)
-                .drawerDrag(drawerState),
+                .background(MaterialTheme.colorScheme.surfaceContainerHigh),
         ) {
             drawerContent()
         }
@@ -168,13 +226,30 @@ fun PocketDrawerLayout(
                     shape = RoundedCornerShape((DrawerCorner.value * progress).dp)
                     clip = true
                 }
-                .background(MaterialTheme.colorScheme.surfaceContainerHigh)
-                .drawerDrag(drawerState),
+                .background(MaterialTheme.colorScheme.surfaceContainerHigh),
         ) {
             content()
         }
 
-        BackHandler(enabled = drawerState.isOpen) { drawerState.close() }
+        // 返回手势：API 34+ 走预测性返回，抽屉跟着手指退；更低版本保留普通 BackHandler。
+        // 两个回调不能同时注册，否则后注册的那个会吞掉前一个。
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            PredictiveBackHandler(enabled = drawerState.isOpen) { progress ->
+                try {
+                    progress.collect { event ->
+                        drawerState.previewProgress(1f - event.progress)
+                    }
+                    // 手势完成：已经跟到接近 0，直接收尾。
+                    drawerState.close()
+                } catch (cancel: CancellationException) {
+                    // 手势取消：回弹到完全打开。
+                    drawerState.open()
+                    throw cancel
+                }
+            }
+        } else {
+            BackHandler(enabled = drawerState.isOpen) { drawerState.close() }
+        }
     }
 }
 
@@ -184,44 +259,65 @@ fun PocketDrawerLayout(
  */
 private fun Modifier.drawerDrag(drawerState: PocketDrawerState): Modifier = pointerInput(drawerState) {
     val widthPx = size.width.toFloat().coerceAtLeast(1f)
+    val togglePx = DrawerToggleDistance.toPx()
+    val flingPx = DrawerFlingVelocity.toPx()
     awaitEachGesture {
         val down = awaitFirstDown(requireUnconsumed = false)
+        val tracker = VelocityTracker()
+        tracker.addPosition(down.uptimeMillis, down.position)
         var dragging = false
-        var totalX = 0f
-        var totalY = 0f
+        // 移动事件被子组件消费过（横向代码块、列表滚动）：这个手势归它，抬手也不能抢。
+        var childOwnsGesture = false
+        // 已经交给抽屉的位移：越过 slop 时要把开头那段一次性补上，避免手势「晚一拍」。
+        var appliedX = 0f
         while (true) {
             val event = awaitPointerEvent()
             val change = event.changes.firstOrNull { it.id == down.id } ?: break
-            val dx = change.positionChange().x
-            val dy = change.positionChange().y
-            totalX += dx
-            totalY += dy
-            if (change.changedToUpIgnoreConsumed()) {
-                // 快速一甩时 move 采样可能很少，抬手的位移也要能触发。
-                if (!dragging &&
-                    abs(totalX) > viewConfiguration.touchSlop * 2 &&
-                    abs(totalX) > abs(totalY) * 1.2f
-                ) {
-                    if (totalX > 0) drawerState.open() else drawerState.close()
-                }
-                break
-            }
+            tracker.addPosition(change.uptimeMillis, change.position)
+            // 用「相对按下点的净位移」而不是逐帧 delta 相加：抬手事件不带位移，
+            // 极快的一甩可能整段只来一个 down + up，按 delta 累加会算成 0。
+            val netX = change.position.x - down.position.x
+            val netY = change.position.y - down.position.y
+            val up = change.changedToUpIgnoreConsumed()
             if (!dragging) {
-                if (abs(totalX) > viewConfiguration.touchSlop &&
-                    abs(totalX) > abs(totalY) * 1.2f
-                ) {
+                // isConsumed：横向内容（代码块、横向列表）自己滑时不能抢过来。
+                // 只看移动事件：抬手被子组件当点击消费不算「它接管了手势」。
+                if (!up && change.isConsumed) childOwnsGesture = true
+                val horizontal = !change.isConsumed &&
+                    abs(netX) > viewConfiguration.touchSlop &&
+                    abs(netX) > abs(netY) * 1.2f
+                if (horizontal) {
                     drawerState.beginDrag()
                     dragging = true
-                } else if (abs(totalY) > viewConfiguration.touchSlop) {
+                } else if (up) {
+                    // 一甩到底、中间没有 move 采样（掉帧时 down/up 会并到同一帧）：
+                    // 抬手时按总位移与速度再判一次。这里不能看 up 的 isConsumed——
+                    // 子组件的 clickable 会把这个 up 当成一次点击消费掉。
+                    if (!childOwnsGesture &&
+                        abs(netX) > viewConfiguration.touchSlop &&
+                        abs(netX) > abs(netY) * 1.2f
+                    ) {
+                        change.consume()
+                        drawerState.beginDrag()
+                        drawerState.endDrag(tracker.calculateVelocity().x, netX, togglePx, flingPx)
+                    }
+                    break
+                } else if (abs(netY) > viewConfiguration.touchSlop) {
                     // 纵向滚动：不消费、不吸附，把事件完整留给列表。
                     break
                 }
             }
+            if (up) {
+                if (dragging) {
+                    drawerState.endDrag(tracker.calculateVelocity().x, netX, togglePx, flingPx)
+                }
+                break
+            }
             if (dragging) {
                 change.consume()
-                drawerState.drag(dx, widthPx)
+                drawerState.drag(netX - appliedX, widthPx)
+                appliedX = netX
             }
         }
-        if (dragging) drawerState.endDrag(0f)
     }
 }

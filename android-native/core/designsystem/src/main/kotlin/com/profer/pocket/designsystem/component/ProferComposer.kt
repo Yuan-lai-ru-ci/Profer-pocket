@@ -11,6 +11,9 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
@@ -69,6 +72,7 @@ fun ProferComposer(
     modeLabel: String,
     onModelClick: () -> Unit,
     onModeClick: () -> Unit,
+    modifier: Modifier = Modifier,
     /** 当前模型品牌图标；为空时回退到闪电图标。 */
     modelIconRes: Int? = null,
     /** Agent 预设（岗位）：Chat 模式传 null 不显示。 */
@@ -77,7 +81,6 @@ fun ProferComposer(
     /** Chat 工具选择：仅 Chat 模式传入。 */
     onToolsClick: (() -> Unit)? = null,
     toolsActive: Boolean = false,
-    modifier: Modifier = Modifier,
     onAttach: (() -> Unit)? = null,
     placeholder: String = "给 Profer 发消息…",
     focusRequester: FocusRequester? = null,
@@ -220,9 +223,11 @@ fun ProferComposer(
                     modifier = Modifier
                         .size(48.dp)
                         .clip(CircleShape)
-                        .clickable(enabled = actionEnabled) {
+                        .clickable(enabled = actionEnabled, role = Role.Button) {
                             if (streaming) onStop() else onSend()
-                        },
+                        }
+                        // 标签跟点击动作放同一节点：读屏焦点不会落到 20dp 的图标上。
+                        .semantics { contentDescription = if (streaming) "停止" else "发送" },
                     contentAlignment = Alignment.Center,
                 ) {
                     Surface(
@@ -241,7 +246,7 @@ fun ProferComposer(
                                 } else {
                                     Icons.Outlined.ArrowUpward
                                 },
-                                contentDescription = if (streaming) "停止" else "发送",
+                                contentDescription = null,
                                 tint = when {
                                     streaming -> MaterialTheme.colorScheme.onSurface
                                     canSend -> MaterialTheme.colorScheme.onPrimary
@@ -274,7 +279,9 @@ private fun ComposerSelector(
         modifier = modifier
             .height(ProferSizes.minTouchTarget)
             .clip(CircleShape)
-            .clickable(onClick = onClick),
+            // 空间不够时文字会隐藏，读屏不能跟着变成「无标签」：描述固定在容器上。
+            .semantics { contentDescription = text }
+            .clickable(role = Role.Button, onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
         // 空间被挤到放不下文字时，退化成「图标 + 下拉箭头」的紧凑胶囊，

@@ -156,6 +156,9 @@ fun ProferApp(viewModel: PocketViewModel) {
         val homeMode by viewModel.homeMode.collectAsStateWithLifecycle()
         val conversationListState by viewModel.conversationListState.collectAsStateWithLifecycle()
         val conversationUiState by viewModel.conversationUiState.collectAsStateWithLifecycle()
+        // 草稿单独收集：同步、最新，不经过 chatUiState 的后台映射，避免输入框被旧文本回写。
+        val drafts by viewModel.drafts.collectAsStateWithLifecycle()
+        val conversationDrafts by viewModel.conversationDrafts.collectAsStateWithLifecycle()
         val connectionState by viewModel.connectionUiState.collectAsStateWithLifecycle()
         val pendingNavigation by viewModel.pendingNavigation.collectAsStateWithLifecycle()
         var dialog by remember { mutableStateOf<SessionDialog?>(null) }
@@ -258,6 +261,7 @@ fun ProferApp(viewModel: PocketViewModel) {
                         onDeleteSession = { session ->
                             dialog = SessionDialog.Delete(session.id, session.title)
                         },
+                        onToggleProjectPin = viewModel::toggleProjectPin,
                         onOpenConnection = {
                             closeDrawer()
                             navController.navigate("connect")
@@ -272,6 +276,7 @@ fun ProferApp(viewModel: PocketViewModel) {
                 if (homeMode == HomeMode.Chat) {
                     ConversationScreen(
                         state = conversationUiState,
+                        draft = conversationDrafts[conversationUiState.conversationId].orEmpty(),
                         drawerContent = drawerContent,
                         onInputChange = viewModel::onConversationInputChange,
                         onSend = viewModel::sendConversation,
@@ -289,6 +294,7 @@ fun ProferApp(viewModel: PocketViewModel) {
                 } else {
                     ChatScreen(
                         state = chatState,
+                        draft = drafts[chatState.sessionId].orEmpty(),
                         modelOptions = modelOptions,
                         onSelectModel = { option -> viewModel.selectModel(option.channelId, option.modelId) },
                         onSelectMode = viewModel::selectPermissionMode,

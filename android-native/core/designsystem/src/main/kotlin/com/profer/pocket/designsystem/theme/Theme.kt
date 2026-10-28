@@ -17,6 +17,7 @@ fun ProferTheme(
     ) {
         CompositionLocalProvider(
             LocalProferSemanticColors provides if (darkTheme) ProferDarkSemantics else ProferLightSemantics,
+            LocalProferFileBadges provides if (darkTheme) ProferDarkFileBadges else ProferLightFileBadges,
             content = content,
         )
     }
@@ -25,4 +26,8 @@ fun ProferTheme(
 object ProferThemeExtras {
     val semantic: ProferSemanticColors
         @Composable @ReadOnlyComposable get() = LocalProferSemanticColors.current
+
+    /** 文件类型徽标配色，亮暗各一套。 */
+    val fileBadges: ProferFileBadgeColors
+        @Composable @ReadOnlyComposable get() = LocalProferFileBadges.current
 }

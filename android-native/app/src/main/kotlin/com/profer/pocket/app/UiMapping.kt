@@ -123,7 +123,7 @@ object UiMapping {
         val deviceName = activeDevice
             ?.takeIf { it.transportMode != TransportMode.LEGACY_QUERY }
             ?.profile?.deviceName?.takeIf { it.isNotBlank() }
-            ?: host.ifBlank { "Mac" }
+            ?: host.ifBlank { "电脑" }
         return ConnectionUiState(
             phase = phase,
             url = url,
@@ -210,7 +210,6 @@ object UiMapping {
         workspaces: List<WorkspaceSummary>,
         status: ConnectionStatus,
         queuedSends: Int = 0,
-        draft: String,
         presets: List<com.profer.pocket.model.AgentPresetSummary> = emptyList(),
         now: Long = System.currentTimeMillis(),
     ): ChatUiState {
@@ -311,7 +310,6 @@ object UiMapping {
             pendingPermission = chat?.pendingInteraction?.toUiPermission(),
             pendingQuestionId = (chat?.pendingInteraction as? PendingInteraction.Question)?.id,
             pendingQuestions = (chat?.pendingInteraction as? PendingInteraction.Question)?.questions.orEmpty(),
-            draft = draft,
             turnFiles = chat?.visibleTurnFiles.orEmpty(),
             toolCalls = chat?.let { current ->
                 current.toolCalls.map { call ->
@@ -371,6 +369,7 @@ object UiMapping {
         deviceLabel: String? = null,
         endpoint: String? = null,
         refreshing: Boolean = false,
+        pinnedProjectIds: Set<String> = emptySet(),
         now: Long = System.currentTimeMillis(),
     ): SessionListState {
         val groups = SessionCatalog.groups(
@@ -378,6 +377,7 @@ object UiMapping {
             workspaces = workspaces,
             query = query,
             runningIds = runningSessionIds,
+            pinnedProjectIds = pinnedProjectIds,
         )
         val projectNames = workspaces.filter { it.isVisible }.associate { it.id to it.displayName }
         return SessionListState(
@@ -392,6 +392,7 @@ object UiMapping {
                         com.profer.pocket.data.SessionGroupKind.Unassigned -> SessionGroupKind.Unassigned
                     },
                     workspaceId = group.workspaceId,
+                    pinned = group.pinned,
                     sessions = group.sessions.map { session ->
                         sessionItem(
                             session = session,
@@ -408,7 +409,7 @@ object UiMapping {
             deviceLabel = deviceLabel ?: when {
                 !online -> "未连接"
                 !endpoint.isNullOrBlank() -> "${hostOf(endpoint)} · 已连接"
-                else -> "Mac · 已连接"
+                else -> "电脑 · 已连接"
             },
             currentSessionId = currentSessionId,
             refreshing = refreshing,
@@ -505,7 +506,6 @@ object UiMapping {
         conversation: ConversationSummary?,
         messages: List<DomainChatMessage>,
         stream: ChatStream?,
-        draft: String,
         status: ConnectionStatus,
         queuedSends: Int = 0,
     ): ConversationUiState = ConversationUiState(
@@ -534,7 +534,6 @@ object UiMapping {
         streamReasoning = stream?.reasoning.orEmpty(),
         streaming = stream?.running == true,
         error = stream?.error,
-        draft = draft,
         offline = status !is ConnectionStatus.Connected,
         offlineLabel = offlineLabel(status, queuedSends),
     )

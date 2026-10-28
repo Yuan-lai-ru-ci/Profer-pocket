@@ -1,11 +1,15 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
-    <!-- 仅 debug：通过 adb broadcast 驱动数据层，release 不包含该组件。 -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+    <!-- 仅 debug：通过 adb broadcast 驱动数据层，release 不包含该组件。
+         导出是刻意的（adb shell am broadcast 以 shell 身份发送，拿不到自定义权限），
+         因此只做 tools:ignore 说明，不在 release 里放宽任何东西。 -->
     <application>
         <receiver
             android:name=".debug.DebugCommandReceiver"
             android:enabled="true"
-            android:exported="true">
+            android:exported="true"
+            tools:ignore="ExportedReceiver">
             <intent-filter>
                 <action android:name="com.profer.pocket.DEBUG" />
             </intent-filter>

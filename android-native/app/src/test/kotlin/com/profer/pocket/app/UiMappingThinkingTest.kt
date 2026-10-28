@@ -18,7 +18,7 @@ class UiMappingThinkingTest {
             sessionId = "s1",
             messages = listOf(ChatEntry.Assistant("a1", "", streaming = true, at = 1L, thinking = "先看日志")),
         )
-        val message = UiMapping.chatState("s1", chat, emptyList(), emptyList(), status, draft = "")
+        val message = UiMapping.chatState("s1", chat, emptyList(), emptyList(), status)
             .messages
             .single() as ChatMessage.Assistant
 
@@ -32,7 +32,7 @@ class UiMappingThinkingTest {
             sessionId = "s1",
             messages = listOf(ChatEntry.Assistant("a1", "结论", streaming = false, at = 1L, thinking = "推理")),
         )
-        val message = UiMapping.chatState("s1", chat, emptyList(), emptyList(), status, draft = "")
+        val message = UiMapping.chatState("s1", chat, emptyList(), emptyList(), status)
             .messages
             .single() as ChatMessage.Assistant
 
@@ -45,7 +45,7 @@ class UiMappingThinkingTest {
             sessionId = "s1",
             messages = listOf(ChatEntry.Assistant("a1", "回答", streaming = false, at = 1L)),
         )
-        val message = UiMapping.chatState("s1", chat, emptyList(), emptyList(), status, draft = "")
+        val message = UiMapping.chatState("s1", chat, emptyList(), emptyList(), status)
             .messages
             .single() as ChatMessage.Assistant
 

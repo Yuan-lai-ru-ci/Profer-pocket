@@ -1,12 +1,16 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
 
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <!-- dataSync 在 targetSdk 35 上有 6 小时/24 小时上限；API 34+ 改用 remoteMessaging，
+         保留 dataSync 供 API 29–33 回落，因此两个权限都要声明。 -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_REMOTE_MESSAGING" />
     <!-- 扫码配对：运行时授权，缺权限时只降级到手动手动连接，不崩溃。 -->
     <uses-permission android:name="android.permission.CAMERA" />
 
@@ -20,13 +24,16 @@
     <application
         android:name=".ProferApplication"
         android:allowBackup="true"
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        android:fullBackupContent="@xml/backup_rules"
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
         android:roundIcon="@mipmap/ic_launcher"
         android:enableOnBackInvokedCallback="true"
         android:supportsRtl="true"
         android:usesCleartextTraffic="true"
-        android:theme="@style/Theme.Profer">
+        android:theme="@style/Theme.Profer"
+        tools:targetApi="33">
 
         <provider
             android:name="androidx.core.content.FileProvider"
@@ -53,7 +60,7 @@
         <service
             android:name=".PocketConnectionService"
             android:exported="false"
-            android:foregroundServiceType="dataSync"
+            android:foregroundServiceType="dataSync|remoteMessaging"
             android:stopWithTask="false" />
     </application>
 

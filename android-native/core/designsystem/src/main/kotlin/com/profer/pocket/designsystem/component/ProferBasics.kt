@@ -24,11 +24,19 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -44,7 +52,10 @@ fun ProferSectionLabel(
     trailing: (@Composable () -> Unit)? = null,
 ) {
     Row(
-        modifier = modifier.fillMaxWidth(),
+        modifier = modifier
+            .fillMaxWidth()
+            // 分组标题交给读屏当标题跳转，不然长列表只能一行行划。
+            .semantics { heading() },
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(
@@ -81,7 +92,8 @@ fun ProferPill(
                 Modifier
                     .heightIn(min = ProferSizes.minTouchTarget)
                     .clip(CircleShape)
-                    .clickable(onClick = onClick)
+                    .semantics { this.selected = selected }
+                    .clickable(role = Role.Button, onClick = onClick)
             } else {
                 Modifier.heightIn(min = 30.dp)
             },
@@ -192,7 +204,8 @@ fun ProferConnectionBanner(
                 fontWeight = FontWeight.SemiBold,
                 modifier = Modifier
                     .heightIn(min = ProferSizes.minTouchTarget)
-                    .clickable(onClick = onAction)
+                    .clip(RoundedCornerShape(8.dp))
+                    .clickable(role = Role.Button, onClick = onAction)
                     .padding(horizontal = 8.dp),
             )
         }
@@ -223,12 +236,17 @@ fun ProferIconAction(
     Box(
         modifier = modifier
             .size(size.coerceAtLeast(ProferSizes.minTouchTarget))
-            .clickable(onClick = onClick),
+            // 先 clip 再 clickable：否则 ripple 按节点外框画成矩形，圆形图标按钮会闪一个方块。
+            .clip(CircleShape)
+            .clickable(role = Role.Button, onClick = onClick)
+            // 标签和点击动作必须在同一个语义节点上：否则读屏焦点落在 22dp 的图标子节点，
+            // 那个节点没有点击动作，双击可能没反应。
+            .semantics { this.contentDescription = contentDescription },
         contentAlignment = Alignment.Center,
     ) {
         Icon(
             imageVector = icon,
-            contentDescription = contentDescription,
+            contentDescription = null,
             tint = tint,
             modifier = Modifier.size(if (size < ProferSizes.minTouchTarget) 20.dp else 22.dp),
         )
@@ -238,3 +256,15 @@ fun ProferIconAction(
 /** 内容块圆角：与 M3 形状档位一致，不出现 6/7dp 混用。 */
 val ProferCardShape = RoundedCornerShape(16.dp)
 val ProferSheetShape = RoundedCornerShape(28.dp)
+
+/**
+ * 长按反馈：弹菜单前先给一次触感，和系统列表的长按行为一致。
+ * 没有触感时用户只能靠菜单突然出现判断长按生效。
+ */
+@Composable
+fun rememberLongPressFeedback(): () -> Unit {
+    val haptics = LocalHapticFeedback.current
+    return remember(haptics) {
+        { haptics.performHapticFeedback(HapticFeedbackType.LongPress) }
+    }
+}

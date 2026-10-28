@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  API 31+ 的备份与换机迁移范围（android:dataExtractionRules）。
+
+  与 backup_rules.xml 同一套取舍：只带走设置。凭据、设备指纹、会话缓存既不进云备份，
+  也不随「设备到设备迁移」搬走 —— Keystore 密钥不迁移，搬过去也解不开。
+  两个分支都只写 <include>：未列出的内容默认排除。
+-->
+<data-extraction-rules>
+    <cloud-backup>
+        <include
+            domain="sharedpref"
+            path="profer_pocket_settings.xml" />
+    </cloud-backup>
+    <device-transfer>
+        <include
+            domain="sharedpref"
+            path="profer_pocket_settings.xml" />
+    </device-transfer>
+</data-extraction-rules>

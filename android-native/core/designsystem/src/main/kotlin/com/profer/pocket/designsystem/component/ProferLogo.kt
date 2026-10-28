@@ -27,7 +27,7 @@ fun ProferMark(
     modifier: Modifier = Modifier,
     size: Dp = 28.dp,
     // 品牌标记始终用墨色（深色主题反之），不跟着主操作色走：
-    // 主色是砖红，品牌标记如果也变红，就分不清「品牌」和「可点的按钮」。
+    // 主色是陶土棕，品牌标记如果也变色，就分不清「品牌」和「可点的按钮」。
     containerColor: Color = MaterialTheme.colorScheme.onSurface,
     markColor: Color = MaterialTheme.colorScheme.surface,
 ) {

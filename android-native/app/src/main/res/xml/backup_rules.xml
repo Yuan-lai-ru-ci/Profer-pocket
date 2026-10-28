@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  API 26–30 的备份范围（android:fullBackupContent）。
+
+  声明 <include> 之后，未列出的内容一律不备份，所以这里只列设置一项：
+  - profer_pocket_credentials：token 用 Android Keystore 加密，密钥不可迁移，
+    还原到新设备只会得到无法解密的数据；同时 token 属于凭据，不该离开设备。
+  - profer_remote_devices：设备指纹与固定证书，还原后会和真实电脑对不上。
+  - 会话快照 / 待发送队列 / 草稿 / 已读位置 / 最后会话 / 项目置顶：
+    都是随电脑端变化的本地缓存，还原旧数据会让界面显示已经不存在的会话。
+-->
+<full-backup-content>
+    <include
+        domain="sharedpref"
+        path="profer_pocket_settings.xml" />
+</full-backup-content>

@@ -1,3 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Profer</string>
+
+    <!-- 系统 UI 文案（通知渠道、常驻通知）。渠道名会常驻系统设置页，必须走资源。 -->
+    <string name="notification_channel_keepalive">Profer 后台连接</string>
+    <string name="notification_channel_keepalive_description">保持与电脑上 Profer 的消息连接</string>
+    <string name="notification_channel_messages">Profer 消息提醒</string>
+    <string name="notification_channel_messages_description">权限确认、计划审批、提问与任务完成</string>
+    <string name="notification_keepalive_title">Profer 后台连接</string>
+    <string name="notification_keepalive_text">切到其他应用或熄屏后仍保持连接</string>
 </resources>
