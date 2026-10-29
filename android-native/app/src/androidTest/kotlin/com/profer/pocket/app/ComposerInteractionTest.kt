@@ -64,6 +64,33 @@ class ComposerInteractionTest {
     }
 
     @Test
+    fun streaming_replaces_send_with_stop_in_place() {
+        var stopped = 0
+
+        rule.setContent {
+            ProferTheme(darkTheme = false) {
+                ProferComposer(
+                    value = "",
+                    onValueChange = {},
+                    onSend = {},
+                    onStop = { stopped += 1 },
+                    streaming = true,
+                    modelLabel = "Sonnet",
+                    modeLabel = "默认",
+                    onModelClick = {},
+                    onModeClick = {},
+                )
+            }
+        }
+
+        // 流式中不允许多出一颗按钮：发送键原位变成停止键，且空输入也能点。
+        rule.onNodeWithContentDescription("发送").assertDoesNotExist()
+        rule.onNodeWithContentDescription("停止").performClick()
+
+        rule.runOnIdle { assertEquals(1, stopped) }
+    }
+
+    @Test
     fun icon_action_keeps_minimum_touch_target() {
         rule.setContent {
             ProferTheme(darkTheme = false) {
