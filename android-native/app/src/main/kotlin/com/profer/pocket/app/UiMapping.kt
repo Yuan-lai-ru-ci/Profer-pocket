@@ -598,7 +598,8 @@ object UiMapping {
             // 子会话以根行身份出现时（置顶/搜索）靠这两个字段保留层级信息。
             isSubSession = session.isSubSession,
             roleLabel = subSessionLabel(session),
-            delegationRunning = session.isDelegationRunning,
+            delegationStatus = session.delegationStatus,
+            isExploration = session.isExplorationChild,
         )
         synchronized(sessionCacheLock) { sessionItemCache[key] = item }
         return item

@@ -33,6 +33,10 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Add
+import androidx.compose.material.icons.outlined.AccountTree
+import androidx.compose.material.icons.outlined.CallSplit
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material.icons.outlined.DriveFileMove
@@ -129,7 +133,9 @@ fun SessionListContent(
     // 展开状态要跟着配置变化/进程重建活下来：抽屉最烦的就是每次回来项目全收起。
     var expandedProjects by rememberSaveable { mutableStateOf(emptyList<String>()) }
     // 子会话默认收起：委派一多，抽屉不能被十条子行占满。
+    // 显式开/关各记一份：否则「当前打开的是子会话」会一直把展开态顶回去，点收起没反应。
     var expandedSubSessions by rememberSaveable { mutableStateOf(emptyList<String>()) }
+    var collapsedSubSessions by rememberSaveable { mutableStateOf(emptyList<String>()) }
     var defaultsApplied by rememberSaveable { mutableStateOf(false) }
     val forceExpand = state.query.isNotBlank()
 
@@ -283,10 +289,15 @@ fun SessionListContent(
                             key = { _, session -> session.id },
                             contentType = { _, _ -> "session" },
                         ) { _, session ->
-                            // 当前打开的会话是子会话时，自动把它所在的那一组展开。
-                            val childrenExpanded = forceExpand ||
+                            // 当前打开的会话是子会话时默认展开；用户手动收起后不再抢回来。
+                            val childrenExpanded = if (forceExpand) {
+                                true
+                            } else if (session.id in collapsedSubSessions) {
+                                false
+                            } else {
                                 session.id in expandedSubSessions ||
-                                session.children.any { it.id == state.currentSessionId }
+                                    session.children.any { it.id == state.currentSessionId }
+                            }
                             Box(
                                 modifier = Modifier.animateItem(
                                     fadeInSpec = tween(160, easing = ClearEase),
@@ -315,38 +326,33 @@ fun SessionListContent(
                                         onDelete = { onDeleteSession(session) },
                                         // 搜索/筛选只影响可见分组，移动目标必须看完整项目目录。
                                         canMove = state.hasProjects,
-                                    )
-                                    if (session.children.isNotEmpty()) {
-                                        SubSessionToggle(
-                                            count = session.children.size,
-                                            running = session.children.count { it.running },
-                                            expanded = childrenExpanded,
-                                            onToggle = {
-                                                expandedSubSessions = if (session.id in expandedSubSessions) {
-                                                    expandedSubSessions - session.id
+                                        childrenExpanded = childrenExpanded,
+                                        onToggleChildren = if (session.children.isEmpty()) {
+                                            null
+                                        } else {
+                                            {
+                                                if (childrenExpanded) {
+                                                    expandedSubSessions = expandedSubSessions - session.id
+                                                    collapsedSubSessions = collapsedSubSessions + session.id
                                                 } else {
-                                                    expandedSubSessions + session.id
+                                                    collapsedSubSessions = collapsedSubSessions - session.id
+                                                    expandedSubSessions = expandedSubSessions + session.id
                                                 }
-                                            },
-                                        )
-                                        if (childrenExpanded) {
-                                            session.children.forEach { child ->
-                                                SessionRow(
-                                                    session = child,
-                                                    selected = child.id == state.currentSessionId,
-                                                    // 子会话与母会话同项目，不重复项目名。
-                                                    projectName = null,
-                                                    depth = 1,
-                                                    onClick = { onSelectSession(child.id) },
-                                                    onRename = { onRenameSession(child) },
-                                                    onTogglePin = { onTogglePin(child) },
-                                                    onToggleRead = { onToggleRead(child) },
-                                                    onMove = { onMoveSession(child) },
-                                                    onDelete = { onDeleteSession(child) },
-                                                    canMove = state.hasProjects,
-                                                )
                                             }
-                                        }
+                                        },
+                                    )
+                                    if (session.children.isNotEmpty() && childrenExpanded) {
+                                        RelatedChildren(
+                                            children = session.children,
+                                            currentSessionId = state.currentSessionId,
+                                            onSelectSession = onSelectSession,
+                                            onRenameSession = onRenameSession,
+                                            onTogglePin = onTogglePin,
+                                            onToggleRead = onToggleRead,
+                                            onMoveSession = onMoveSession,
+                                            onDeleteSession = onDeleteSession,
+                                            canMove = state.hasProjects,
+                                        )
                                     }
                                 }
                             }
@@ -697,55 +703,104 @@ private fun EmptyProjectRow(onCreateSession: () -> Unit) {
 }
 
 /**
- * 子会话折叠行：只占一行，告诉用户母会话下面还挂着几个子会话。
- * 默认收起（委派一多，抽屉不能被十条子行占满），当前打开的子会话会自动展开。
+ * 母行右侧的关联会话开关：`1/2 子会话` + 旋转箭头。
+ *
+ * 对齐桌面 `session-items.tsx` 的 delegationSummary —— 摘要长在母行上，不再单独占一整行，
+ * 所以项目里有多少母会话就还是多少行。
  */
 @Composable
-private fun SubSessionToggle(
-    count: Int,
-    running: Int,
+private fun RelatedSummaryButton(
+    summary: RelatedSummary,
     expanded: Boolean,
     onToggle: () -> Unit,
 ) {
     val rotation by animateFloatAsState(
         targetValue = if (expanded) 0f else -90f,
-        animationSpec = tween(durationMillis = 180, easing = ClearEase),
-        label = "sub-session-chevron",
+        animationSpec = tween(durationMillis = 150, easing = ClearEase),
+        label = "related-summary-chevron",
     )
+    val tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.55f)
     Row(
         modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 2.dp)
-            .clip(MaterialTheme.shapes.small)
+            .clip(CircleShape)
             .clickable(onClick = onToggle)
             .heightIn(min = ProferSizes.minTouchTarget)
-            // 与子会话行同一缩进：折叠行是那组的「标题」，不是另一条会话。
-            .padding(start = 44.dp, end = 8.dp),
+            .padding(horizontal = 2.dp)
+            // 与 ProferIconAction 同一套写法：标签与点击动作落在同一个语义节点上。
+            .semantics {
+                contentDescription = if (expanded) "收起${summary.label}" else "展开${summary.label}"
+            },
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Icon(
             imageVector = Icons.Outlined.ExpandMore,
             contentDescription = null,
-            tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.55f),
+            tint = tint,
             modifier = Modifier
-                .size(14.dp)
+                .size(13.dp)
                 .graphicsLayer { rotationZ = rotation },
         )
-        Spacer(Modifier.width(6.dp))
-        Text(
-            text = "$count 个子会话",
-            style = MaterialTheme.typography.labelSmall.copy(letterSpacing = 0.1.sp),
-            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.72f),
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.weight(1f),
-        )
-        if (running > 0) {
-            ProferStatusDot(
-                color = ProferThemeExtras.semantic.success,
-                pulsing = true,
-                size = 5.dp,
-                modifier = Modifier.semantics { contentDescription = "$running 个子会话运行中" },
+        if (summary.showCount) {
+            // 大字号下省掉「子会话」三个字，把宽度留给标题；完整语义在 contentDescription 里。
+            val compact = LocalDensity.current.fontScale >= 1.5f
+            Text(
+                text = if (compact) {
+                    "${summary.completed}/${summary.total}"
+                } else {
+                    "${summary.completed}/${summary.total} ${summary.label}"
+                },
+                style = MaterialTheme.typography.labelSmall.copy(letterSpacing = 0.1.sp),
+                color = tint,
+                maxLines = 1,
+                softWrap = false,
+            )
+        }
+    }
+}
+
+/**
+ * 子会话区：左侧一条 1dp 引导线 + 子行，对齐桌面 `ml-3 border-l pl-2`。
+ * 引导线画在整段高度上，行数变化时不会断成几截。
+ */
+@Composable
+private fun RelatedChildren(
+    children: List<SessionItem>,
+    currentSessionId: String?,
+    onSelectSession: (String) -> Unit,
+    onRenameSession: (SessionItem) -> Unit,
+    onTogglePin: (SessionItem) -> Unit,
+    onToggleRead: (SessionItem) -> Unit,
+    onMoveSession: (SessionItem) -> Unit,
+    onDeleteSession: (SessionItem) -> Unit,
+    canMove: Boolean,
+) {
+    val guide = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f)
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .drawBehind {
+                val x = 37.dp.toPx()
+                drawLine(
+                    color = guide,
+                    start = Offset(x, 0f),
+                    end = Offset(x, size.height),
+                    strokeWidth = 1.dp.toPx(),
+                )
+            },
+    ) {
+        children.forEach { child ->
+            SessionRow(
+                session = child,
+                selected = child.id == currentSessionId,
+                projectName = null,
+                depth = 1,
+                onClick = { onSelectSession(child.id) },
+                onRename = { onRenameSession(child) },
+                onTogglePin = { onTogglePin(child) },
+                onToggleRead = { onToggleRead(child) },
+                onMove = { onMoveSession(child) },
+                onDelete = { onDeleteSession(child) },
+                canMove = canMove,
             )
         }
     }
@@ -766,6 +821,10 @@ private fun SessionRow(
     canMove: Boolean,
     /** 0 = 会话根行；1 = 子会话行。层级用几何分开，不只靠字形。 */
     depth: Int = 0,
+    /** 子会话是否展开（只有带子会话的母行用得到）。 */
+    childrenExpanded: Boolean = false,
+    /** 母行右侧的「x/y 子会话」开关；无子会话时为 null。 */
+    onToggleChildren: (() -> Unit)? = null,
 ) {
     // 菜单开合不参与状态恢复：进程重建后不应该自己弹出一个操作菜单。
     var menuOpen by remember(session.id) { mutableStateOf(false) }
@@ -811,7 +870,25 @@ private fun SessionRow(
                         shape = RoundedCornerShape(1.dp),
                     ),
             )
-            Spacer(Modifier.width(10.dp))
+            Spacer(Modifier.width(if (depth > 0) 8.dp else 10.dp))
+            // 子行用分支/分叉图标表达血缘（对齐桌面 GitBranch / GitFork），不再挂文字胶囊。
+            if (depth > 0) {
+                Icon(
+                    imageVector = if (session.isExploration) {
+                        Icons.Outlined.CallSplit
+                    } else {
+                        Icons.Outlined.AccountTree
+                    },
+                    contentDescription = session.roleLabel,
+                    tint = when (session.delegationStatus) {
+                        "running" -> ProferThemeExtras.semantic.success
+                        "completed" -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+                        else -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.35f)
+                    },
+                    modifier = Modifier.size(12.dp),
+                )
+                Spacer(Modifier.width(6.dp))
+            }
             Text(
                 text = session.title,
                 style = MaterialTheme.typography.bodyMedium.copy(
@@ -826,8 +903,8 @@ private fun SessionRow(
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f),
             )
-            // 子会话角色（委派/探索分支）：只在行上留一个轻标签，不展开成独立分组。
-            val roleLabel = session.roleLabel
+            // 子会话以根行身份出现时（置顶/搜索）才需要角色胶囊；子行已有分支图标。
+            val roleLabel = session.roleLabel.takeIf { depth == 0 }
             if (roleLabel != null) {
                 Spacer(Modifier.width(6.dp))
                 Surface(
@@ -866,6 +943,16 @@ private fun SessionRow(
                             .padding(horizontal = 7.dp, vertical = 1.dp),
                     )
                 }
+            }
+            // 母行右侧的关联会话开关：桌面把「x/y 子会话」放在标题之后、时间之前。
+            val relatedSummary = session.relatedSummary
+            if (relatedSummary != null && onToggleChildren != null) {
+                Spacer(Modifier.width(4.dp))
+                RelatedSummaryButton(
+                    summary = relatedSummary,
+                    expanded = childrenExpanded,
+                    onToggle = onToggleChildren,
+                )
             }
             if (session.running) {
                 Spacer(Modifier.width(8.dp))

@@ -22,12 +22,45 @@ data class SessionItem(
     val isSubSession: Boolean = false,
     /** 子会话角色标签：「探索分支」「调研」「实现」…；普通会话为 null。 */
     val roleLabel: String? = null,
-    /** 委派仍在跑：子会话 run 结束后委派状态可能还差一拍。 */
-    val delegationRunning: Boolean = false,
+    /** 委派状态（running / completed / failed / cancelled）；子行图标靠它上色。 */
+    val delegationStatus: String? = null,
+    /** 探索分支：子行用分叉图标，而不是委派的分支图标。 */
+    val isExploration: Boolean = false,
 ) {
     /** 本行及其子会话的运行中数量。 */
     val activeCount: Int get() = (if (running) 1 else 0) + children.count { it.running }
+
+    /** 委派仍在跑：子会话 run 结束后委派状态可能还差一拍。 */
+    val delegationRunning: Boolean get() = delegationStatus == "running"
+
+    /** 父行右侧的关联会话摘要；无子会话时为 null。 */
+    val relatedSummary: RelatedSummary?
+        get() {
+            if (children.isEmpty()) return null
+            val delegated = children.filterNot { it.isExploration }
+            val hasExploration = children.any { it.isExploration }
+            return RelatedSummary(
+                total = children.size,
+                completed = delegated.count { it.delegationStatus == "completed" },
+                label = when {
+                    delegated.isNotEmpty() && hasExploration -> "关联会话"
+                    hasExploration -> "探索分支"
+                    else -> "子会话"
+                },
+                // 探索分支的进度不适合用 x/y 表达（对齐桌面）：只留箭头。
+                showCount = !hasExploration,
+            )
+        }
 }
+
+/** 父行右侧的「x/y 子会话」摘要（与桌面 `getRelatedSessionSummary` 同义）。 */
+@Immutable
+data class RelatedSummary(
+    val total: Int,
+    val completed: Int,
+    val label: String,
+    val showCount: Boolean,
+)
 
 @Immutable
 data class ProjectGroup(
@@ -84,7 +117,7 @@ object SessionPreviewData {
                                 running = true,
                                 isSubSession = true,
                                 roleLabel = "调研",
-                                delegationRunning = true,
+                                delegationStatus = "running",
                             ),
                             SessionItem(
                                 id = "s1-c2",
@@ -92,6 +125,7 @@ object SessionPreviewData {
                                 timeLabel = "10 分钟前",
                                 isSubSession = true,
                                 roleLabel = "实现",
+                                delegationStatus = "completed",
                             ),
                         ),
                     ),
