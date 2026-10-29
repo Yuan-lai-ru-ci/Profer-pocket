@@ -120,6 +120,13 @@
   置顶组始终最前，「未归入项目」始终最后。桌面侧栏的「默认/最近/名称」排序是桌面本地偏好，不下发移动端。
 - **会话行**：单行 44dp，只显示名称与短时间（刚刚 / N 分 / N 小时 / N 天 / M月d日），
   不再为每行塞模型和第二行元信息；会话标题相对项目名缩进，层级一眼可见。
+- **子会话（2026-10-29）**：委派子会话（`parentSessionId + sourceDelegationId`）与探索分支
+  （`explorationParentSessionId + explorationSourceMessageId`）挂在母会话下，不再作为项目里的平铺行。
+  母行下是一条「N 个子会话」折叠行（48dp 热区、默认收起、当前打开的子会话自动展开），
+  子行再缩进 14dp，标题后带角色胶囊（探索 / 调研 / 实现 / 审查 / 协作 / 探索分支）；
+  子会话运行中时折叠行右侧显示脉冲点。子会话顶栏给出「角色 · 来自 母会话标题」面包屑，点一下回母会话。
+  建树规则与桌面 `left-sidebar/session-tree.ts` 对齐：母会话不在可见集合（搜索只命中子会话）时子会话升为根行，
+  跨项目不归并，单侧血缘字段的脏数据不归并。
 - **抽屉密度（2026-10-18）**：项目行 40dp、会话行 44dp，删除逐行分割线，列表左右边距 8dp；
   品牌行合并目录规模，底部改为单行书脚。360×640dp 机器上列表视口从 384dp 提到 503dp（+31%）。
   行高低于 M3 的 48dp 建议，只用于抽屉这种导航场景，聊天与审批主流程仍是 48dp。
@@ -202,6 +209,9 @@ android-native/
 - `session_projection`：桌面会话元数据的唯一变更出口；`operation=upsert|delete`，携带 `revision`。
   移动端按 `revision` 合并（旧投影不回退），删除写墓碑（迟到 upsert 不复活会话）。
 - `session_detail`：`meta` 同样带 `workspaceId / pinned / archived / draft / completedButUnconfirmed / revision`。
+- 血缘字段（仅用于树形导航，不下发委派内容）：`parentSessionId / sourceDelegationId / delegationRole /
+  delegationStatus / delegationDepth / explorationParentSessionId / explorationSourceMessageId /
+  explorationSourceLabel`。移动端只用来把子会话挂回母会话与渲染角色胶囊；离线快照同样落盘这些字段。
 - 创建类命令返回完整会话 item（同时保留 `sessionId / title / draft` 兼容旧客户端），移动端无需为新会话再拉全量列表。
 
 移动端已接入 Chat（非 Agent）的**列表 / 打开 / 发送 / 流式 / 停止 / 新建 / 删除**；
@@ -386,6 +396,9 @@ UI 轮（2026-10-20，移动版 UI 岗位）实测：
 - **新建会话的模型不可选**：移动端默认取第一个启用渠道及其首个模型（可在电脑端换模型）；模型选择器是下一步。
 - **Release 签名未配置**：`assembleRelease` 产出 unsigned APK，保持 fail-closed；发布前必须接正式签名与 `applicationId` 迁移方案。
 - **归档只在电脑端管理**：移动端不接收归档会话，也没有归档/恢复入口；需要恢复请回电脑端。
+- **子会话只有导航，没有委派面板**：母会话下的「N 个子会话」折叠行、角色胶囊与顶栏面包屑已接；
+  但 `delegation_blocked`（子会话要审批/提问）与委派进度条尚未渲染——这类阻塞目前只能在电脑端处理。
+  子会话默认收起，不会把抽屉刷满；需要看某个子会话就跑一次折叠行。
 - **启动耗时未达移动端标准**：本机 AVD（720×1280，宿主负载 6–11）冷启动仍在 10–16s，主要成本是 debug 包首次组合
   + 模拟器 dex 校验；已把「前台服务启动/凭据读取/草稿与阅读位置读盘」移出首帧路径（原先 `startForegroundService`
   会在主线程阻塞并直接触发 5s FGS 超时崩溃），但**仍需在真机与空闲模拟器复测**，不能据此宣称启动已达标。

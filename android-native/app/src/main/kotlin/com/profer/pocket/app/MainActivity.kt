@@ -308,6 +308,10 @@ fun ProferApp(viewModel: PocketViewModel) {
                         onAlwaysAllowPermission = viewModel::alwaysAllowPermission,
                         onDenyPermission = viewModel::denyPermission,
                         onOpenSettings = { navController.navigate("settings") },
+                        // 子会话顶栏面包屑：回母会话，不新开页面。
+                        onOpenParentSession = {
+                            chatState.parentSessionId?.let(viewModel::selectSession)
+                        },
                         presetLabel = chatState.presetLabel,
                         presets = presets,
                         onSelectPreset = viewModel::selectPreset,

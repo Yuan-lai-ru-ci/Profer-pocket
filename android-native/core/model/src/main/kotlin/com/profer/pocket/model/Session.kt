@@ -25,12 +25,49 @@ data class SessionSummary(
     val archived: Boolean? = null,
     val pinned: Boolean? = null,
     val draft: Boolean? = null,
+    // ===== 血缘：委派子会话与探索分支 =====
+    // 桌面 `buildSessionItem` 已经下发这些字段（注释写明「仅用于树形导航」），
+    // 移动端只用来把子会话挂回母会话，不展示委派内容本身。
+    /** 委派子会话的母会话；与 [sourceDelegationId] 成对出现才算委派血缘。 */
+    val parentSessionId: String? = null,
+    val sourceDelegationId: String? = null,
+    /** explore / research / implement / review / custom；探索分支为空。 */
+    val delegationRole: String? = null,
+    /** running / completed / failed / cancelled；只在委派血缘上有意义。 */
+    val delegationStatus: String? = null,
+    val delegationDepth: Int = 0,
+    /** 探索分支：独立血缘字段，不参与委派删除级联。 */
+    val explorationParentSessionId: String? = null,
+    val explorationSourceMessageId: String? = null,
+    /** 探索来源标签（桌面按选区文本截断后的文案）。 */
+    val explorationSourceLabel: String? = null,
 ) {
     val isActive: Boolean get() = active == true
     val isUnread: Boolean get() = unread == true
     val isArchived: Boolean get() = archived == true
     val isPinned: Boolean get() = pinned == true
     val isDraft: Boolean get() = draft == true
+
+    /** 委派子会话：两个字段同时存在才算，避免脏数据把普通会话挂到别人下面。 */
+    val isDelegatedChild: Boolean
+        get() = !parentSessionId.isNullOrBlank() && !sourceDelegationId.isNullOrBlank()
+
+    /** 探索分支：同样要求血缘字段成对。 */
+    val isExplorationChild: Boolean
+        get() = !explorationParentSessionId.isNullOrBlank() && !explorationSourceMessageId.isNullOrBlank()
+
+    /** 需要挂回的母会话 id；两种血缘互斥，委派优先。 */
+    val relatedParentSessionId: String?
+        get() = when {
+            isDelegatedChild -> parentSessionId
+            isExplorationChild -> explorationParentSessionId
+            else -> null
+        }
+
+    val isSubSession: Boolean get() = relatedParentSessionId != null
+
+    /** 子会话仍在跑（委派状态可能比 run 终态晚一拍，两者都算）。 */
+    val isDelegationRunning: Boolean get() = isDelegatedChild && delegationStatus == "running"
 
     /**
      * 用一次更权威的快照覆盖本项：带了字段就覆盖（包括 false），没带就保留旧值。
@@ -55,6 +92,16 @@ data class SessionSummary(
             archived = incoming.archived ?: archived,
             pinned = incoming.pinned ?: pinned,
             draft = incoming.draft ?: draft,
+            // 血缘是创建时写定的元数据，projection 偶尔不带；缺失时保留旧值，
+            // 否则一条普通更新就会把子会话从母会话下摘掉。
+            parentSessionId = incoming.parentSessionId ?: parentSessionId,
+            sourceDelegationId = incoming.sourceDelegationId ?: sourceDelegationId,
+            delegationRole = incoming.delegationRole ?: delegationRole,
+            delegationStatus = incoming.delegationStatus ?: delegationStatus,
+            delegationDepth = incoming.delegationDepth.takeIf { it > 0 } ?: delegationDepth,
+            explorationParentSessionId = incoming.explorationParentSessionId ?: explorationParentSessionId,
+            explorationSourceMessageId = incoming.explorationSourceMessageId ?: explorationSourceMessageId,
+            explorationSourceLabel = incoming.explorationSourceLabel ?: explorationSourceLabel,
         )
     }
 }

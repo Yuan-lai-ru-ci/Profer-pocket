@@ -43,6 +43,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.profer.pocket.designsystem.component.ProferEmptyState
@@ -82,9 +83,12 @@ fun DrawerModeSwitch(
     modifier: Modifier = Modifier,
     compact: Boolean = false,
 ) {
+    // 紧凑态宽度跟随字号：固定 96dp 在 2.0× 下会把 Agent/Chat 挤成两行，
+    // 而只用 min 下限会让开关吃掉整行、把搜索/新建挤出抽屉。
+    val segmentWidth = (96 * LocalDensity.current.fontScale.coerceIn(1f, 1.6f)).dp
     Row(
         modifier = modifier
-            .then(if (compact) Modifier.width(96.dp) else Modifier.fillMaxWidth())
+            .then(if (compact) Modifier.width(segmentWidth) else Modifier.fillMaxWidth())
             .heightIn(min = 28.dp)
             .clip(CircleShape)
             .background(MaterialTheme.colorScheme.surfaceContainer)
@@ -126,6 +130,8 @@ private fun ModeSegment(
     ) {
         Text(
             text = label,
+            maxLines = 1,
+            softWrap = false,
             style = MaterialTheme.typography.labelSmall.copy(
                 fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
                 letterSpacing = 0.3.sp,

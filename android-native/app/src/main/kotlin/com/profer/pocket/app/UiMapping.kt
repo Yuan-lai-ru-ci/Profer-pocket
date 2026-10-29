@@ -215,6 +215,15 @@ object UiMapping {
     ): ChatUiState {
         val online = status is ConnectionStatus.Connected
         val summary = sessions.firstOrNull { it.id == sessionId }
+        // 子会话（委派 / 探索分支）：顶栏给一条返回母会话的面包屑，否则用户看不出自己在哪一层。
+        val parentSession = summary?.relatedParentSessionId?.let { parentId ->
+            sessions.firstOrNull { it.id == parentId }
+        }
+        val subSessionLabel = summary?.takeIf { it.isSubSession }?.let { sub ->
+            val role = subSessionLabel(sub) ?: "子会话"
+            val parentTitle = parentSession?.title?.takeIf { it.isNotBlank() }
+            if (parentTitle != null) "$role · 来自 $parentTitle" else role
+        }
         val title = chat?.title?.takeIf { it.isNotBlank() }
             ?: summary?.title?.takeIf { it.isNotBlank() }
             ?: "新会话"
@@ -335,6 +344,8 @@ object UiMapping {
                     )
                 }
             }.orEmpty(),
+            parentSessionId = parentSession?.id ?: summary?.relatedParentSessionId,
+            subSessionLabel = subSessionLabel,
         )
     }
 
@@ -393,13 +404,28 @@ object UiMapping {
                     },
                     workspaceId = group.workspaceId,
                     pinned = group.pinned,
-                    sessions = group.sessions.map { session ->
+                    // 根行带自己的子会话：抽屉不再把委派子会话平铺成「陌生会话」。
+                    sessions = group.items.map { item ->
                         sessionItem(
-                            session = session,
+                            session = item.session,
                             currentSessionId = currentSessionId,
-                            running = session.isActive || session.id in runningSessionIds,
+                            running = item.session.isActive ||
+                                item.session.id in runningSessionIds ||
+                                item.session.isDelegationRunning,
                             now = now,
-                            projectName = session.workspaceId?.let(projectNames::get),
+                            projectName = item.session.workspaceId?.let(projectNames::get),
+                        ).copy(
+                            children = item.children.map { child ->
+                                sessionItem(
+                                    session = child,
+                                    currentSessionId = currentSessionId,
+                                    running = child.isActive ||
+                                        child.id in runningSessionIds ||
+                                        child.isDelegationRunning,
+                                    now = now,
+                                    projectName = child.workspaceId?.let(projectNames::get),
+                                )
+                            },
                         )
                     },
                 )
@@ -569,9 +595,30 @@ object UiMapping {
             draft = session.isDraft,
             workspaceId = session.workspaceId,
             projectName = projectName,
+            // 子会话以根行身份出现时（置顶/搜索）靠这两个字段保留层级信息。
+            isSubSession = session.isSubSession,
+            roleLabel = subSessionLabel(session),
+            delegationRunning = session.isDelegationRunning,
         )
         synchronized(sessionCacheLock) { sessionItemCache[key] = item }
         return item
+    }
+
+    /**
+     * 子会话角色标签。委派角色直接用桌面下发值，探索分支单独一档；
+     * 不认识的角色不回退成英文，统一叫「子会话」，避免抽屉里出现 role 字面量。
+     */
+    private fun subSessionLabel(session: SessionSummary): String? = when {
+        session.isExplorationChild -> "探索分支"
+        !session.isSubSession -> null
+        else -> when (session.delegationRole) {
+            "explore" -> "探索"
+            "research" -> "调研"
+            "implement" -> "实现"
+            "review" -> "审查"
+            "custom" -> "协作"
+            else -> "子会话"
+        }
     }
 
     private fun relativeTime(timestamp: Long, now: Long): String {

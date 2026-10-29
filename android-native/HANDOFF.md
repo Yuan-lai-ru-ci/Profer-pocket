@@ -188,6 +188,40 @@ ripple 就是矩形**。约定：可点击的圆形/胶囊/文字按钮一律 `c
 验证：`assembleDebug` / `test` / `lintDebug` 全过；按住截图见
 `screenshots/2026-10-28-audit/17-ripple-icon.png`（图标按钮圆形）、`18-ripple-banner.png`（文字按钮圆角）。
 
+## 4.4 子会话层级（2026-10-29）
+
+桌面早已在 `buildSessionItem` 里下发血缘字段（注释写明「仅用于树形导航」），但安卓端一个都没解析，
+委派子会话与探索分支在抽屉里就是平铺的普通会话。本轮补齐：
+
+- `SessionSummary` 新增 `parentSessionId / sourceDelegationId / delegationRole / delegationStatus /
+  delegationDepth / explorationParentSessionId / explorationSourceMessageId / explorationSourceLabel`，
+  `merge()` 在字段缺失时保留旧值（一条普通 projection 不会把子会话从母会话下摘掉）；
+  `FrameCodec.parseSessionSummary` 与 `SessionSnapshotStore` 同步解析/落盘。
+- `SessionCatalog` 建树：`SessionGroup.items: List<SessionTreeItem>`，`sessions` 变成「根 + 子」的展平只读属性，
+  现有调用方与计数不受影响。三条守卫对齐桌面 `session-tree.ts`：母会话不在可见集合时子会话升为根行、
+  跨项目不归并、自己不能是自己的父会话。搜索时母会话命中会带上子会话。
+- UI：母行下一条「N 个子会话」折叠行（48dp 热区、默认收起、当前子会话自动展开、运行中脉冲点），
+  子行缩进 14dp + 角色胶囊（探索/调研/实现/审查/协作/探索分支）；置顶/搜索下子会话以根行出现时靠胶囊标出层级。
+- 对话页：子会话顶栏多一行「角色 · 来自 母会话标题」面包屑，点击回母会话（`selectSession`，不新开页面）。
+- 顺带修 2.0× 大字号下抽屉头部：Agent/Chat 开关固定 96dp 会折成两行，改成随字号缩放并单行不换行；
+  ≥1.5× 时隐藏「Profer」品牌字，避免把搜索/新建挤出抽屉。
+
+验证（API 35 AVD，720×1280 / 320dpi，debug 包，离线快照注入真实数据）：
+
+| 项 | 结果 |
+|---|---|
+| `./gradlew test` | 498 项（debug+release 双变体），0 失败；新增目录建树 8 例、血缘解析 1 例、合并保留 5 例、UI 映射 5 例 |
+| `:app:lintDebug` | 0 errors，23 warnings（全为依赖版本/资源重复告警，无新增代码告警） |
+| `:app:assembleDebug` | 通过 |
+| 浅色抽屉 | `screenshots/2026-10-29-subsession/02-drawer-light.png`（子会话展开、角色胶囊、运行点） |
+| 深色抽屉 | `03-drawer-dark.png` |
+| 2.0× 大字号 | `04-drawer-largefont.png`（开关单行、搜索/新建仍在、行内标题省略不重叠） |
+| 折叠交互 | `05-drawer-expanded-exploration.png`（点「1 个子会话」展开探索分支） |
+| 面包屑 | `06-after-tap.png` / `07-breadcrumb-to-parent.png`（点面包屑回到母会话，母会话无面包屑） |
+| 280 条长列表 | `08`–`10`：上下各滚 5–8 屏，位置稳定、无空白/跳位 |
+
+未验证：真实桌面联调（本轮没有可用配对凭据，抽屉数据来自本地快照注入，协议路径只由单测覆盖）。
+
 ## 5. 建议的系统化顺序
 
 1. **设计 token 收敛**：把散落的 `RoundedCornerShape(10/14/26.dp)`、`size(34/36/40.dp)` 迁到

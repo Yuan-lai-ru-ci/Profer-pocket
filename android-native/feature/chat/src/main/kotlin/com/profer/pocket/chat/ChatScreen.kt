@@ -96,6 +96,7 @@ import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.profer.pocket.designsystem.component.ProferActivityLine
 import com.profer.pocket.designsystem.component.ProferComposer
 import com.profer.pocket.designsystem.component.ProferConnectionBanner
@@ -137,6 +138,8 @@ fun ChatScreen(
     onAlwaysAllowPermission: () -> Unit = onAllowPermission,
     onDenyPermission: () -> Unit,
     onOpenSettings: () -> Unit,
+    /** 子会话顶栏面包屑：点一下回母会话。 */
+    onOpenParentSession: () -> Unit = {},
     /** Agent 预设（岗位）：Chat 模式不传。 */
     presetLabel: String? = null,
     presets: List<com.profer.pocket.model.AgentPresetSummary> = emptyList(),
@@ -317,6 +320,8 @@ fun ChatScreen(
             topBar = {
                 ChatTopBar(
                     title = state.title,
+                    subSessionLabel = state.subSessionLabel,
+                    onOpenParent = onOpenParentSession,
                     contextUsage = state.contextUsage,
                     contextWindow = state.contextWindow,
                     onContextClick = { contextSheetOpen = true },
@@ -1126,6 +1131,9 @@ private fun ChatTopBar(
     onRenameSession: () -> Unit,
     onTogglePin: () -> Unit,
     onDeleteSession: () -> Unit,
+    /** 子会话面包屑；普通会话为 null。 */
+    subSessionLabel: String? = null,
+    onOpenParent: () -> Unit = {},
 ) {
     var menuOpen by remember { mutableStateOf(false) }
 
@@ -1143,18 +1151,35 @@ private fun ChatTopBar(
             onClick = onOpenDrawer,
         )
         // 顶栏只留会话标题：项目名与连接点属于副信息，不再占第二行。
-        Text(
-            text = title,
-            style = MaterialTheme.typography.bodyLarge.copy(
-                fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold,
-            ),
-            color = MaterialTheme.colorScheme.onSurface,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
+        // 子会话例外：它必须能看出「挂在哪个母会话下面」，并能一键回去。
+        Column(
             modifier = Modifier
                 .weight(1f)
                 .padding(horizontal = 4.dp),
-        )
+        ) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.bodyLarge.copy(
+                    fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold,
+                ),
+                color = MaterialTheme.colorScheme.onSurface,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            if (subSessionLabel != null) {
+                Text(
+                    text = subSessionLabel,
+                    style = MaterialTheme.typography.labelSmall.copy(letterSpacing = 0.1.sp),
+                    color = MaterialTheme.colorScheme.primary.copy(alpha = 0.85f),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier
+                        .clip(MaterialTheme.shapes.small)
+                        .clickable(onClick = onOpenParent)
+                        .padding(vertical = 1.dp),
+                )
+            }
+        }
         // 上下文用量是会话级状态：环负责压力感，数字与动作在底部弹层。
         ContextUsageIndicator(
             usage = contextUsage,

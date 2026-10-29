@@ -78,6 +78,15 @@ class AndroidSessionSnapshotStore(context: Context) : SessionSnapshotStore {
                         session.archived?.let { put("archived", it) }
                         session.pinned?.let { put("pinned", it) }
                         session.draft?.let { put("draft", it) }
+                        // 血缘：离线冷启动也要能把子会话挂回母会话，不能退化成平铺。
+                        session.parentSessionId?.let { put("parentSessionId", it) }
+                        session.sourceDelegationId?.let { put("sourceDelegationId", it) }
+                        session.delegationRole?.let { put("delegationRole", it) }
+                        session.delegationStatus?.let { put("delegationStatus", it) }
+                        if (session.delegationDepth > 0) put("delegationDepth", session.delegationDepth)
+                        session.explorationParentSessionId?.let { put("explorationParentSessionId", it) }
+                        session.explorationSourceMessageId?.let { put("explorationSourceMessageId", it) }
+                        session.explorationSourceLabel?.let { put("explorationSourceLabel", it) }
                     })
                 }
             })
@@ -132,6 +141,14 @@ class AndroidSessionSnapshotStore(context: Context) : SessionSnapshotStore {
                         archived = item.optBooleanOrNull("archived"),
                         pinned = item.optBooleanOrNull("pinned"),
                         draft = item.optBooleanOrNull("draft"),
+                        parentSessionId = item.optStringOrNull("parentSessionId"),
+                        sourceDelegationId = item.optStringOrNull("sourceDelegationId"),
+                        delegationRole = item.optStringOrNull("delegationRole"),
+                        delegationStatus = item.optStringOrNull("delegationStatus"),
+                        delegationDepth = item.optInt("delegationDepth", 0),
+                        explorationParentSessionId = item.optStringOrNull("explorationParentSessionId"),
+                        explorationSourceMessageId = item.optStringOrNull("explorationSourceMessageId"),
+                        explorationSourceLabel = item.optStringOrNull("explorationSourceLabel"),
                     ),
                 )
             }

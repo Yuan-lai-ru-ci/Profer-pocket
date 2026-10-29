@@ -34,6 +34,10 @@ data class ChatUiState(
     val turnFiles: List<String> = emptyList(),
     /** 本轮工具调用：按发生顺序逐条渲染，每条用自己的图标与状态。 */
     val toolCalls: List<ToolBlock> = emptyList(),
+    /** 子会话血缘：母会话 id（普通会话为 null）。 */
+    val parentSessionId: String? = null,
+    /** 子会话面包屑，如「调研 · 来自 会话标题」；普通会话为 null。 */
+    val subSessionLabel: String? = null,
 )
 
 @Immutable

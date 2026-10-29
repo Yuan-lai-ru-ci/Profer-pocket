@@ -128,6 +128,8 @@ fun SessionListContent(
     var searchOpen by rememberSaveable { mutableStateOf(false) }
     // 展开状态要跟着配置变化/进程重建活下来：抽屉最烦的就是每次回来项目全收起。
     var expandedProjects by rememberSaveable { mutableStateOf(emptyList<String>()) }
+    // 子会话默认收起：委派一多，抽屉不能被十条子行占满。
+    var expandedSubSessions by rememberSaveable { mutableStateOf(emptyList<String>()) }
     var defaultsApplied by rememberSaveable { mutableStateOf(false) }
     val forceExpand = state.query.isNotBlank()
 
@@ -281,6 +283,10 @@ fun SessionListContent(
                             key = { _, session -> session.id },
                             contentType = { _, _ -> "session" },
                         ) { _, session ->
+                            // 当前打开的会话是子会话时，自动把它所在的那一组展开。
+                            val childrenExpanded = forceExpand ||
+                                session.id in expandedSubSessions ||
+                                session.children.any { it.id == state.currentSessionId }
                             Box(
                                 modifier = Modifier.animateItem(
                                     fadeInSpec = tween(160, easing = ClearEase),
@@ -288,27 +294,61 @@ fun SessionListContent(
                                     fadeOutSpec = tween(100),
                                 ),
                             ) {
-                                SessionRow(
-                                    session = session,
-                                    selected = session.id == state.currentSessionId,
-                                    // 项目组内不重复项目名；置顶/未归入/搜索是跨项目列表，用 chip 标出来源。
-                                    projectName = if (
-                                        group.kind == SessionGroupKind.Project &&
-                                        state.query.isBlank()
-                                    ) {
-                                        null
-                                    } else {
-                                        session.projectName
-                                    },
-                                    onClick = { onSelectSession(session.id) },
-                                    onRename = { onRenameSession(session) },
-                                    onTogglePin = { onTogglePin(session) },
-                                    onToggleRead = { onToggleRead(session) },
-                                    onMove = { onMoveSession(session) },
-                                    onDelete = { onDeleteSession(session) },
-                                    // 搜索/筛选只影响可见分组，移动目标必须看完整项目目录。
-                                    canMove = state.hasProjects,
-                                )
+                                Column {
+                                    SessionRow(
+                                        session = session,
+                                        selected = session.id == state.currentSessionId,
+                                        // 项目组内不重复项目名；置顶/未归入/搜索是跨项目列表，用 chip 标出来源。
+                                        projectName = if (
+                                            group.kind == SessionGroupKind.Project &&
+                                            state.query.isBlank()
+                                        ) {
+                                            null
+                                        } else {
+                                            session.projectName
+                                        },
+                                        onClick = { onSelectSession(session.id) },
+                                        onRename = { onRenameSession(session) },
+                                        onTogglePin = { onTogglePin(session) },
+                                        onToggleRead = { onToggleRead(session) },
+                                        onMove = { onMoveSession(session) },
+                                        onDelete = { onDeleteSession(session) },
+                                        // 搜索/筛选只影响可见分组，移动目标必须看完整项目目录。
+                                        canMove = state.hasProjects,
+                                    )
+                                    if (session.children.isNotEmpty()) {
+                                        SubSessionToggle(
+                                            count = session.children.size,
+                                            running = session.children.count { it.running },
+                                            expanded = childrenExpanded,
+                                            onToggle = {
+                                                expandedSubSessions = if (session.id in expandedSubSessions) {
+                                                    expandedSubSessions - session.id
+                                                } else {
+                                                    expandedSubSessions + session.id
+                                                }
+                                            },
+                                        )
+                                        if (childrenExpanded) {
+                                            session.children.forEach { child ->
+                                                SessionRow(
+                                                    session = child,
+                                                    selected = child.id == state.currentSessionId,
+                                                    // 子会话与母会话同项目，不重复项目名。
+                                                    projectName = null,
+                                                    depth = 1,
+                                                    onClick = { onSelectSession(child.id) },
+                                                    onRename = { onRenameSession(child) },
+                                                    onTogglePin = { onTogglePin(child) },
+                                                    onToggleRead = { onToggleRead(child) },
+                                                    onMove = { onMoveSession(child) },
+                                                    onDelete = { onDeleteSession(child) },
+                                                    canMove = state.hasProjects,
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
@@ -339,6 +379,8 @@ private fun SessionListHeader(
 ) {
     // 大字号下目录规模先让位：它是副信息，不该把主操作挤出抽屉。
     val compactMeta = LocalDensity.current.fontScale < 1.2f
+    // 2.0× 时品牌字会与 Agent/Chat 开关抢宽度：保留图标，文字让位。
+    val showWordmark = LocalDensity.current.fontScale < 1.5f
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -348,19 +390,21 @@ private fun SessionListHeader(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         ProferMark(size = 22.dp)
-        Spacer(Modifier.width(8.dp))
-        // 品牌字用衬线：它是这张「扉页」上唯一的题名。
-        Text(
-            text = "Profer",
-            // 品牌字是这张「扉页」上唯一的题名，用衬线；其余文字保持无衬线。
-            style = MaterialTheme.typography.titleLarge.copy(
-                fontFamily = ProferSerif,
-                fontSize = 16.sp,
-                letterSpacing = 0.3.sp,
-            ),
-            color = MaterialTheme.colorScheme.onSurface,
-            maxLines = 1,
-        )
+        if (showWordmark) {
+            Spacer(Modifier.width(8.dp))
+            // 品牌字用衬线：它是这张「扉页」上唯一的题名。
+            Text(
+                text = "Profer",
+                // 品牌字是这张「扉页」上唯一的题名，用衬线；其余文字保持无衬线。
+                style = MaterialTheme.typography.titleLarge.copy(
+                    fontFamily = ProferSerif,
+                    fontSize = 16.sp,
+                    letterSpacing = 0.3.sp,
+                ),
+                color = MaterialTheme.colorScheme.onSurface,
+                maxLines = 1,
+            )
+        }
         Spacer(Modifier.width(8.dp))
         DrawerModeSwitch(
             chatSelected = mode == DrawerMode.Chat,
@@ -652,6 +696,61 @@ private fun EmptyProjectRow(onCreateSession: () -> Unit) {
     }
 }
 
+/**
+ * 子会话折叠行：只占一行，告诉用户母会话下面还挂着几个子会话。
+ * 默认收起（委派一多，抽屉不能被十条子行占满），当前打开的子会话会自动展开。
+ */
+@Composable
+private fun SubSessionToggle(
+    count: Int,
+    running: Int,
+    expanded: Boolean,
+    onToggle: () -> Unit,
+) {
+    val rotation by animateFloatAsState(
+        targetValue = if (expanded) 0f else -90f,
+        animationSpec = tween(durationMillis = 180, easing = ClearEase),
+        label = "sub-session-chevron",
+    )
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 2.dp)
+            .clip(MaterialTheme.shapes.small)
+            .clickable(onClick = onToggle)
+            .heightIn(min = ProferSizes.minTouchTarget)
+            // 与子会话行同一缩进：折叠行是那组的「标题」，不是另一条会话。
+            .padding(start = 44.dp, end = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            imageVector = Icons.Outlined.ExpandMore,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.55f),
+            modifier = Modifier
+                .size(14.dp)
+                .graphicsLayer { rotationZ = rotation },
+        )
+        Spacer(Modifier.width(6.dp))
+        Text(
+            text = "$count 个子会话",
+            style = MaterialTheme.typography.labelSmall.copy(letterSpacing = 0.1.sp),
+            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.72f),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f),
+        )
+        if (running > 0) {
+            ProferStatusDot(
+                color = ProferThemeExtras.semantic.success,
+                pulsing = true,
+                size = 5.dp,
+                modifier = Modifier.semantics { contentDescription = "$running 个子会话运行中" },
+            )
+        }
+    }
+}
+
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun SessionRow(
@@ -665,6 +764,8 @@ private fun SessionRow(
     onMove: () -> Unit,
     onDelete: () -> Unit,
     canMove: Boolean,
+    /** 0 = 会话根行；1 = 子会话行。层级用几何分开，不只靠字形。 */
+    depth: Int = 0,
 ) {
     // 菜单开合不参与状态恢复：进程重建后不应该自己弹出一个操作菜单。
     var menuOpen by remember(session.id) { mutableStateOf(false) }
@@ -692,7 +793,8 @@ private fun SessionRow(
                 )
                 .heightIn(min = ProferSizes.minTouchTarget)
                 // 二级缩进比一级（项目名 42dp）再深一档：层级用几何分开，不只靠字形。
-                .padding(start = 30.dp, end = 8.dp),
+                // 子会话再退一档，并与母行共用同一条左侧竖线。
+                .padding(start = 30.dp + (depth * 14).dp, end = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             // 选中标记做成页边的一条短竖线，比整行色块安静。
@@ -715,11 +817,33 @@ private fun SessionRow(
                 style = MaterialTheme.typography.bodyMedium.copy(
                     fontWeight = if (selected) FontWeight.Medium else FontWeight.Normal,
                 ),
-                color = MaterialTheme.colorScheme.onSurface,
+                color = if (depth > 0) {
+                    MaterialTheme.colorScheme.onSurface.copy(alpha = 0.88f)
+                } else {
+                    MaterialTheme.colorScheme.onSurface
+                },
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f),
             )
+            // 子会话角色（委派/探索分支）：只在行上留一个轻标签，不展开成独立分组。
+            val roleLabel = session.roleLabel
+            if (roleLabel != null) {
+                Spacer(Modifier.width(6.dp))
+                Surface(
+                    shape = RoundedCornerShape(4.dp),
+                    color = MaterialTheme.colorScheme.primary.copy(alpha = 0.10f),
+                ) {
+                    Text(
+                        text = roleLabel,
+                        style = MaterialTheme.typography.labelSmall.copy(
+                            color = MaterialTheme.colorScheme.primary.copy(alpha = 0.9f),
+                        ),
+                        maxLines = 1,
+                        modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp),
+                    )
+                }
+            }
             if (projectName != null) {
                 Spacer(Modifier.width(8.dp))
                 Surface(

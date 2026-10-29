@@ -6,6 +6,7 @@ import com.profer.pocket.data.protocol.InboundFrame
 import com.profer.pocket.data.protocol.ProferEventView
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -186,6 +187,38 @@ class FrameCodecTest {
         assertEquals(true, summary.pinned)
         assertEquals(true, summary.archived)
         assertEquals(false, summary.unread)
+    }
+
+    @Test
+    fun `list_sessions 解析委派与探索血缘`() {
+        val list = FrameCodec.parseSessionList(
+            org.json.JSONArray(
+                """[{"id":"child","title":"子会话","workspaceId":"w1",
+                  "parentSessionId":"p1","sourceDelegationId":"d1",
+                  "delegationRole":"research","delegationStatus":"running","delegationDepth":2},
+                 {"id":"branch","title":"探索分支","workspaceId":"w1",
+                  "explorationParentSessionId":"p1","explorationSourceMessageId":"m1",
+                  "explorationSourceLabel":"这条 Agent 回复"}]
+                """.trimIndent(),
+            ),
+        )
+        val child = list.first { it.id == "child" }
+        assertEquals("p1", child.parentSessionId)
+        assertEquals("d1", child.sourceDelegationId)
+        assertEquals("research", child.delegationRole)
+        assertEquals("running", child.delegationStatus)
+        assertEquals(2, child.delegationDepth)
+        assertTrue(child.isDelegatedChild)
+        assertEquals("p1", child.relatedParentSessionId)
+
+        val branch = list.first { it.id == "branch" }
+        assertEquals("p1", branch.explorationParentSessionId)
+        assertEquals("m1", branch.explorationSourceMessageId)
+        assertEquals("这条 Agent 回复", branch.explorationSourceLabel)
+        assertTrue(branch.isExplorationChild)
+        assertEquals("p1", branch.relatedParentSessionId)
+        // 普通会话没有血缘。
+        assertFalse(branch.isDelegatedChild)
     }
 
     @Test

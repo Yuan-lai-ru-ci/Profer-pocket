@@ -341,6 +341,15 @@ object FrameCodec {
         archived = session.optBooleanOrNull("archived"),
         pinned = session.optBooleanOrNull("pinned"),
         draft = session.optBooleanOrNull("draft"),
+        // 血缘字段：桌面端 list_sessions / session_projection 都带，用来把子会话挂回母会话。
+        parentSessionId = session.optStringOrNull("parentSessionId"),
+        sourceDelegationId = session.optStringOrNull("sourceDelegationId"),
+        delegationRole = session.optStringOrNull("delegationRole"),
+        delegationStatus = session.optStringOrNull("delegationStatus"),
+        delegationDepth = session.optInt("delegationDepth", 0),
+        explorationParentSessionId = session.optStringOrNull("explorationParentSessionId"),
+        explorationSourceMessageId = session.optStringOrNull("explorationSourceMessageId"),
+        explorationSourceLabel = session.optStringOrNull("explorationSourceLabel"),
     )
 
     fun parseSessionList(data: Any?): List<SessionSummary> {
