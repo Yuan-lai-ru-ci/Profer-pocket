@@ -124,6 +124,7 @@ object FrameCodec {
             )
         }
         val inner = message.optJSONObject("message")
+        val provenance = parseProvenance(message)
         val content = inner?.opt("content") ?: message.opt("content")
         val text = StringBuilder()
         val reasoning = StringBuilder()
@@ -175,7 +176,8 @@ object FrameCodec {
         val errorObject = message.optJSONObject("error")
         val usageObject = inner?.optJSONObject("usage") ?: message.optJSONObject("usage")
         return SdkMessageView(
-            type = message.optString("type", ""),
+            // `session_detail` 的视图消息用 role 而不是 type；两个路径共用同一份解析。
+            type = message.optString("type", "").ifBlank { message.optString("role", "") },
             uuid = message.optStringOrNull("uuid"),
             createdAt = if (message.has("_createdAt")) message.optLong("_createdAt").takeIf { it > 0 } else null,
             partial = message.optBoolean("_partial", false),
@@ -203,8 +205,63 @@ object FrameCodec {
                 }
             }.orEmpty(),
             reasoning = reasoning.toString().takeIf { it.isNotBlank() },
+            authorType = provenance?.authorType,
+            sourceType = provenance?.sourceType,
+            sourceId = provenance?.sourceId,
+            goalIteration = if (message.has("_goalIteration")) {
+                // 布尔/数字两种旧写法都收：数字即轮次，true 表示有标记但不带轮次。
+                val raw = message.opt("_goalIteration")
+                when (raw) {
+                    is Number -> raw.toInt().takeIf { it > 0 }
+                    is Boolean -> if (raw) 1 else null
+                    else -> null
+                }
+            } else {
+                null
+            },
         )
     }
+
+    /**
+     * `_provenance` 的移动端投影。
+     *
+     * 与桌面 `readMessageProvenance` 同口径做白名单校验：只接受 schemaVersion=1、
+     * 合法 author.type 与 source.type；不搬运 runId/taskId/triggerId，也不做任何权限推断。
+     * 旧消息没有这个字段时返回 null，调用方按旧版本（用户输入）处理。
+     */
+    internal fun parseProvenance(message: JSONObject): ProvenanceView? {
+        val raw = message.optJSONObject("_provenance") ?: return null
+        if (raw.optInt("schemaVersion", 0) != 1) return null
+        // 与桌面同口径：消息与 run 身份不合法时整份来源不可信，不能只靠 author 字段猜测。
+        if (!raw.optString("messageId", "").isSafeOpaqueId()) return null
+        if (!raw.optString("runId", "").isSafeOpaqueId()) return null
+        val author = raw.optJSONObject("author") ?: return null
+        val authorType = author.optString("type", "")
+        if (authorType !in ACTOR_TYPES) return null
+        val source = raw.optJSONObject("source")
+        val sourceType = source?.optString("type", "")?.takeIf { it in RESOURCE_TYPES }
+        val sourceId = source?.optString("id", "")?.takeIf { it.isSafeOpaqueId() }
+        return ProvenanceView(
+            authorType = authorType,
+            sourceType = if (sourceType != null && sourceId != null) sourceType else null,
+            sourceId = if (sourceType != null && sourceId != null) sourceId else null,
+        )
+    }
+
+    /** 与桌面 `isSafeOpaqueId` 同口径：不传路径分隔符/控制字符，长度有界。 */
+    private fun String.isSafeOpaqueId(): Boolean =
+        isNotEmpty() && length <= 256 && this != "." && this != ".." &&
+            none { it == '/' || it == '\\' || it.code == 0 || it.code < 0x20 || it.code == 0x7f }
+
+    private val ACTOR_TYPES = setOf("user", "agent", "automation", "external", "system", "unknown")
+    private val RESOURCE_TYPES = setOf("task", "run", "session", "message", "automation", "request")
+
+    /** 只保留渲染需要的作者与来源；不保存 run/task 内部 id。 */
+    data class ProvenanceView(
+        val authorType: String,
+        val sourceType: String?,
+        val sourceId: String?,
+    )
 
     fun parseProferEvent(event: JSONObject?): ProferEventView {
         if (event == null) return ProferEventView.Ignored
@@ -350,6 +407,11 @@ object FrameCodec {
         explorationParentSessionId = session.optStringOrNull("explorationParentSessionId"),
         explorationSourceMessageId = session.optStringOrNull("explorationSourceMessageId"),
         explorationSourceLabel = session.optStringOrNull("explorationSourceLabel"),
+        // 来源事实：定时任务来源、来源会话与派工关系（桌面 buildSessionItem 已下发）。
+        sourceAutomationId = session.optStringOrNull("sourceAutomationId"),
+        sourceSessionId = session.optStringOrNull("sourceSessionId"),
+        delegationRelation = session.optStringOrNull("delegationRelation"),
+        delegationPlacement = session.optStringOrNull("delegationPlacement"),
     )
 
     fun parseSessionList(data: Any?): List<SessionSummary> {

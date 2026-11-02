@@ -1,5 +1,7 @@
 package com.profer.pocket.chat
 
+import com.profer.pocket.designsystem.component.ProferHeaderRow
+import com.profer.pocket.designsystem.component.proferBackdrop
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -15,6 +17,7 @@ import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -50,7 +53,9 @@ import androidx.compose.material.icons.outlined.Menu
 import androidx.compose.material.icons.outlined.MoreVert
 import androidx.compose.material.icons.outlined.PushPin
 import androidx.compose.material.icons.outlined.Search
+import androidx.compose.material.icons.outlined.Schedule
 import androidx.compose.material.icons.outlined.Settings
+import androidx.compose.material.icons.outlined.SmartToy
 import androidx.compose.material.icons.outlined.Terminal
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
@@ -82,6 +87,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.SolidColor
@@ -97,11 +103,11 @@ import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.profer.pocket.designsystem.adaptive.rememberProferWindowSize
 import com.profer.pocket.designsystem.component.ProferActivityLine
 import com.profer.pocket.designsystem.component.ProferComposer
 import com.profer.pocket.designsystem.component.ProferConnectionBanner
 import com.profer.pocket.designsystem.component.ProferDivider
-import com.profer.pocket.designsystem.component.ProferEmptyState
 import com.profer.pocket.designsystem.component.ProferIconAction
 import com.profer.pocket.designsystem.component.ProferNotice
 import com.profer.pocket.designsystem.component.ProferPermissionPromptBar
@@ -111,10 +117,12 @@ import com.profer.pocket.designsystem.component.ProferThinkingCard
 import com.profer.pocket.designsystem.component.ProferToolCallCard
 import com.profer.pocket.designsystem.component.ProferUserMessage
 import com.profer.pocket.designsystem.component.ToolStatus
+import com.profer.pocket.designsystem.component.proferFloatingSurface
 import com.profer.pocket.designsystem.theme.ProferThemeExtras
 import com.profer.pocket.model.SendStatus
 import com.profer.pocket.designsystem.theme.ProferSizes
 import com.profer.pocket.designsystem.theme.ProferSpacing
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
@@ -138,6 +146,8 @@ fun ChatScreen(
     onAlwaysAllowPermission: () -> Unit = onAllowPermission,
     onDenyPermission: () -> Unit,
     onOpenSettings: () -> Unit,
+    onOpenConnection: () -> Unit = onOpenSettings,
+    onNewSession: (() -> Unit)? = null,
     /** 子会话顶栏面包屑：点一下回母会话。 */
     onOpenParentSession: () -> Unit = {},
     /** Agent 预设（岗位）：Chat 模式不传。 */
@@ -267,8 +277,11 @@ fun ChatScreen(
 
     // 新消息只在用户接近底部时跟随；用户上滑阅读时不抢滚动。
     // 草稿变长（输入框增高）或键盘顶起时，同样把列表重新锚到底部。
-    // 工具卡是新消息之外的末层内容，它增加时也要跟随，否则新工具会出现在屏幕外。
-    LaunchedEffect(state.messages.size, state.toolCalls.size, state.streaming, draftLines, imeVisible) {
+    // 工具卡挂在助手消息里，新工具到达时消息数不一定变，所以把工具总数也当作跟随信号。
+    val toolCardCount = state.messages.sumOf { message ->
+        if (message is ChatMessage.Assistant) message.tools.size else 0
+    }
+    LaunchedEffect(state.messages.size, toolCardCount, state.streaming, draftLines, imeVisible) {
         val lastIndex = state.messages.lastIndex
         if (lastIndex >= 0) {
             val lastVisible = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1
@@ -278,6 +291,14 @@ fun ChatScreen(
                 listState.scrollToBottom()
             }
         }
+    }
+
+    // 键盘弹起时输入条和列表视口一起变高，上面的副作用拿到的是旧视口高度，
+    // 结果最后一行被输入条盖住。等 IME 动画结束后再锚一次底部。
+    LaunchedEffect(imeVisible) {
+        if (!imeVisible || state.messages.isEmpty()) return@LaunchedEffect
+        delay(260)
+        listState.scrollToBottom()
     }
 
     val currentModelOption = modelOptions.firstOrNull {
@@ -296,13 +317,23 @@ fun ChatScreen(
         drawerContent = {
             // 关闭状态下不组合几百条会话目录：否则冷启动会把整张抽屉树
             // （项目分组 + 会话行 + 弹层宿主）一起组合/测量，主线程首帧被拖到十几秒。
-            if (drawerState.isOpen) {
+            // 双栏时列表常驻，必须组合；这里在 PocketDrawerLayout 的 Provider 内部读取窗口尺寸。
+            if (drawerState.isOpen || rememberProferWindowSize().isTwoPane) {
                 drawerContent { drawerState.close() }
             }
         },
     ) {
+        // 平板/桌面下内容区可能很宽：正文与输入条限制在 760dp 内居中，行长不失控。
+        // 背景铺满内容区，阅读栏限制 760dp 居中：宽屏下不出现一整条被拉长的正文。
+        Box(
+            modifier = Modifier.fillMaxSize().proferBackdrop(),
+            contentAlignment = Alignment.TopCenter,
+        ) {
         Scaffold(
-            containerColor = MaterialTheme.colorScheme.background,
+            modifier = Modifier
+                .widthIn(max = ProferSizes.contentMaxWidth)
+                .fillMaxHeight(),
+            containerColor = Color.Transparent,
             contentWindowInsets = WindowInsets(0, 0, 0, 0),
             snackbarHost = {
                 SnackbarHost(
@@ -312,7 +343,7 @@ fun ChatScreen(
                             snackbarData = data,
                             containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
                             contentColor = MaterialTheme.colorScheme.onSurface,
-                            shape = RoundedCornerShape(12.dp),
+                            shape = MaterialTheme.shapes.medium,
                         )
                     },
                 )
@@ -327,6 +358,8 @@ fun ChatScreen(
                     onContextClick = { contextSheetOpen = true },
                     hasSession = state.sessionId != null,
                     pinned = state.pinned,
+                    // 双栏下列表常驻，菜单键没有意义。
+                    showDrawerButton = !rememberProferWindowSize().isTwoPane,
                     onOpenDrawer = {
                         keyboard?.hide()
                         drawerState.open()
@@ -391,7 +424,7 @@ fun ChatScreen(
             },
         ) { innerPadding ->
             Column(modifier = Modifier.padding(innerPadding)) {
-                state.offlineLabel?.let { label ->
+                state.offlineLabel?.takeIf { state.messages.isNotEmpty() }?.let { label ->
                     ProferConnectionBanner(
                         text = label,
                         actionLabel = "重连",
@@ -400,12 +433,19 @@ fun ChatScreen(
                 }
 
                 if (state.messages.isEmpty()) {
-                    ProferEmptyState(
-                        title = "开始一个会话",
-                        description = "任务在 Mac 上执行，你在这里确认关键步骤。",
-                        primaryLabel = "开始输入",
-                        onPrimary = { composerFocus.requestFocus() },
-                        modifier = Modifier.fillMaxSize(),
+                    ChatWelcomeState(
+                        offline = state.offline,
+                        onConnect = onOpenConnection,
+                        hasDraftTarget = state.sessionId != null,
+                        onStartConversation = {
+                            if (onNewSession != null) onNewSession() else {
+                                scope.launch { drawerState.open() }
+                            }
+                        },
+                        onSuggestion = { prompt ->
+                            onInputChange(prompt)
+                            composerFocus.requestFocus()
+                        },
                     )
                 } else {
                     Box(
@@ -457,20 +497,7 @@ fun ChatScreen(
                                 onOpenImage = onOpenImage,
                                 imageLoader = imageLoader,
                                 sessionStreaming = state.streaming,
-                                // 工具图标贴在最后一条助手消息的操作行里，避免单独占一行、拉开间距。
-                                toolCalls = if (index == state.messages.lastIndex && message is ChatMessage.Assistant) {
-                                    state.toolCalls
-                                } else {
-                                    emptyList()
-                                },
                             )
-                        }
-
-                        // 最后一个条目不是助手消息时（极少数纯工具回合），工具条仍要能显示。
-                        if (state.toolCalls.isNotEmpty() && state.messages.lastOrNull() !is ChatMessage.Assistant) {
-                            item(key = "tool-calls") {
-                                ToolIconStrip(tools = state.toolCalls)
-                            }
                         }
 
                         if (state.turnFiles.isNotEmpty()) {
@@ -663,6 +690,7 @@ fun ChatScreen(
             },
             onDismiss = { permissionSheetOpen = false },
         )
+        }
     }
 }
 
@@ -692,8 +720,6 @@ private fun MessageRow(
     imageLoader: suspend (String) -> androidx.compose.ui.graphics.ImageBitmap? = { null },
     /** 整轮是否仍在执行：流式期间不显示任何消息操作。 */
     sessionStreaming: Boolean = false,
-    /** 本轮工具图标；只挂在最后一条助手消息上，与复制按钮同一行。 */
-    toolCalls: List<ToolBlock> = emptyList(),
     editing: Boolean = false,
     editingText: String = "",
     onEditingTextChange: (String) -> Unit = {},
@@ -777,9 +803,8 @@ private fun MessageRow(
 
         is ChatMessage.Assistant -> Column(modifier = Modifier.fillMaxWidth()) {
             AssistantMessage(message = message, onOpenImage = onOpenImage, imageLoader = imageLoader)
-            // 工具图标与复制按钮同行：整轮结束后一起出现在正文下方，
-            // 流式期间没有复制按钮，图标条单独占一行但高度只有 22dp。
-            if (toolCalls.isNotEmpty() || (!message.streaming && !sessionStreaming)) {
+            // 整轮结束后出现复制按钮；工具卡已经在正文下方逐条渲染，不再挤到操作行。
+            if (!message.streaming && !sessionStreaming) {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -787,20 +812,17 @@ private fun MessageRow(
                     horizontalArrangement = Arrangement.Start,
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    if (!message.streaming && !sessionStreaming) {
+                    // 纯工具回合没有正文，复制按钮会变成一个复制空串的死图标。
+                    if (message.blocks.isNotEmpty()) {
                         MessageActionIcon(Icons.Outlined.ContentCopy, "复制回复") {
                             onCopy(message.plainText())
                         }
                     }
-                    if (toolCalls.isNotEmpty()) {
-                        ToolIconStrip(
-                            tools = toolCalls,
-                            modifier = Modifier.padding(start = 2.dp),
-                        )
-                    }
                 }
             }
         }
+
+        is ChatMessage.Source -> SourceCard(message)
     }
 }
 
@@ -983,7 +1005,7 @@ private fun MessageImageCard(
         failed = loaded == null
     }
 
-    val shape = RoundedCornerShape(14.dp)
+    val shape = MaterialTheme.shapes.medium
     // 单张按行宽铺开，高度由图片比例决定（上限 280dp）；多张固定 96dp 方格。
     val surfaceModifier = if (single) Modifier.fillMaxWidth() else Modifier.size(96.dp)
     val imageModifier = if (single) {
@@ -1043,52 +1065,56 @@ private fun ToolCallCard(tool: ToolBlock) {
 }
 
 /**
- * 工具调用紧凑条：同一类型只出一个图标，最多 4 个；多出来的调用以 +N 表示。
- * 只占一行，不把正文挤下去；状态用颜色区分（运行中/失败）。
+ * 任务来源卡：定时任务/Agent 交接/外部请求触发的输入。
+ * 只显示可读作者与来源，不回显内部 ID；正文照常可读。
  */
 @Composable
-private fun ToolIconStrip(
-    tools: List<ToolBlock>,
-    modifier: Modifier = Modifier,
-) {
-    val groups = tools.groupBy { it.kind }
-    val shown = groups.entries.take(MAX_STRIP_ICONS)
-    val hiddenCalls = groups.entries.drop(MAX_STRIP_ICONS).sumOf { it.value.size }
-
+private fun SourceCard(message: ChatMessage.Source) {
     Surface(
-        modifier = modifier,
-        shape = RoundedCornerShape(8.dp),
-        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+        modifier = Modifier.fillMaxWidth(),
+        shape = MaterialTheme.shapes.medium,
+        color = MaterialTheme.colorScheme.surfaceContainer,
     ) {
-        Row(
-            modifier = Modifier
-                .height(22.dp)
-                .padding(horizontal = 7.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(5.dp),
+        Column(
+            modifier = Modifier.padding(horizontal = ProferSpacing.md, vertical = ProferSpacing.sm),
+            verticalArrangement = Arrangement.spacedBy(ProferSpacing.xs),
         ) {
-            shown.forEach { (kind, calls) ->
-                val status = when {
-                    calls.any { it.status == ToolStatus.Error } -> ToolStatus.Error
-                    calls.any { it.status == ToolStatus.Running } -> ToolStatus.Running
-                    else -> ToolStatus.Success
-                }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(ProferSpacing.xs),
+            ) {
                 Icon(
-                    imageVector = kind.icon(),
-                    contentDescription = "${calls.first().title} ×${calls.size}",
-                    tint = when (status) {
-                        ToolStatus.Running -> MaterialTheme.colorScheme.tertiary
-                        ToolStatus.Error -> MaterialTheme.colorScheme.error
-                        else -> MaterialTheme.colorScheme.onSurfaceVariant
-                    },
-                    modifier = Modifier.size(14.dp),
+                    imageVector = if (message.scheduled) Icons.Outlined.Schedule else Icons.Outlined.SmartToy,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(ProferSizes.iconSmall),
+                )
+                Text(
+                    text = message.authorLabel,
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.onSurface,
+                )
+                if (message.timeLabel.isNotBlank()) {
+                    androidx.compose.foundation.layout.Spacer(modifier = Modifier.weight(1f))
+                    Text(
+                        text = message.timeLabel,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+            message.sourceLabel?.takeIf { it.isNotBlank() }?.let { label ->
+                Text(
+                    text = label,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
-            if (hiddenCalls > 0) {
-                Text(
-                    text = "+$hiddenCalls",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+            if (message.text.isNotBlank()) {
+                ProferRichText(
+                    blocks = parseRichBlocks(message.text),
+                    showCursor = false,
                 )
             }
         }
@@ -1102,8 +1128,6 @@ private fun ToolKind.icon(): androidx.compose.ui.graphics.vector.ImageVector = w
     ToolKind.Edit -> Icons.Outlined.Edit
     ToolKind.Other -> Icons.Outlined.Build
 }
-
-private const val MAX_STRIP_ICONS = 4
 
 private fun ContentBlock.toMarkdown(): String = when (this) {
     is ContentBlock.Paragraph -> text
@@ -1134,34 +1158,34 @@ private fun ChatTopBar(
     /** 子会话面包屑；普通会话为 null。 */
     subSessionLabel: String? = null,
     onOpenParent: () -> Unit = {},
+    /** 双栏下列表常驻，不再显示打开抽屉的菜单键。 */
+    showDrawerButton: Boolean = true,
 ) {
     var menuOpen by remember { mutableStateOf(false) }
 
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .statusBarsPadding()
-            .heightIn(min = ProferSizes.minTouchTarget)
-            .padding(start = 2.dp, end = 2.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        ProferIconAction(
-            icon = Icons.Outlined.Menu,
-            contentDescription = "打开会话列表",
-            onClick = onOpenDrawer,
-        )
+    ProferHeaderRow {
+        if (showDrawerButton) {
+            ProferIconAction(
+                icon = Icons.Outlined.Menu,
+                contentDescription = "打开会话列表",
+                onClick = onOpenDrawer,
+            )
+        }
         // 顶栏只留会话标题：项目名与连接点属于副信息，不再占第二行。
         // 子会话例外：它必须能看出「挂在哪个母会话下面」，并能一键回去。
+        // 中间整块占满，胶囊自己按内容收窄：宽屏下标题不会被拉成一条长条，
+        // 右侧「更多」仍贴边。
+        Box(modifier = Modifier.weight(1f)) {
         Column(
             modifier = Modifier
-                .weight(1f)
-                .padding(horizontal = 4.dp),
+                .clip(MaterialTheme.shapes.extraLarge)
+                // 深色下 surfaceContainerLowest 比画布更暗，直接当浮层会像「挖洞」。
+                .background(proferFloatingSurface())
+                .padding(horizontal = ProferSpacing.md, vertical = ProferSpacing.sm),
         ) {
             Text(
                 text = title,
-                style = MaterialTheme.typography.bodyLarge.copy(
-                    fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold,
-                ),
+                style = MaterialTheme.typography.titleMedium,
                 color = MaterialTheme.colorScheme.onSurface,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
@@ -1180,12 +1204,17 @@ private fun ChatTopBar(
                 )
             }
         }
+        }
         // 上下文用量是会话级状态：环负责压力感，数字与动作在底部弹层。
-        ContextUsageIndicator(
-            usage = contextUsage,
-            window = contextWindow,
-            onClick = onContextClick,
-        )
+        // 还没有会话时不画空环，避免顶栏出现一个没有含义的灰圈。
+        // 新会话还没有 usage 时不画空环：顶栏不能出现一个没有含义的灰圈。
+        if (hasSession && (contextUsage?.usedTokens != null || contextWindow != null)) {
+            ContextUsageIndicator(
+                usage = contextUsage,
+                window = contextWindow,
+                onClick = onContextClick,
+            )
+        }
         ProferIconAction(
             icon = Icons.Outlined.MoreVert,
             contentDescription = "更多操作",
@@ -1257,7 +1286,7 @@ private fun AttachmentStrip(
     ) {
         attachments.forEach { file ->
             Surface(
-                shape = RoundedCornerShape(10.dp),
+                shape = MaterialTheme.shapes.small,
                 color = MaterialTheme.colorScheme.surfaceContainerLow,
                 border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.7f)),
             ) {
@@ -1319,7 +1348,7 @@ private fun AttachmentCards(
     ) {
         files.forEach { file ->
             Surface(
-                shape = RoundedCornerShape(10.dp),
+                shape = MaterialTheme.shapes.small,
                 color = MaterialTheme.colorScheme.surfaceContainerLow,
                 border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.7f)),
                 modifier = Modifier.clickable { onOpen(file) },

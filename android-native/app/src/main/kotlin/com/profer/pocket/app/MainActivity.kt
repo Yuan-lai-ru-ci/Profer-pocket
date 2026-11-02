@@ -40,6 +40,7 @@ import com.profer.pocket.chat.ModelOption
 import com.profer.pocket.connect.ConnectionPhase
 import com.profer.pocket.connect.ConnectionScreen
 import com.profer.pocket.connect.QrScannerScreen
+import com.profer.pocket.designsystem.adaptive.ProferWindowSizeProvider
 import com.profer.pocket.designsystem.theme.ProferTheme
 import com.profer.pocket.sessions.DrawerMode
 import com.profer.pocket.sessions.SessionListContent
@@ -60,7 +61,13 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         handleNotificationIntent(intent)
         handleDebugConnectIntent(intent)
-        setContent { ProferApp(viewModel) }
+        handleDebugLiveIntent(intent)
+        setContent {
+            // 根部注入窗口尺寸：设置、连接这些独立路由页也要能判断单栏/双栏。
+            ProferWindowSizeProvider {
+                ProferApp(viewModel)
+            }
+        }
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -68,6 +75,25 @@ class MainActivity : ComponentActivity() {
         setIntent(intent)
         handleNotificationIntent(intent)
         handleDebugConnectIntent(intent)
+        handleDebugLiveIntent(intent)
+    }
+
+    /** 仅 debug：不连电脑也能验证实时活动通知的构建与降级。 */
+    private fun handleDebugLiveIntent(intent: Intent?) {
+        if (!BuildConfig.DEBUG) return
+        when {
+            intent?.getBooleanExtra("debug_live", false) == true ->
+                PocketNotifications.postLiveUpdate(
+                    this,
+                    sessionId = "debug-session",
+                    title = "Profer · 调试会话",
+                    text = "正在执行 Bash",
+                    shortText = "执行中",
+                )
+
+            intent?.getBooleanExtra("debug_live_cancel", false) == true ->
+                PocketNotifications.cancelLiveUpdate(this)
+        }
     }
 
     /** 仅 debug：adb 启动时用 --es debug_endpoint / --es debug_token 直接配好连接。 */
@@ -282,6 +308,7 @@ fun ProferApp(viewModel: PocketViewModel) {
                         onSend = viewModel::sendConversation,
                         onStop = viewModel::stopConversation,
                         onNewConversation = viewModel::newConversation,
+                        onOpenConnection = { navController.navigate("connect") },
                         modelOptions = modelOptions,
                         onSelectModel = { option ->
                             viewModel.selectConversationModel(option.channelId, option.modelId)
@@ -308,6 +335,8 @@ fun ProferApp(viewModel: PocketViewModel) {
                         onAlwaysAllowPermission = viewModel::alwaysAllowPermission,
                         onDenyPermission = viewModel::denyPermission,
                         onOpenSettings = { navController.navigate("settings") },
+                        onOpenConnection = { navController.navigate("connect") },
+                        onNewSession = { dialog = SessionDialog.NewSession },
                         // 子会话顶栏面包屑：回母会话，不新开页面。
                         onOpenParentSession = {
                             chatState.parentSessionId?.let(viewModel::selectSession)
@@ -367,6 +396,9 @@ fun ProferApp(viewModel: PocketViewModel) {
                     onDisconnect = viewModel::disconnect,
                     onCancel = viewModel::disconnect,
                     onScan = { navController.navigate("scan") },
+                    // 粘贴到配对二维码 JSON 时等同扫码，直接走配对。
+                    onPairingText = viewModel::pairWithQr,
+                    onClearForm = viewModel::clearManualForm,
                     onSelectDevice = viewModel::selectDevice,
                     onRemoveDevice = viewModel::removeDevice,
                     onDismissPairing = viewModel::dismissPairing,

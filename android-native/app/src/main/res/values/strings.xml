@@ -7,6 +7,13 @@
     <string name="notification_channel_keepalive_description">保持与电脑上 Profer 的消息连接</string>
     <string name="notification_channel_messages">Profer 消息提醒</string>
     <string name="notification_channel_messages_description">权限确认、计划审批、提问与任务完成</string>
+    <string name="notification_channel_live">Profer 运行状态</string>
+    <string name="notification_channel_live_description">对话运行中的实时活动，显示在状态栏</string>
+    <string name="notification_live_title">Profer 正在工作</string>
+    <string name="notification_live_reply">正在回复…</string>
+    <string name="notification_live_tool">正在执行 %1$s</string>
+    <string name="notification_live_short_reply">回复中</string>
+    <string name="notification_live_short_tool">执行中</string>
     <string name="notification_keepalive_title">Profer 后台连接</string>
     <string name="notification_keepalive_text">切到其他应用或熄屏后仍保持连接</string>
 </resources>

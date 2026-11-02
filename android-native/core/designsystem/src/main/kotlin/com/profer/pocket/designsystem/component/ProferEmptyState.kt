@@ -48,7 +48,7 @@ fun ProferEmptyState(
                     .size(56.dp)
                     .background(
                         MaterialTheme.colorScheme.surfaceContainer,
-                        RoundedCornerShape(18.dp),
+                        MaterialTheme.shapes.large,
                     ),
                 contentAlignment = Alignment.Center,
             ) {
@@ -64,13 +64,13 @@ fun ProferEmptyState(
         }
         Text(
             text = title,
-            style = ProferHeadingSerif,
+            style = MaterialTheme.typography.headlineMedium,
             color = MaterialTheme.colorScheme.onSurface,
             modifier = Modifier.padding(top = ProferSpacing.lg),
         )
         Text(
             text = description,
-            style = MaterialTheme.typography.bodyMedium,
+            style = MaterialTheme.typography.bodyLarge,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             textAlign = TextAlign.Center,
             modifier = Modifier
@@ -83,7 +83,7 @@ fun ProferEmptyState(
                     onClick = onPrimary,
                     // 固定高度会在 2.0× 字号下把字裁掉；给最小高度 + 内边距让它自己长。
                     modifier = Modifier.heightIn(min = 48.dp),
-                    shape = RoundedCornerShape(24.dp),
+                    shape = MaterialTheme.shapes.extraLarge,
                     contentPadding = PaddingValues(horizontal = 24.dp, vertical = 6.dp),
                 ) {
                     Text(text = primaryLabel)

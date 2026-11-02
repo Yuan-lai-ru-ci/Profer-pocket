@@ -6,6 +6,8 @@
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- Android 16 Live Updates：把运行中的对话提升为状态栏实时活动。低版本忽略。 -->
+    <uses-permission android:name="android.permission.POST_PROMOTED_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <!-- dataSync 在 targetSdk 35 上有 6 小时/24 小时上限；API 34+ 改用 remoteMessaging，
          保留 dataSync 供 API 29–33 回落，因此两个权限都要声明。 -->

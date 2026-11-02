@@ -319,6 +319,25 @@ class SessionCatalogTest {
     }
 
     @Test
+    fun `子会话不参与置顶`() {
+        val groups = SessionCatalog.groups(
+            sessions = listOf(
+                session(
+                    "child",
+                    workspaceId = "w1",
+                    pinned = true,
+                    // 母会话不在本次可见集合：子会话升为根行，但置顶仍不生效。
+                    parentSessionId = "missing-parent",
+                    sourceDelegationId = "d1",
+                ),
+            ),
+            workspaces = workspaces,
+        )
+        assertTrue(groups.none { it.id == SessionCatalog.PINNED_GROUP_ID })
+        assertEquals(listOf("child"), groups.first { it.id == "w1" }.items.map { it.session.id })
+    }
+
+    @Test
     fun `运行中的子会话计入项目运行数`() {
         val groups = SessionCatalog.groups(
             sessions = listOf(

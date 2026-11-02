@@ -42,8 +42,34 @@ object HistoryMapper {
 
         messages.forEachIndexed { index, message ->
             if (message.partial) return@forEachIndexed
+            // 任务来源通知（桌面投影为 role=status）：单独成卡，不进入正文。
+            if (message.subtype == "task_trigger" || message.type == "status") {
+                appendSource(
+                    entries,
+                    ChatEntry.Source(
+                        id = message.uuid?.takeIf { it.isNotBlank() } ?: "history-trigger-$index",
+                        authorLabel = sourceAuthorLabel(message.authorType),
+                        sourceType = message.sourceType,
+                        sourceId = message.sourceId,
+                        text = "",
+                        at = message.createdAt ?: now,
+                        scheduled = isScheduledSource(message.authorType, message.sourceType),
+                    ),
+                )
+                return@forEachIndexed
+            }
             when (message.type) {
                 "user" -> {
+                    // Goal 迭代控制消息：正文是内部注入 prompt，只标一轮，不当作用户输入。
+                    message.goalIteration?.let { iteration ->
+                        entries += ChatEntry.Notice(
+                            id = message.uuid?.takeIf { it.isNotBlank() } ?: "history-goal-$index",
+                            text = "长时任务第 $iteration 轮",
+                            tone = com.profer.pocket.model.NoticeTone.Info,
+                            at = message.createdAt ?: now,
+                        )
+                        return@forEachIndexed
+                    }
                     // tool_result 消息只携带“已返回 + 是否失败”：先记账，
                     // 等回合汇总时剔除对应文件，并给工具卡切换成完成/失败状态。
                     message.toolResults.forEach { result ->
@@ -60,6 +86,23 @@ object HistoryMapper {
                         turnFiles = mutableListOf()
                         completed.clear()
                         failed.clear()
+                        // 作者不是用户（定时任务/Agent 交接/外部请求）：来源卡接管，不伪装用户气泡。
+                        val author = message.authorType
+                        if (author != null && author != "user") {
+                            appendSource(
+                                entries,
+                                ChatEntry.Source(
+                                    id = message.uuid?.takeIf { it.isNotBlank() } ?: "history-source-$index",
+                                    authorLabel = sourceAuthorLabel(author),
+                                    sourceType = message.sourceType,
+                                    sourceId = message.sourceId,
+                                    text = text,
+                                    at = message.createdAt ?: now,
+                                    scheduled = isScheduledSource(author, message.sourceType),
+                                ),
+                            )
+                            return@forEachIndexed
+                        }
                         entries += ChatEntry.User(
                             id = message.uuid?.takeIf { it.isNotBlank() } ?: "history-user-$index",
                             text = text,
@@ -71,8 +114,7 @@ object HistoryMapper {
 
                 "assistant" -> {
                     // 历史水合也要带回上下文占用，否则重开一个已有会话时顶栏环是空的。
-                    message.usage?.takeIf { it.usedTokens > 0 }?.let { usage ->
-                        contextUsage = ContextUsage(
+                    message.usage?.takeIf { it.usedTokens > 0 }?.let { usage ->                        contextUsage = ContextUsage(
                             inputTokens = usage.inputTokens,
                             outputTokens = usage.outputTokens,
                             cacheReadInputTokens = usage.cacheReadInputTokens,
@@ -80,16 +122,20 @@ object HistoryMapper {
                             updatedAt = message.createdAt ?: now,
                         )
                     }
+                    // 本条助手消息自己发起的工具调用：逐条工具卡从这里渲染。
+                    val messageTools = mutableListOf<ToolCall>()
                     message.toolUses.forEachIndexed { toolIndex, tool ->
                         val key = tool.id?.takeIf { it.isNotBlank() } ?: "history-$index-$toolIndex-${tool.name}"
                         if (counted.add(key)) {
                             tools = tools.record(tool.name)
-                            toolCalls += ToolCall(
+                            val call = ToolCall(
                                 id = key,
                                 name = tool.name,
                                 path = tool.filePath,
                                 at = message.createdAt ?: now,
                             )
+                            toolCalls += call
+                            messageTools += call
                         }
                         val path = tool.filePath
                         if (path != null && tool.name.lowercase() in MUTATING_TOOLS &&
@@ -100,13 +146,14 @@ object HistoryMapper {
                     }
                     val text = message.text.trim()
                     val thinking = message.reasoning?.trim()?.takeIf { it.isNotEmpty() }
-                    if (text.isNotEmpty() || thinking != null) {
+                    if (text.isNotEmpty() || thinking != null || messageTools.isNotEmpty()) {
                         entries += ChatEntry.Assistant(
                             id = message.uuid?.takeIf { it.isNotBlank() } ?: "history-assistant-$index",
                             text = text,
                             streaming = false,
                             at = message.createdAt ?: now,
                             thinking = thinking,
+                            toolCalls = messageTools,
                         )
                     }
                 }
@@ -135,6 +182,19 @@ object HistoryMapper {
 }
 
 private val MUTATING_TOOLS = setOf("edit", "write", "multiedit", "notebookedit")
+
+/**
+ * 来源卡入列：触发通知先到、正文随后到，正文接管前一条空的同作者通知，
+ * 与实时归约 `ChatReducer.appendSource` 保持同一条去重规则。
+ */
+private fun appendSource(entries: MutableList<ChatEntry>, entry: ChatEntry.Source) {
+    val last = entries.lastOrNull()
+    if (last is ChatEntry.Source && last.text.isBlank() && last.authorLabel == entry.authorLabel) {
+        entries[entries.lastIndex] = entry
+        return
+    }
+    entries += entry
+}
 
 /** 把图片挂到最近一条助手条目；按路径去重，重复历史不会重复追加。 */
 private fun attachImages(entries: MutableList<ChatEntry>, images: List<ImageRef>) {

@@ -15,6 +15,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 
 /**
@@ -96,7 +98,47 @@ class PocketConnectionService : Service() {
                 }
             }
         }
+        // 对话运行中把状态挂到状态栏：Android 16 是实时活动胶囊，低版本是静音常驻通知。
+        // 只在「会话 / 当前工具」变化时更新，流式正文的每一帧都不触发通知重建。
+        scope.launch {
+            repository.chats
+                .map { chats ->
+                    chats.values.firstOrNull { it.running }?.let { chat ->
+                        LiveState(
+                            sessionId = chat.sessionId,
+                            title = chat.title.ifBlank { "会话" },
+                            toolName = chat.toolCalls.lastOrNull()?.name,
+                        )
+                    }
+                }
+                .distinctUntilChanged()
+                .collect { running ->
+                    if (running == null) {
+                        PocketNotifications.cancelLiveUpdate(this@PocketConnectionService)
+                        return@collect
+                    }
+                    PocketNotifications.postLiveUpdate(
+                        context = this@PocketConnectionService,
+                        sessionId = running.sessionId,
+                        title = "Profer · ${running.title}",
+                        text = running.toolName?.let { getString(R.string.notification_live_tool, it) }
+                            ?: getString(R.string.notification_live_reply),
+                        shortText = if (running.toolName != null) {
+                            getString(R.string.notification_live_short_tool)
+                        } else {
+                            getString(R.string.notification_live_short_reply)
+                        },
+                    )
+                }
+        }
     }
+
+    /** 只保留参与通知文案的字段：流式正文变化不该重建通知。 */
+    private data class LiveState(
+        val sessionId: String,
+        val title: String,
+        val toolName: String?,
+    )
 
     companion object {
         fun start(context: Context) {

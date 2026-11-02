@@ -110,8 +110,34 @@ class ChatReducer(
             val window = message.modelUsage.values.maxOrNull()
             return if (window != null) ChatReduction(chat.copy(contextWindow = window)) else ChatReduction(chat)
         }
-        if (message.type != "assistant" && message.type != "user") return ChatReduction(chat)
+        if (message.type != "assistant" && message.type != "user" && message.type != "status" && message.subtype != "task_trigger") {
+            return ChatReduction(chat)
+        }
+        // 任务来源通知（定时任务/交接/外部请求）：单独成卡，不进入正文。
+        // 正文随后到达时由正文卡接管，见 [appendSource]。
+        if (message.subtype == "task_trigger" || message.type == "status") {
+            val entry = ChatEntry.Source(
+                id = message.uuid?.takeIf { it.isNotBlank() } ?: "trigger-${eventId ?: clock()}",
+                authorLabel = sourceAuthorLabel(message.authorType),
+                sourceType = message.sourceType,
+                sourceId = message.sourceId,
+                text = "",
+                at = message.createdAt ?: clock(),
+                scheduled = isScheduledSource(message.authorType, message.sourceType),
+            )
+            return ChatReduction(chat.resetTurn().appendSource(entry))
+        }
         if (message.type == "user") {
+            // Goal 迭代控制消息：正文是内部注入的 prompt，不当作普通用户消息展示。
+            message.goalIteration?.let { iteration ->
+                val entry = ChatEntry.Notice(
+                    id = message.uuid?.takeIf { it.isNotBlank() } ?: "goal-${eventId ?: iteration}",
+                    text = "长时任务第 $iteration 轮",
+                    tone = NoticeTone.Info,
+                    at = message.createdAt ?: clock(),
+                )
+                return ChatReduction(chat.append(entry))
+            }
             // 工具结果消息只带 tool_result：记下哪些工具已返回、哪些失败，
             // 回合末尾汇总时剔除失败文件，工具卡也能从 Running 切到 Success/Error。
             var next = chat
@@ -132,39 +158,47 @@ class ChatReducer(
             val text = message.text.trim()
             if (text.isEmpty()) return ChatReduction(next)
             val id = message.uuid?.takeIf { it.isNotBlank() } ?: "user-${eventId ?: text.hashCode()}"
+            // 作者不是用户（定时任务/Agent 交接/外部请求）：显示为来源卡，不伪装成用户刚发的一条消息。
+            val author = message.authorType
+            if (author != null && author != "user") {
+                val entry = ChatEntry.Source(
+                    id = id,
+                    authorLabel = sourceAuthorLabel(author),
+                    sourceType = message.sourceType,
+                    sourceId = message.sourceId,
+                    text = text,
+                    at = message.createdAt ?: clock(),
+                    scheduled = isScheduledSource(author, message.sourceType),
+                )
+                return ChatReduction(next.resetTurn().appendSource(entry))
+            }
             val entry = ChatEntry.User(id = id, text = text, at = clock())
             // 每个用户回合重新统计工具调用与文件汇总，避免上一轮的值挂到这一次回复上。
-            return ChatReduction(
-                next.append(entry).copy(
-                    tools = ToolTally(),
-                    countedToolIds = emptySet(),
-                    toolCalls = emptyList(),
-                    completedToolIds = emptySet(),
-                    turnFiles = emptyList(),
-                    failedToolIds = emptySet(),
-                ),
-            )
+            return ChatReduction(next.resetTurn().append(entry))
         }
 
         val entryId = message.uuid?.takeIf { it.isNotBlank() } ?: "assistant-${eventId ?: chat.messages.size}"
         val existing = chat.messages.firstOrNull { it.id == entryId } as? ChatEntry.Assistant
 
         // 工具次数：partial 与 final 会重复携带同一批 tool_use，按 id 去重。
-        // 同时按发生顺序记录每次调用，供移动端逐条渲染（每条工具自己的图标与状态）。
+        // 同时按发生顺序记录每次调用：turn 级用于汇总，message 级挂到当前助手消息上供逐条工具卡渲染。
         var tools = chat.tools
         var toolCalls = chat.toolCalls
         val counted = chat.countedToolIds.toMutableSet()
+        val messageTools = mutableListOf<ToolCall>()
         message.toolUses.forEachIndexed { index, tool ->
             val key = tool.id?.takeIf { it.isNotBlank() }
                 ?: "evt-${eventId ?: "x"}-$index-${tool.name}"
             if (counted.add(key)) {
                 tools = tools.record(tool.name)
-                toolCalls = toolCalls + ToolCall(
+                val call = ToolCall(
                     id = key,
                     name = tool.name,
                     path = tool.filePath,
                     at = clock(),
                 )
+                toolCalls = toolCalls + call
+                messageTools += call
             }
         }
 
@@ -200,7 +234,16 @@ class ChatReducer(
                 }
                 chat.messages.map {
                     if (it.id == entryId) {
-                        ChatEntry.Assistant(entryId, nextText, streaming, existing.at, nextThinking, existing.images)
+                        ChatEntry.Assistant(
+                            id = entryId,
+                            text = nextText,
+                            streaming = streaming,
+                            at = existing.at,
+                            thinking = nextThinking,
+                            images = existing.images,
+                            // 同一条助手消息的工具只增不减：后续帧重复携带旧调用不会重复入列。
+                            toolCalls = (existing.toolCalls + messageTools).distinctBy { call -> call.id },
+                        )
                     } else {
                         it
                     }
@@ -209,8 +252,16 @@ class ChatReducer(
 
             // 只有思考、还没出正文的 assistant 也必须先落在列表里，
             // 否则移动端在模型「想」的这几秒里看不到任何变化。
-            text.isNotBlank() || incomingThinking != null ->
-                chat.messages + ChatEntry.Assistant(entryId, text, streaming, clock(), incomingThinking)
+            // 纯工具回合（没有正文也没有思考）也要建条目，否则工具卡没有挂载点。
+            text.isNotBlank() || incomingThinking != null || messageTools.isNotEmpty() ->
+                chat.messages + ChatEntry.Assistant(
+                    id = entryId,
+                    text = text,
+                    streaming = streaming,
+                    at = clock(),
+                    thinking = incomingThinking,
+                    toolCalls = messageTools,
+                )
 
             else -> chat.messages
         }
@@ -323,6 +374,8 @@ class ChatReducer(
                         if (errorEntry == null) base else base.append(errorEntry)
                     }.copy(
                         running = false,
+                        // 后台仍有任务在跑：插话只注入不打断（与桌面 backgroundWaiting 同口径）。
+                        backgroundWaiting = event.backgroundTasksPending,
                         pendingInteraction = null,
                         lastError = errors.firstOrNull(),
                     ),
@@ -343,7 +396,11 @@ class ChatReducer(
             }
 
             is ProferEventView.RunIdle -> ChatReduction(
-                chat = finishStreaming(chat).copy(running = false, pendingInteraction = null),
+                chat = finishStreaming(chat).copy(
+                    running = false,
+                    backgroundWaiting = false,
+                    pendingInteraction = null,
+                ),
                 notifications = listOf(
                     PocketNotification(
                         title = "任务已完成",
@@ -410,6 +467,28 @@ class ChatReducer(
         }
     }
 
+    /** 新 run 开始：清空上一轮的工具统计与文件汇总，不把旧值挂到新一轮。 */
+    private fun SessionChat.resetTurn(): SessionChat = copy(
+        tools = ToolTally(),
+        countedToolIds = emptySet(),
+        toolCalls = emptyList(),
+        completedToolIds = emptySet(),
+        turnFiles = emptyList(),
+        failedToolIds = emptySet(),
+    )
+
+    /**
+     * 来源卡去重：触发通知先到、正文随后到；正文接管前一条空的同作者通知，
+     * 与桌面 `projectTaskInputTimeline` 同一目的（不把同一件事画成两张卡）。
+     */
+    private fun SessionChat.appendSource(entry: ChatEntry.Source): SessionChat {
+        val last = messages.lastOrNull()
+        if (last is ChatEntry.Source && last.text.isBlank() && last.authorLabel == entry.authorLabel) {
+            return copy(messages = messages.dropLast(1) + entry)
+        }
+        return append(entry)
+    }
+
     private fun clearPending(chat: SessionChat, requestId: String): SessionChat {
         val pending = chat.pendingInteraction
         return if (pending != null && pending.id == requestId) {
@@ -443,3 +522,21 @@ class ChatReducer(
 }
 
 private val MUTATING_TOOLS = setOf("edit", "write", "multiedit", "notebookedit")
+
+/**
+ * 作者标签：与服务端 `_provenance.author.type` 一一对应，不根据正文内容猜作者。
+ * 旧消息没有 provenance 时走「历史任务来源」而不是「用户输入」。
+ */
+internal fun sourceAuthorLabel(authorType: String?): String = when (authorType) {
+    "agent" -> "Agent 任务交接"
+    "automation" -> "定时任务触发"
+    "system" -> "系统任务接续"
+    "external" -> "外部请求"
+    "user" -> "用户输入"
+    null -> "历史任务来源"
+    else -> "未知来源"
+}
+
+/** 定时任务来源：作者是 automation，或来源引用直接指向某个定时任务。 */
+internal fun isScheduledSource(authorType: String?, sourceType: String?): Boolean =
+    authorType == "automation" || sourceType == "automation"

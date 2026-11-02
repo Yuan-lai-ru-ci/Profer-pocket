@@ -47,6 +47,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.profer.pocket.designsystem.theme.ProferHeadingSerif
 import com.profer.pocket.designsystem.component.sheetMaxHeight
+import com.profer.pocket.designsystem.component.ProferAdaptiveSheet
 import com.profer.pocket.designsystem.theme.ProferSpacing
 import com.profer.pocket.designsystem.theme.ProferThemeExtras
 
@@ -75,13 +76,7 @@ internal fun ModelPickerSheet(
                 it.rawLabel == currentModelLabel)
     }?.channelId ?: currentChannelId
 
-    ModalBottomSheet(
-        onDismissRequest = onDismiss,
-        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
-        containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
-        // 弹层最高只到 86%，顶部不再需要状态栏内边距；底部由内容自己 navigationBarsPadding。
-        contentWindowInsets = { WindowInsets(0, 0, 0, 0) },
-    ) {
+    ProferAdaptiveSheet(onDismissRequest = onDismiss) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -178,7 +173,7 @@ private fun ChannelGroupCard(
     streaming: Boolean,
     onSelect: (ModelOption) -> Unit,
 ) {
-    val shape = RoundedCornerShape(16.dp)
+    val shape = MaterialTheme.shapes.medium
     val railColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.42f)
     Column(
         modifier = Modifier
@@ -252,7 +247,7 @@ private fun ModelIcon(option: ModelOption, size: Dp) {
             contentScale = ContentScale.Crop,
             modifier = Modifier
                 .size(size - 2.dp)
-                .clip(RoundedCornerShape(6.dp)),
+                .clip(MaterialTheme.shapes.extraSmall),
         )
     }
 }

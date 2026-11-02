@@ -614,6 +614,38 @@ class PocketRepositoryTest {
     }
 
     @Test
+    fun `被 busy 拒绝的消息按原 uuid 重投为插话，不丢输入`() = runTest {
+        val snapshot = SessionSnapshotStore.Snapshot(
+            sessions = listOf(SessionSummary(id = "s1", title = "会话", channelId = "c1")),
+        )
+        val fixture = fixture(backgroundScope, snapshot)
+        runCurrent()
+        connect(fixture)
+
+        val job = launch { fixture.repository.sendMessage("s1", "再补一句") }
+        runCurrent()
+        val socket = fixture.factory.created.single()
+        val sendFrame = socket.sent.map { JSONObject(it) }
+            .last { it.optString("type") == "send_message" }
+        socket.receive(
+            """{"kind":"command_result","commandId":"${sendFrame.getString("_cmdId")}","ok":false,"error":"AGENT_RUN_ALREADY_ACTIVE: 上一条消息仍在处理中，请稍候再试"}""",
+        )
+        runCurrent()
+
+        val queueFrame = commandFrame(fixture, "queue_message")
+        assertEquals("再补一句", queueFrame.getString("userMessage"))
+        assertEquals(true, queueFrame.getBoolean("interrupt"))
+        respondCommand(fixture, "queue_message", """{"accepted":true}""")
+        job.join()
+        runCurrent()
+
+        val user = fixture.repository.chats.value["s1"]!!.messages
+            .filterIsInstance<ChatEntry.User>().single()
+        assertEquals(SendStatus.Sent, user.status)
+        assertEquals("再补一句", user.text)
+    }
+
+    @Test
     fun `运行中插话先上屏乐观气泡并复用同一 uuid`() = runTest {
         val snapshot = SessionSnapshotStore.Snapshot(
             sessions = listOf(SessionSummary(id = "s1", title = "会话", channelId = "c1")),
@@ -626,6 +658,8 @@ class PocketRepositoryTest {
         runCurrent()
         val frame = commandFrame(fixture, "queue_message")
         assertEquals("补充一句", frame.getString("userMessage"))
+        // 与桌面「运行中发送」同口径：流式时软打断后直接插入。
+        assertEquals(true, frame.getBoolean("interrupt"))
         val uuid = frame.getString("uuid")
         val bubble = fixture.repository.chats.value["s1"]!!.messages.last() as ChatEntry.User
         assertEquals(uuid, bubble.id)
@@ -633,6 +667,23 @@ class PocketRepositoryTest {
         respondCommand(fixture, "queue_message", """{"accepted":true,"uuid":"$uuid"}""")
         job.join()
         assertEquals(1, fixture.repository.chats.value["s1"]!!.messages.count { it is ChatEntry.User })
+    }
+
+    @Test
+    fun `后台等待时插话只注入不打断`() = runTest {
+        val snapshot = SessionSnapshotStore.Snapshot(
+            sessions = listOf(SessionSummary(id = "s1", title = "会话", channelId = "c1")),
+        )
+        val fixture = fixture(backgroundScope, snapshot)
+        runCurrent()
+        connect(fixture)
+
+        val job = launch { fixture.repository.queueMessage("s1", "补充一句", interrupt = false) }
+        runCurrent()
+        val frame = commandFrame(fixture, "queue_message")
+        assertEquals(false, frame.getBoolean("interrupt"))
+        respondCommand(fixture, "queue_message", """{"accepted":true}""")
+        job.join()
     }
 
     @Test

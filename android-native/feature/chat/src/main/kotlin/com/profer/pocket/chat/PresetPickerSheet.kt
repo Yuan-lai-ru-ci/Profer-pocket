@@ -28,6 +28,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.profer.pocket.designsystem.theme.ProferHeadingSerif
 import com.profer.pocket.designsystem.component.sheetMaxHeight
+import com.profer.pocket.designsystem.component.ProferAdaptiveSheet
 import com.profer.pocket.designsystem.theme.ProferSpacing
 import com.profer.pocket.model.AgentPresetSummary
 
@@ -45,13 +46,7 @@ internal fun PresetPickerSheet(
     onSelect: (AgentPresetSummary) -> Unit,
     onDismiss: () -> Unit,
 ) {
-    ModalBottomSheet(
-        onDismissRequest = onDismiss,
-        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
-        containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
-        // 弹层最高只到 86%，顶部不再需要状态栏内边距；底部由内容自己 navigationBarsPadding。
-        contentWindowInsets = { WindowInsets(0, 0, 0, 0) },
-    ) {
+    ProferAdaptiveSheet(onDismissRequest = onDismiss) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()

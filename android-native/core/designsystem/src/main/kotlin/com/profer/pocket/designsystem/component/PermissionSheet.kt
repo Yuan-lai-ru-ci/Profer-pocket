@@ -105,16 +105,11 @@ fun ProferPermissionSheet(
     onDismiss: () -> Unit,
     onAlwaysAllow: (() -> Unit)? = null,
 ) {
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     // 2.0× 字号下「允许 / 始终允许 / 拒绝」会被正文挤出屏幕：大字号时弹层占 92% 高，
     // 正文自己滚动，动作区固定在底部；1.0× 仍是内容高度，不改变原来看法。
     val tallLayout = LocalDensity.current.fontScale > 1.3f
-    ModalBottomSheet(
-        onDismissRequest = onDismiss,
-        sheetState = sheetState,
-        containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
-        shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
-    ) {
+    // 手机是底部弹层，平板/折叠展开是居中对话框。
+    ProferAdaptiveSheet(onDismissRequest = onDismiss) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()

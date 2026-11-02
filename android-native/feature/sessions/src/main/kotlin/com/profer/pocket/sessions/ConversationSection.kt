@@ -1,7 +1,10 @@
 package com.profer.pocket.sessions
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
@@ -9,7 +12,6 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -20,15 +22,17 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material.icons.outlined.Forum
+import androidx.compose.material.icons.outlined.PushPin
+import androidx.compose.material.icons.outlined.SwapHoriz
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
@@ -43,11 +47,14 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import com.profer.pocket.designsystem.component.ProferEmptyState
+import com.profer.pocket.designsystem.component.proferSelectedSurface
 import com.profer.pocket.designsystem.component.rememberLongPressFeedback
+import com.profer.pocket.designsystem.theme.ProferSizes
 import com.profer.pocket.designsystem.theme.ProferSpacing
 
 /** 抽屉的两种模式；feature 层不依赖 core:model。 */
@@ -71,10 +78,7 @@ data class ConversationListState(
     val refreshing: Boolean = false,
 )
 
-/**
- * Agent / Chat 模式切换：与品牌字同排，紧凑胶囊。
- * 目录层的主切换就在标题行，不再单独占一行。
- */
+/** Agent / Chat 的轻量分段；每段独立拥有至少 48dp 的触控区域。 */
 @Composable
 fun DrawerModeSwitch(
     chatSelected: Boolean,
@@ -83,16 +87,13 @@ fun DrawerModeSwitch(
     modifier: Modifier = Modifier,
     compact: Boolean = false,
 ) {
-    // 紧凑态宽度跟随字号：固定 96dp 在 2.0× 下会把 Agent/Chat 挤成两行，
-    // 而只用 min 下限会让开关吃掉整行、把搜索/新建挤出抽屉。
-    val segmentWidth = (96 * LocalDensity.current.fontScale.coerceIn(1f, 1.6f)).dp
     Row(
         modifier = modifier
-            .then(if (compact) Modifier.width(segmentWidth) else Modifier.fillMaxWidth())
-            .heightIn(min = 28.dp)
-            .clip(CircleShape)
+            .then(if (compact) Modifier.widthIn(min = 160.dp) else Modifier.fillMaxWidth())
+            .heightIn(min = ProferSizes.minTouchTarget)
+            .clip(MaterialTheme.shapes.extraLarge)
             .background(MaterialTheme.colorScheme.surfaceContainer)
-            .padding(horizontal = if (compact) 2.dp else ProferSpacing.lg, vertical = 2.dp),
+            .selectableGroup(),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         ModeSegment(
@@ -119,29 +120,87 @@ private fun ModeSegment(
 ) {
     Box(
         modifier = modifier
-            .heightIn(min = 24.dp)
-            .padding(horizontal = 2.dp, vertical = 2.dp)
-            .clip(CircleShape)
-            .background(
-                if (selected) MaterialTheme.colorScheme.surfaceContainerLowest else Color.Transparent,
+            .heightIn(min = ProferSizes.minTouchTarget)
+            .clip(MaterialTheme.shapes.extraLarge)
+            .then(
+                if (selected) {
+                    Modifier
+                        .background(proferSelectedSurface())
+                        .border(
+                            ProferSizes.hairline,
+                            MaterialTheme.colorScheme.outlineVariant,
+                            MaterialTheme.shapes.extraLarge,
+                        )
+                } else {
+                    Modifier
+                },
             )
-            .clickable(onClick = onClick),
+            .selectable(selected = selected, role = Role.Tab, onClick = onClick)
+            .padding(horizontal = ProferSpacing.sm),
         contentAlignment = Alignment.Center,
     ) {
         Text(
             text = label,
             maxLines = 1,
             softWrap = false,
-            style = MaterialTheme.typography.labelSmall.copy(
-                fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
-                letterSpacing = 0.3.sp,
+            style = MaterialTheme.typography.labelMedium.copy(
+                fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
             ),
             color = if (selected) {
                 MaterialTheme.colorScheme.onSurface
             } else {
-                MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                MaterialTheme.colorScheme.onSurfaceVariant
             },
         )
+    }
+}
+
+
+/**
+ * 单按钮模式切换：只显示当前模式，点按在 Agent / Chat 之间切换。
+ * 比两段控件省一整行高度；语义里写明当前模式与目标模式。
+ */
+@Composable
+fun DrawerModeButton(
+    chatSelected: Boolean,
+    onToggle: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val label = if (chatSelected) "Chat" else "Agent"
+    Box(
+        modifier = modifier
+            .heightIn(min = ProferSizes.minTouchTarget)
+            .clip(MaterialTheme.shapes.extraLarge)
+            .clickable(role = Role.Button, onClick = onToggle)
+            .semantics { contentDescription = "当前 $label 模式，点按切换" }
+            .padding(horizontal = ProferSpacing.xxs),
+        contentAlignment = Alignment.Center,
+    ) {
+        Surface(
+            shape = MaterialTheme.shapes.extraLarge,
+            color = MaterialTheme.colorScheme.surfaceContainer,
+            // 与右侧搜索 / 新建的 40dp 圆键同高，顶栏才是一条齐平的带子。
+            modifier = Modifier.height(ProferSizes.actionVisual),
+        ) {
+            Row(
+                modifier = Modifier.padding(horizontal = ProferSpacing.md),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(ProferSpacing.xs),
+            ) {
+                Icon(
+                    imageVector = Icons.Outlined.SwapHoriz,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(14.dp),
+                )
+                Text(
+                    text = label,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1,
+                )
+            }
+        }
     }
 }
 
@@ -166,24 +225,13 @@ fun ConversationBody(
             contentPadding = PaddingValues(
                 start = ProferSpacing.sm,
                 end = ProferSpacing.sm,
-                top = 2.dp,
+                top = ProferSpacing.sm,
                 bottom = ProferSpacing.md,
             ),
         ) {
             if (state.items.isEmpty() && state.refreshing) {
                 item(key = "loading") {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(top = ProferSpacing.xxl),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Text(
-                            text = "正在读取对话…",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
-                        )
-                    }
+                    SessionListSkeleton()
                 }
             }
             if (state.items.isEmpty() && !state.refreshing) {
@@ -204,7 +252,7 @@ fun ConversationBody(
                     )
                 }
             }
-            items(state.items, key = { it.id }) { item ->
+            items(state.items, key = { it.id }, contentType = { "conversation" }) { item ->
                 ConversationRow(
                     item = item,
                     onClick = { onSelect(item.id) },
@@ -225,73 +273,78 @@ private fun ConversationRow(
     var menuOpen by remember { mutableStateOf(false) }
     val longPressFeedback = rememberLongPressFeedback()
     Box {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 2.dp)
-            .clip(MaterialTheme.shapes.small)
-            .combinedClickable(
-                onClick = onClick,
-                onLongClick = {
-                    longPressFeedback()
-                    menuOpen = true
-                },
-            )
-            .background(
-                if (item.selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.045f) else Color.Transparent,
-            )
-            .heightIn(min = 48.dp)
-            .padding(start = 18.dp, end = 8.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Box(
+        Row(
             modifier = Modifier
-                .width(2.dp)
-                .height(15.dp)
-                .background(
-                    color = if (item.selected) MaterialTheme.colorScheme.primary else Color.Transparent,
-                    shape = MaterialTheme.shapes.extraSmall,
-                ),
-        )
-        Spacer(Modifier.width(10.dp))
-        Column(modifier = Modifier.weight(1f)) {
-            Text(
-                text = item.title,
-                style = MaterialTheme.typography.bodyMedium.copy(
-                    fontWeight = if (item.selected) FontWeight.Medium else FontWeight.Normal,
-                ),
-                color = MaterialTheme.colorScheme.onSurface,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            if (item.preview.isNotBlank()) {
-                Text(
-                    text = item.preview,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
+                .fillMaxWidth()
+                .padding(horizontal = ProferSpacing.xs, vertical = ProferSpacing.xxs)
+                .clip(MaterialTheme.shapes.large)
+                .combinedClickable(
+                    onClick = onClick,
+                    onLongClick = {
+                        longPressFeedback()
+                        menuOpen = true
+                    },
                 )
-            }
-        }
-        if (item.pinned) {
-            Spacer(Modifier.width(6.dp))
+                .background(
+                    if (item.selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.10f)
+                    else Color.Transparent,
+                )
+                .heightIn(min = ProferSizes.listItemHeight)
+                .padding(horizontal = ProferSpacing.lg, vertical = ProferSpacing.md),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(ProferSpacing.sm),
+        ) {
             Box(
                 modifier = Modifier
-                    .width(5.dp)
-                    .height(5.dp)
-                    .background(MaterialTheme.colorScheme.tertiary, CircleShape),
+                    .width(3.dp)
+                    .height(ProferSpacing.lg)
+                    .background(
+                        if (item.selected) MaterialTheme.colorScheme.primary else Color.Transparent,
+                        MaterialTheme.shapes.extraSmall,
+                    ),
             )
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(ProferSpacing.xs),
+            ) {
+                Text(
+                    text = item.title,
+                    style = MaterialTheme.typography.bodyMedium.copy(
+                        fontWeight = if (item.selected) FontWeight.Medium else FontWeight.Normal,
+                    ),
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 3,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                if (item.preview.isNotBlank()) {
+                    Text(
+                        text = item.preview,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(ProferSpacing.sm),
+                ) {
+                    if (item.pinned) {
+                        Icon(
+                            imageVector = Icons.Outlined.PushPin,
+                            contentDescription = "已置顶",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(ProferSizes.iconSmall),
+                        )
+                    }
+                    Text(
+                        text = item.timeLabel,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
         }
-        Spacer(Modifier.width(8.dp))
-        Text(
-            text = item.timeLabel,
-            style = MaterialTheme.typography.labelSmall.copy(letterSpacing = 0.1.sp),
-            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.62f),
-            maxLines = 1,
-            modifier = Modifier.widthIn(min = 34.dp),
-        )
-    }
         DropdownMenu(
             expanded = menuOpen,
             onDismissRequest = { menuOpen = false },

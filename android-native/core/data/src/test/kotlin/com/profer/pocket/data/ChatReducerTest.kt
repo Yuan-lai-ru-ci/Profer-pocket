@@ -305,6 +305,9 @@ class ChatReducerTest {
         text: String = "",
         results: List<ToolResultView> = emptyList(),
         uuid: String = "u1",
+        author: String? = null,
+        sourceType: String? = null,
+        sourceId: String? = null,
     ) = AgentPayload.SdkMessage(
         SdkMessageView(
             type = "user",
@@ -317,8 +320,140 @@ class ChatReducerTest {
             model = null,
             isError = false,
             errorMessage = null,
+            authorType = author,
+            sourceType = sourceType,
+            sourceId = sourceId,
         ),
     )
+
+    @Test
+    fun `定时任务触发通知渲染为来源卡，不进入正文`() {
+        val trigger = AgentPayload.SdkMessage(
+            SdkMessageView(
+                type = "system",
+                uuid = "trig-1",
+                partial = false,
+                text = "定时任务「每日巡检」触发",
+                toolUses = emptyList(),
+                subtype = "task_trigger",
+                model = null,
+                isError = false,
+                errorMessage = null,
+                authorType = "automation",
+                sourceType = "automation",
+                sourceId = "auto-1",
+            ),
+        )
+
+        val next = reducer.reduce(chat(), "s1", 1, trigger)
+        val entry = next.chat.messages.single() as ChatEntry.Source
+        assertEquals("定时任务触发", entry.authorLabel)
+        assertTrue(entry.scheduled)
+        assertEquals("automation", entry.sourceType)
+        // 通知本身不是任务正文：正文随后到达时才由正文卡接管。
+        assertEquals("", entry.text)
+    }
+
+    @Test
+    fun `自动化作者的输入显示为来源卡，并接管前一条空通知`() {
+        val trigger = AgentPayload.SdkMessage(
+            SdkMessageView(
+                type = "system",
+                uuid = "trig-1",
+                partial = false,
+                text = "定时任务触发",
+                toolUses = emptyList(),
+                subtype = "task_trigger",
+                model = null,
+                isError = false,
+                errorMessage = null,
+                authorType = "automation",
+                sourceType = "automation",
+                sourceId = "auto-1",
+            ),
+        )
+        val first = reducer.reduce(chat(), "s1", 1, trigger)
+        val next = reducer.reduce(
+            first.chat,
+            "s1",
+            2,
+            user(text = "检查今天的部署日志", uuid = "u-auto", author = "automation", sourceType = "automation", sourceId = "auto-1"),
+        )
+
+        val entry = next.chat.messages.single() as ChatEntry.Source
+        assertEquals("u-auto", entry.id)
+        assertEquals("检查今天的部署日志", entry.text)
+        assertTrue(entry.scheduled)
+        // 不伪装成用户气泡。
+        assertTrue(next.chat.messages.none { it is ChatEntry.User })
+    }
+
+    @Test
+    fun `派工来源的输入不重置为普通用户回合`() {
+        val next = reducer.reduce(
+            chat(),
+            "s1",
+            1,
+            user(text = "交接说明", uuid = "u-agent", author = "agent", sourceType = "session", sourceId = "s-source"),
+        )
+
+        val entry = next.chat.messages.single() as ChatEntry.Source
+        assertEquals("Agent 任务交接", entry.authorLabel)
+        assertEquals("session", entry.sourceType)
+        assertEquals("s-source", entry.sourceId)
+        assertFalse(entry.scheduled)
+    }
+
+    @Test
+    fun `Goal 迭代控制消息只标一轮，不当作普通用户输入`() {
+        val goal = AgentPayload.SdkMessage(
+            SdkMessageView(
+                type = "user",
+                uuid = "goal-3",
+                partial = false,
+                text = "你正在持续执行一个 Goal（长时自主任务）。目标：完成迁移",
+                toolUses = emptyList(),
+                subtype = null,
+                model = null,
+                isError = false,
+                errorMessage = null,
+                goalIteration = 3,
+            ),
+        )
+
+        val next = reducer.reduce(chat(), "s1", 1, goal)
+        val entry = next.chat.messages.single() as ChatEntry.Notice
+        assertEquals("长时任务第 3 轮", entry.text)
+        assertEquals(NoticeTone.Info, entry.tone)
+        assertTrue(next.chat.messages.none { it is ChatEntry.User })
+    }
+
+    @Test
+    fun `工具调用挂到发起它的助手消息上`() {
+        val read = ToolUseView(id = "t1", name = "Read", filePath = "/repo/a.ts")
+        val bash = ToolUseView(id = "t2", name = "Bash")
+        val first = reducer.reduce(chat(), "s1", 1, assistant("先读文件", partial = true, tools = listOf(read)))
+        val second = reducer.reduce(
+            first.chat,
+            "s1",
+            2,
+            assistant("再跑命令", partial = false, uuid = "a2", tools = listOf(bash)),
+        )
+
+        val assistants = second.chat.messages.filterIsInstance<ChatEntry.Assistant>()
+        assertEquals(listOf(listOf("t1")), assistants.take(1).map { entry -> entry.toolCalls.map { it.id } })
+        assertEquals(listOf("t2"), assistants.last().toolCalls.map { it.id })
+    }
+
+    @Test
+    fun `纯工具回合没有正文也创建助手消息承载工具卡`() {
+        val read = ToolUseView(id = "t1", name = "Read", filePath = "/repo/a.ts")
+        val next = reducer.reduce(chat(), "s1", 1, assistant("", partial = false, tools = listOf(read)))
+
+        val entry = next.chat.messages.single() as ChatEntry.Assistant
+        assertEquals("", entry.text)
+        assertEquals(listOf("t1"), entry.toolCalls.map { it.id })
+    }
 
     @Test
     fun `工具调用按发生顺序逐条记录，并由 tool_result 标记完成与失败`() {

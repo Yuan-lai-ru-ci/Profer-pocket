@@ -10,6 +10,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
+import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
@@ -26,7 +27,9 @@ object PocketNotifications {
 
     const val CHANNEL_KEEPALIVE = "profer_keepalive"
     const val CHANNEL_MESSAGES = "profer_messages"
+    const val CHANNEL_LIVE = "profer_live"
     const val KEEPALIVE_ID = 1001
+    const val LIVE_ID = 1002
     const val EXTRA_SESSION_ID = "profer_pocket_session_id"
     const val EXTRA_KIND = "profer_pocket_notification_kind"
 
@@ -56,6 +59,19 @@ object PocketNotifications {
             setShowBadge(true)
         }
         manager.createNotificationChannel(messages)
+
+        // 实时活动通道：静音、无徽章，只承载「对话运行中」这一条常驻通知。
+        val live = NotificationChannel(
+            CHANNEL_LIVE,
+            context.getString(R.string.notification_channel_live),
+            NotificationManager.IMPORTANCE_LOW,
+        ).apply {
+            description = context.getString(R.string.notification_channel_live_description)
+            setShowBadge(false)
+            enableVibration(false)
+            enableLights(false)
+        }
+        manager.createNotificationChannel(live)
     }
 
     fun keepalive(context: Context): Notification =
@@ -68,6 +84,91 @@ object PocketNotifications {
             .setPriority(NotificationCompat.PRIORITY_MIN)
             .setCategory(NotificationCompat.CATEGORY_SERVICE)
             .build()
+
+    /**
+     * 对话运行中的系统级实时活动。
+     *
+     * Android 16 起 `setShortCriticalText` 会让系统把 ongoing 通知提升成状态栏胶囊
+     * （Live Update）；低版本退回一条静音常驻通知，不影响其它逻辑。
+     * 该方法在 compileSdk 35 的 SDK 里还不存在，只能按名字反射，失败就静默降级。
+     */
+    @SuppressLint("MissingPermission")
+    fun postLiveUpdate(
+        context: Context,
+        sessionId: String,
+        title: String,
+        text: String,
+        shortText: String,
+    ) {
+        ensureChannels(context)
+        if (!hasPermission(context)) return
+
+        val contentIntent = PendingIntent.getActivity(
+            context,
+            LIVE_ID,
+            Intent(context, MainActivity::class.java).apply {
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
+                putExtra(EXTRA_SESSION_ID, sessionId)
+            },
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
+        try {
+            NotificationManagerCompat.from(context).notify(
+                LIVE_ID,
+                buildLiveUpdate(context, title, text, shortText, contentIntent),
+            )
+        } catch (_: SecurityException) {
+            // 权限在检查与发送之间被撤销：静默失败。
+        }
+    }
+
+    fun cancelLiveUpdate(context: Context) {
+        try {
+            NotificationManagerCompat.from(context).cancel(LIVE_ID)
+        } catch (_: SecurityException) {
+            // 同上。
+        }
+    }
+
+    private fun buildLiveUpdate(
+        context: Context,
+        title: String,
+        text: String,
+        shortText: String,
+        contentIntent: PendingIntent,
+    ): Notification {
+        if (Build.VERSION.SDK_INT >= 36) {
+            val builder = Notification.Builder(context, CHANNEL_LIVE)
+                .setSmallIcon(R.drawable.ic_stat_profer)
+                .setContentTitle(title)
+                .setContentText(text)
+                .setOngoing(true)
+                .setOnlyAlertOnce(true)
+                .setCategory(Notification.CATEGORY_PROGRESS)
+                // Live Update 要求通知是可提升的样式（BigText/Progress/Call/Metric 之一）。
+                .setStyle(Notification.BigTextStyle().bigText(text))
+                .setContentIntent(contentIntent)
+            // API 36 的签名是 setShortCriticalText(String)；系统据此把 ongoing 通知
+            // 提升成状态栏胶囊（Live Update），不需要额外的 request 调用。
+            runCatching {
+                builder::class.java
+                    .getMethod("setShortCriticalText", String::class.java)
+                    .invoke(builder, shortText)
+            }.onFailure { Log.w("ProferLive", "setShortCriticalText 不可用，降级为普通通知", it) }
+            return builder.build()
+        }
+        return NotificationCompat.Builder(context, CHANNEL_LIVE)
+            .setSmallIcon(R.drawable.ic_stat_profer)
+            .setContentTitle(title)
+            .setContentText(text)
+            .setOngoing(true)
+            .setSilent(true)
+            .setPriority(NotificationCompat.PRIORITY_LOW)
+            .setCategory(NotificationCompat.CATEGORY_PROGRESS)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(text))
+            .setContentIntent(contentIntent)
+            .build()
+    }
 
     fun allowed(kind: NotificationKind, settings: PocketSettings): Boolean {
         if (!settings.notificationsEnabled) return false

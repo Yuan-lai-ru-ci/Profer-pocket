@@ -87,12 +87,7 @@ fun ProferUserMessage(
         horizontalAlignment = Alignment.End,
     ) {
         Surface(
-            shape = RoundedCornerShape(
-                topStart = 20.dp,
-                topEnd = 20.dp,
-                bottomEnd = 6.dp,
-                bottomStart = 20.dp,
-            ),
+            shape = MaterialTheme.shapes.large,
             color = MaterialTheme.colorScheme.surfaceContainerHigh,
             modifier = Modifier.widthIn(max = 320.dp),
         ) {
@@ -149,7 +144,7 @@ fun ProferThinkingCard(
             modifier = Modifier
                 .fillMaxWidth()
                 .heightIn(min = ProferSizes.minTouchTarget)
-                .clip(RoundedCornerShape(10.dp))
+                .clip(MaterialTheme.shapes.small)
                 .clickable(onClick = onToggle)
                 .padding(vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically,
@@ -234,7 +229,7 @@ fun ProferToolCallCard(
         modifier = modifier
             .fillMaxWidth()
             .animateContentSize(),
-        shape = RoundedCornerShape(12.dp),
+        shape = MaterialTheme.shapes.small,
         color = MaterialTheme.colorScheme.surfaceContainerLow,
         border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
     ) {
@@ -251,7 +246,7 @@ fun ProferToolCallCard(
                 Box(
                     modifier = Modifier
                         .size(28.dp)
-                        .background(MaterialTheme.colorScheme.surfaceContainerHigh, RoundedCornerShape(8.dp)),
+                        .background(MaterialTheme.colorScheme.surfaceContainerHigh, MaterialTheme.shapes.extraSmall),
                     contentAlignment = Alignment.Center,
                 ) {
                     Icon(
@@ -338,7 +333,7 @@ fun ProferCodeBlock(
     }
     Surface(
         modifier = modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(10.dp),
+        shape = MaterialTheme.shapes.medium,
         color = semantic.codeBackground,
     ) {
         Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)) {
@@ -356,7 +351,7 @@ fun ProferCodeBlock(
                         clipboard.setText(AnnotatedString(code))
                         copied = true
                     },
-                    modifier = Modifier.size(36.dp),
+                    modifier = Modifier.size(com.profer.pocket.designsystem.theme.ProferSizes.minTouchTarget),
                 ) {
                     Icon(
                         imageVector = if (copied) Icons.Outlined.Check else Icons.Outlined.ContentCopy,
@@ -501,7 +496,7 @@ fun ProferPermissionCard(
 ) {
     Surface(
         modifier = modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(14.dp),
+        shape = MaterialTheme.shapes.medium,
         color = MaterialTheme.colorScheme.surfaceContainerLow,
         border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
     ) {

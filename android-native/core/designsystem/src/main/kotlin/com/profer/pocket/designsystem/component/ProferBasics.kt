@@ -101,7 +101,7 @@ fun ProferPill(
         contentAlignment = Alignment.Center,
     ) {
         Surface(
-            modifier = Modifier.height(30.dp),
+            modifier = Modifier.heightIn(min = 32.dp),
             shape = CircleShape,
             color = container,
             border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
@@ -184,8 +184,10 @@ fun ProferConnectionBanner(
     Row(
         modifier = modifier
             .fillMaxWidth()
+            .padding(horizontal = ProferSpacing.lg, vertical = ProferSpacing.xs)
+            .clip(MaterialTheme.shapes.medium)
             .background(container)
-            .padding(horizontal = ProferSpacing.lg, vertical = 6.dp),
+            .padding(horizontal = ProferSpacing.md, vertical = ProferSpacing.xs),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(ProferSpacing.sm),
     ) {
@@ -197,17 +199,15 @@ fun ProferConnectionBanner(
             modifier = Modifier.weight(1f),
         )
         if (actionLabel != null && onAction != null) {
-            Text(
-                text = actionLabel,
-                style = MaterialTheme.typography.labelMedium,
-                color = content,
-                fontWeight = FontWeight.SemiBold,
-                modifier = Modifier
-                    .heightIn(min = ProferSizes.minTouchTarget)
-                    .clip(RoundedCornerShape(8.dp))
+            Box(
+                modifier = Modifier.heightIn(min = ProferSizes.minTouchTarget)
+                    .clip(MaterialTheme.shapes.extraSmall)
                     .clickable(role = Role.Button, onClick = onAction)
-                    .padding(horizontal = 8.dp),
-            )
+                    .padding(horizontal = ProferSpacing.sm),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(actionLabel, style = MaterialTheme.typography.labelMedium, color = content, fontWeight = FontWeight.SemiBold)
+            }
         }
     }
 }
@@ -244,18 +244,22 @@ fun ProferIconAction(
             .semantics { this.contentDescription = contentDescription },
         contentAlignment = Alignment.Center,
     ) {
-        Icon(
-            imageVector = icon,
-            contentDescription = null,
-            tint = tint,
-            modifier = Modifier.size(if (size < ProferSizes.minTouchTarget) 20.dp else 22.dp),
-        )
+        ProferChrome(modifier = Modifier.size(ProferSizes.actionVisual), pill = true) {
+            Box(contentAlignment = Alignment.Center) {
+                Icon(
+                    imageVector = icon,
+                    contentDescription = null,
+                    tint = tint,
+                    modifier = Modifier.size(ProferSizes.icon),
+                )
+            }
+        }
     }
 }
 
 /** 内容块圆角：与 M3 形状档位一致，不出现 6/7dp 混用。 */
-val ProferCardShape = RoundedCornerShape(16.dp)
-val ProferSheetShape = RoundedCornerShape(28.dp)
+val ProferCardShape = com.profer.pocket.designsystem.theme.ProferShapes.medium
+val ProferSheetShape = com.profer.pocket.designsystem.theme.ProferShapes.extraLarge
 
 /**
  * 长按反馈：弹菜单前先给一次触感，和系统列表的长按行为一致。

@@ -94,13 +94,14 @@ object SessionCatalog {
             .map(::withLocalRunning)
             .sortedWith(
                 // 置顶优先，其余按更新时间倒序；与项目组内原有排序一致。
-                compareByDescending<SessionSummary> { it.isPinned }
+                // 子会话不参与置顶：位置由母会话决定，母会话不可见时也只按时间排。
+                compareByDescending<SessionSummary> { it.isPinned && !it.isSubSession }
                     .thenByDescending { it.updatedAt },
             )
         val treeItems = buildTree(treeSource)
 
-        val pinned = treeItems.filter { it.session.isPinned }
-        val unpinned = treeItems.filterNot { it.session.isPinned }
+        val pinned = treeItems.filter { it.session.isPinned && !it.session.isSubSession }
+        val unpinned = treeItems.filterNot { it.session.isPinned && !it.session.isSubSession }
 
         // 项目顺序按「最近活动」：取该项目里非草稿、非归档会话的最大 updatedAt，
         // 空项目回退项目自身 updatedAt。手机上没有「项目排序」开关，

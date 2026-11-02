@@ -110,9 +110,9 @@ internal fun FileRefChip(display: String, onClick: (() -> Unit)? = null) {
     Row(
         modifier = Modifier
             .height(21.dp)
-            .clip(RoundedCornerShape(6.dp))
+            .clip(MaterialTheme.shapes.extraSmall)
             .background(primary.copy(alpha = 0.10f))
-            .border(1.dp, primary.copy(alpha = 0.20f), RoundedCornerShape(6.dp))
+            .border(1.dp, primary.copy(alpha = 0.20f), MaterialTheme.shapes.extraSmall)
             .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
             .padding(horizontal = 5.dp),
         verticalAlignment = Alignment.CenterVertically,

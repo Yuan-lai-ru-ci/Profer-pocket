@@ -103,6 +103,20 @@ data class SdkMessageView(
     val modelUsage: Map<String, Int> = emptyMap(),
     /** 模型思考正文：桌面对 Pocket 只下发有界预览（partial 为尾部窗口）。 */
     val reasoning: String? = null,
+    /**
+     * 消息作者（桌面 `_provenance.author.type`）：user / agent / automation / external / system / unknown。
+     * 只用于区分「用户发的」与「框架/Agent 触发的」，不据此授予任何权限。
+     */
+    val authorType: String? = null,
+    /** 来源引用类型（`_provenance.source.type`）：automation / session / task / run / message / request。 */
+    val sourceType: String? = null,
+    /** 来源引用 id；只用于定位，不直接当文案展示。 */
+    val sourceId: String? = null,
+    /**
+     * Goal 长时任务的迭代控制消息（桌面 `_goalIteration`）：正文是内部注入 prompt，
+     * 不当作普通用户消息渲染，只在时间线上标一轮。
+     */
+    val goalIteration: Int? = null,
 )
 
 /**

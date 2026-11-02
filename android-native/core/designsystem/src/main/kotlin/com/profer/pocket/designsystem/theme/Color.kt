@@ -6,41 +6,24 @@ import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Color
 
-/*
- * 配色来源：桌面端「云朵舞者」皮肤（slate-light，即设置里 themeStyle = slate-light 的那套）。
- *
- * 桌面 token → 移动端角色的换算（HSL 原值见 apps/electron/resources/skins/slate-light/skin.css）：
- *   --content-area  40 8% 94%  #F1F0EE → background / surface（对话、设置、连接页画布）
- *   --card          40 8% 96%  #F6F5F4 → surfaceContainerLow（卡片、输入区、弹层，靠描边浮起）
- *   --secondary     40 6% 90%  #E7E6E4 → surfaceContainer（分段轨道、表单底、选中行）
- *   --sidebar       40 6% 88%  #E2E1DF → surfaceContainerHigh（抽屉、用户气泡、工具条）
- *   --item-selected 40 8% 84%  #D9D7D3 → surfaceContainerHighest（更深一层：选中/按下）
- *   --dialog        40 10% 97% #F8F8F7 → surfaceContainerLowest / surfaceBright（弹窗、最亮面）
- *   --muted         40 6% 85%  #DBDAD6 → surfaceDim
- *   --foreground    40 8% 18%  #322F2A → onSurface
- *   --primary       18 20% 43% #846558 → primary（陶土棕：发送、允许、主按钮、开关）
- *   --code-bg       18 15% 18% #352B27 → 代码块底
- *
- * 两处有意偏离桌面原值：
- *   1. --muted-foreground 40 5% 45% (#78756D) 在主画布上只有 4.0:1，低于 AA；
- *      移动端改用同色相的 #66635C（画布 5.3:1 / 抽屉 4.6:1），桌面端字号更大、可读性压力不同。
- *   2. 桌面没有深色版云朵舞者。深色沿用同一组暖色相（H 40 / S 7%），把明度压到 7%–20%，
- *      不是反色，也不是另一套色系。
- *
- * 主题色只表达品牌与主操作；成功/警告仍各自独立，不参与品牌表达。
+/**
+ * Profer 移动端调色板：陶土品牌 + 暖中性纸面，浅深色使用相同语义角色。
+ * 画布 < 内容面 < 浮动操作面；高层级不等于更深的填充。
+ * 页面不得自建透明文字或主题色，语义状态使用 ProferThemeExtras.semantic。
+ * token 数值以此文件为准；不再直接等同于桌面皮肤的 HSL。
  */
 
-private val Paper = Color(0xFFF1F0EE)
-private val PaperLowest = Color(0xFFF8F8F7)
-private val PaperLow = Color(0xFFF6F5F4)
-private val PaperContainer = Color(0xFFE7E6E4)
-private val PaperContainerHigh = Color(0xFFE2E1DF)
-private val PaperContainerHighest = Color(0xFFD9D7D3)
+private val Paper = Color(0xFFF7F5F2)
+private val PaperLowest = Color(0xFFFFFDFC)
+private val PaperLow = Color(0xFFFCFAF7)
+private val PaperContainer = Color(0xFFEFECE7)
+private val PaperContainerHigh = Color(0xFFE8E3DC)
+private val PaperContainerHighest = Color(0xFFDFD9D1)
 private val PaperDim = Color(0xFFDBDAD6)
 private val Ink = Color(0xFF322F2A)
 private val InkMuted = Color(0xFF66635C)
-private val Outline = Color(0xFFCFCDC9)
-private val OutlineVariant = Color(0xFFDDDCD9)
+private val Outline = Color(0xFFC6BFB5)
+private val OutlineVariant = Color(0xFFE7E1D9)
 private val Clay = Color(0xFF846558)
 private val ClayDeep = Color(0xFF53382D)
 private val ClayContainer = Color(0xFFEDE3DE)

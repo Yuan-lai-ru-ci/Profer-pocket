@@ -208,6 +208,7 @@ class DebugCommandReceiver : BroadcastReceiver() {
                             is ChatEntry.User -> "u"
                             is ChatEntry.Assistant -> "a"
                             is ChatEntry.Notice -> "n"
+                            is ChatEntry.Source -> "s"
                         }
                     },
                 )

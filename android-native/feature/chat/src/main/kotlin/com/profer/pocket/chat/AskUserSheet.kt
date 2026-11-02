@@ -34,6 +34,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.profer.pocket.designsystem.theme.ProferHeadingSerif
 import com.profer.pocket.designsystem.component.sheetMaxHeight
+import com.profer.pocket.designsystem.component.ProferAdaptiveSheet
 import com.profer.pocket.designsystem.theme.ProferSpacing
 import com.profer.pocket.model.AskQuestion
 
@@ -54,13 +55,7 @@ internal fun AskUserSheet(
         questions.map { question -> mutableStateOf(emptySet<String>()) }
     }
 
-    ModalBottomSheet(
-        onDismissRequest = onDismiss,
-        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
-        containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
-        // 弹层最高只到 86%，顶部不再需要状态栏内边距；底部由内容自己 navigationBarsPadding。
-        contentWindowInsets = { WindowInsets(0, 0, 0, 0) },
-    ) {
+    ProferAdaptiveSheet(onDismissRequest = onDismiss) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -121,7 +116,7 @@ internal fun AskUserSheet(
                                             setOf(option.label)
                                         }
                                     },
-                                shape = RoundedCornerShape(10.dp),
+                                shape = MaterialTheme.shapes.small,
                                 color = if (isSelected) {
                                     MaterialTheme.colorScheme.primary.copy(alpha = 0.10f)
                                 } else {

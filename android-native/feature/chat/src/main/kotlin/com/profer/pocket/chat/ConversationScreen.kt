@@ -1,5 +1,7 @@
 package com.profer.pocket.chat
 
+import com.profer.pocket.designsystem.component.ProferHeaderRow
+import com.profer.pocket.designsystem.component.proferBackdrop
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -10,6 +12,8 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -50,6 +54,7 @@ import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.input.pointer.pointerInput
@@ -57,14 +62,15 @@ import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.AnnotatedString
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.profer.pocket.designsystem.component.ProferActivityLine
 import com.profer.pocket.designsystem.component.ProferComposer
 import com.profer.pocket.designsystem.component.ProferConnectionBanner
 import com.profer.pocket.designsystem.component.ProferEmptyState
+import com.profer.pocket.designsystem.adaptive.rememberProferWindowSize
 import com.profer.pocket.designsystem.component.ProferIconAction
+import com.profer.pocket.designsystem.component.proferFloatingSurface
 import com.profer.pocket.designsystem.component.ProferNotice
 import com.profer.pocket.designsystem.component.ProferThinkingCard
 import com.profer.pocket.designsystem.component.ProferUserMessage
@@ -90,6 +96,7 @@ fun ConversationScreen(
     modelOptions: List<ModelOption> = emptyList(),
     onSelectModel: (ModelOption) -> Unit = {},
     onRetryConnection: () -> Unit = {},
+    onOpenConnection: () -> Unit = onRetryConnection,
     drawerState: PocketDrawerState = rememberPocketDrawerState(),
     chatTools: List<com.profer.pocket.model.ChatToolSummary> = emptyList(),
     onToggleTool: (String, Boolean) -> Unit = { _, _ -> },
@@ -172,13 +179,23 @@ fun ConversationScreen(
         modifier = modifier,
         drawerState = drawerState,
         drawerContent = {
-            if (drawerState.isOpen) {
+            // 双栏时列表常驻，必须组合；单栏仍在打开后才挂载。
+            if (drawerState.isOpen || rememberProferWindowSize().isTwoPane) {
                 drawerContent { drawerState.close() }
             }
         },
     ) {
+        // 平板/桌面下内容区可能很宽：正文与输入条限制在 760dp 内居中，行长不失控。
+        // 背景铺满内容区，阅读栏限制 760dp 居中：宽屏下不出现一整条被拉长的正文。
+        Box(
+            modifier = Modifier.fillMaxSize().proferBackdrop(),
+            contentAlignment = Alignment.TopCenter,
+        ) {
         Scaffold(
-            containerColor = MaterialTheme.colorScheme.background,
+            modifier = Modifier
+                .widthIn(max = com.profer.pocket.designsystem.theme.ProferSizes.contentMaxWidth)
+                .fillMaxHeight(),
+            containerColor = Color.Transparent,
             contentWindowInsets = WindowInsets(0, 0, 0, 0),
             snackbarHost = {
                 SnackbarHost(
@@ -188,7 +205,7 @@ fun ConversationScreen(
                             snackbarData = data,
                             containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
                             contentColor = MaterialTheme.colorScheme.onSurface,
-                            shape = RoundedCornerShape(12.dp),
+                            shape = MaterialTheme.shapes.medium,
                         )
                     },
                 )
@@ -198,6 +215,7 @@ fun ConversationScreen(
                     title = state.title.ifBlank { "Chat" },
                     onOpenDrawer = { drawerState.open() },
                     onNewConversation = onNewConversation,
+                    showDrawerButton = !rememberProferWindowSize().isTwoPane,
                 )
             },
             bottomBar = {
@@ -223,7 +241,7 @@ fun ConversationScreen(
             },
         ) { padding ->
             Column(modifier = Modifier.padding(padding)) {
-                state.offlineLabel?.let { label ->
+                state.offlineLabel?.takeIf { state.conversationId != null }?.let { label ->
                     ProferConnectionBanner(
                         text = label,
                         actionLabel = "重连",
@@ -231,12 +249,13 @@ fun ConversationScreen(
                     )
                 }
                 if (state.conversationId == null) {
-                    ProferEmptyState(
-                        title = "选择一段对话",
-                        description = "Chat 是电脑上的普通对话；从左侧列表选一段，或新建。",
-                        primaryLabel = "新建对话",
-                        onPrimary = onNewConversation,
-                        modifier = Modifier.fillMaxSize(),
+                    ChatWelcomeState(
+                        offline = state.offline,
+                        onConnect = onOpenConnection,
+                        onSuggestion = {},
+                        onStartConversation = onNewConversation,
+                        agent = false,
+                        hasDraftTarget = false,
                     )
                 } else {
                     Box(
@@ -353,6 +372,7 @@ fun ConversationScreen(
             },
             onDismiss = { modelSheetOpen = false },
         )
+        }
     }
 }
 
@@ -361,30 +381,31 @@ private fun ConversationTopBar(
     title: String,
     onOpenDrawer: () -> Unit,
     onNewConversation: () -> Unit,
+    showDrawerButton: Boolean = true,
 ) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .statusBarsPadding()
-            .heightIn(min = ProferSizes.minTouchTarget)
-            .padding(start = 2.dp, end = 2.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        ProferIconAction(
-            icon = Icons.Outlined.Menu,
-            contentDescription = "打开对话列表",
-            onClick = onOpenDrawer,
-        )
-        Text(
-            text = title,
-            style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.SemiBold),
-            color = MaterialTheme.colorScheme.onSurface,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier
-                .weight(1f)
-                .padding(horizontal = 4.dp),
-        )
+    ProferHeaderRow {
+        if (showDrawerButton) {
+            ProferIconAction(
+                icon = Icons.Outlined.Menu,
+                contentDescription = "打开对话列表",
+                onClick = onOpenDrawer,
+            )
+        }
+        // 与 Agent 对话同构：标题进浮起胶囊，字号与内边距走同一套 token。
+        // 外层占满中间，胶囊按内容收窄，右侧新建键仍贴边。
+        Box(modifier = Modifier.weight(1f)) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.onSurface,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier
+                    .clip(MaterialTheme.shapes.extraLarge)
+                    .background(proferFloatingSurface())
+                    .padding(horizontal = ProferSpacing.md, vertical = ProferSpacing.sm),
+            )
+        }
         ProferIconAction(
             icon = Icons.Outlined.Add,
             contentDescription = "新建对话",

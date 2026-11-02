@@ -3,10 +3,8 @@ package com.profer.pocket.sessions
 import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
@@ -15,7 +13,6 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -29,7 +26,6 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Add
@@ -45,6 +41,7 @@ import androidx.compose.material.icons.outlined.ExpandMore
 import androidx.compose.material.icons.outlined.MarkEmailRead
 import androidx.compose.material.icons.outlined.MarkEmailUnread
 import androidx.compose.material.icons.outlined.PushPin
+import androidx.compose.material.icons.outlined.Schedule
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material3.DropdownMenu
@@ -66,38 +63,32 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
+import com.profer.pocket.designsystem.component.ProferChrome
+import com.profer.pocket.designsystem.component.ProferIconAction
 import com.profer.pocket.designsystem.component.ProferEmptyState
 import com.profer.pocket.designsystem.component.ProferMark
 import com.profer.pocket.designsystem.component.ProferStatusDot
 import com.profer.pocket.designsystem.component.rememberLongPressFeedback
-import com.profer.pocket.designsystem.theme.ProferSerif
 import com.profer.pocket.designsystem.theme.ProferSizes
 import com.profer.pocket.designsystem.theme.ProferSpacing
 import com.profer.pocket.designsystem.theme.ProferThemeExtras
-import com.profer.pocket.designsystem.theme.ProferTitleSerif
 
 /**
  * 会话列表内容：抽屉与全屏页共用。
  *
- * 视觉基线（2026-10 重做）：不做「一叠填充块」，而是做一份安静的目录。
- * - 一级靠字重、缩进与留白分层，二级靠 1dp 发丝线分隔；
- * - 全列表只有一个主操作（标题栏右上角的实心圆），其余动作降到幽灵态；
- * - 选中态用 4.5% 主色薄雾 + 2dp 短竖线，不做整行色块；
- * - 底部工具区收进一张带描边的卡片，避免三个浮动胶囊抢视线。
+ * 品牌与主操作、模式切换、项目目录分层排布；列表不逐行描边。
+ * 标题与辅助信息纵向排布，让大字号仍能读完整的会话上下文。
  */
 private val ClearEase = CubicBezierEasing(0.3f, 0.9f, 0.2f, 1f)
 
@@ -170,17 +161,10 @@ fun SessionListContent(
         modifier = modifier
             .fillMaxSize()
             // 侧边栏与承载对话界面的圆角容器必须是同一个底色，不能再叠渐变。
-            .background(MaterialTheme.colorScheme.surfaceContainerHigh),
+            .background(MaterialTheme.colorScheme.surfaceContainerLow),
     ) {
         if (showHeader) {
             SessionListHeader(
-                summary = if (mode == DrawerMode.Chat) {
-                    if (conversations.items.isEmpty()) "" else "${conversations.items.size} 段对话"
-                } else if (state.projects.isNotEmpty()) {
-                    "${state.projects.size} 组 · ${state.totalSessions}"
-                } else {
-                    ""
-                },
                 searchOpen = searchOpen,
                 mode = mode,
                 onModeChange = onModeChange,
@@ -192,7 +176,6 @@ fun SessionListContent(
                 },
                 onNewSession = if (mode == DrawerMode.Chat) onNewConversation else onNewSession,
             )
-            Hairline(modifier = Modifier.padding(horizontal = ProferSpacing.lg))
         }
 
         if (searchOpen) {
@@ -226,11 +209,14 @@ fun SessionListContent(
                 contentPadding = PaddingValues(
                     start = ProferSpacing.sm,
                     end = ProferSpacing.sm,
-                    top = 2.dp,
+                    top = 0.dp,
                     bottom = ProferSpacing.md,
                 ),
             ) {
-                if (state.projects.isEmpty()) {
+                if (state.projects.isEmpty() && state.refreshing) {
+                    item(key = "loading", contentType = "loading") { SessionListSkeleton() }
+                }
+                if (state.projects.isEmpty() && !state.refreshing) {
                     item(key = "empty") {
                         ProferEmptyState(
                             title = if (state.query.isBlank()) "还没有会话" else "没有匹配的会话",
@@ -359,7 +345,7 @@ fun SessionListContent(
                         }
                     }
                     item(key = "gap-${group.id}", contentType = "gap") {
-                        Spacer(Modifier.height(ProferSpacing.md))
+                        Spacer(Modifier.height(ProferSpacing.sm))
                     }
                 }
             }
@@ -376,57 +362,66 @@ fun SessionListContent(
 
 @Composable
 private fun SessionListHeader(
-    summary: String,
     searchOpen: Boolean,
     mode: DrawerMode,
     onModeChange: (DrawerMode) -> Unit,
     onToggleSearch: () -> Unit,
     onNewSession: () -> Unit,
 ) {
-    // 大字号下目录规模先让位：它是副信息，不该把主操作挤出抽屉。
-    val compactMeta = LocalDensity.current.fontScale < 1.2f
-    // 2.0× 时品牌字会与 Agent/Chat 开关抢宽度：保留图标，文字让位。
-    val showWordmark = LocalDensity.current.fontScale < 1.5f
-    Row(
+    Column(
         modifier = Modifier
             .fillMaxWidth()
             .statusBarsPadding()
-            .heightIn(min = ProferSizes.minTouchTarget)
-            .padding(start = 16.dp, end = 6.dp, top = 2.dp),
-        verticalAlignment = Alignment.CenterVertically,
+            .padding(horizontal = ProferSpacing.lg, vertical = ProferSpacing.sm),
     ) {
-        ProferMark(size = 22.dp)
-        if (showWordmark) {
-            Spacer(Modifier.width(8.dp))
-            // 品牌字用衬线：它是这张「扉页」上唯一的题名。
+        Row(
+            modifier = Modifier.fillMaxWidth().heightIn(min = ProferSizes.minTouchTarget),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(ProferSpacing.sm),
+        ) {
+            // 1.3× 起标题就会和模式胶囊抢空间（实测 1.3× 时「Profer」被切掉一半），
+            // 到这一档就把胶囊挪到第二行，标题保住整词。
+            val largeFont = LocalDensity.current.fontScale >= 1.3f
+            ProferMark(size = ProferSizes.icon)
             Text(
                 text = "Profer",
-                // 品牌字是这张「扉页」上唯一的题名，用衬线；其余文字保持无衬线。
-                style = MaterialTheme.typography.titleLarge.copy(
-                    fontFamily = ProferSerif,
-                    fontSize = 16.sp,
-                    letterSpacing = 0.3.sp,
-                ),
+                style = MaterialTheme.typography.titleLarge,
                 color = MaterialTheme.colorScheme.onSurface,
                 maxLines = 1,
+                softWrap = false,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
+            )
+            // 大字号下模式按钮让到下一行，避免把品牌字挤成竖排。
+            if (!largeFont) {
+                DrawerModeButton(
+                    chatSelected = mode == DrawerMode.Chat,
+                    onToggle = {
+                        onModeChange(if (mode == DrawerMode.Chat) DrawerMode.Agent else DrawerMode.Chat)
+                    },
+                )
+            }
+            HeaderIconButton(
+                icon = Icons.Outlined.Search,
+                contentDescription = if (searchOpen) "关闭搜索" else "搜索会话",
+                active = searchOpen,
+                onClick = onToggleSearch,
+            )
+            NewSessionButton(
+                onClick = onNewSession,
+                contentDescription = if (mode == DrawerMode.Chat) "新建对话" else "新建会话",
             )
         }
-        Spacer(Modifier.width(8.dp))
-        DrawerModeSwitch(
-            chatSelected = mode == DrawerMode.Chat,
-            onSelectAgent = { onModeChange(DrawerMode.Agent) },
-            onSelectChat = { onModeChange(DrawerMode.Chat) },
-            compact = true,
-        )
-        Spacer(Modifier.weight(1f))
-        HeaderIconButton(
-            icon = Icons.Outlined.Search,
-            contentDescription = if (searchOpen) "关闭搜索" else "搜索会话",
-            active = searchOpen,
-            onClick = onToggleSearch,
-            size = ProferSizes.minTouchTarget,
-        )
-        NewSessionButton(onClick = onNewSession)
+        if (LocalDensity.current.fontScale >= 1.3f) {
+            Row(modifier = Modifier.fillMaxWidth().padding(top = ProferSpacing.xs)) {
+                DrawerModeButton(
+                    chatSelected = mode == DrawerMode.Chat,
+                    onToggle = {
+                        onModeChange(if (mode == DrawerMode.Chat) DrawerMode.Agent else DrawerMode.Chat)
+                    },
+                )
+            }
+        }
     }
 }
 
@@ -436,34 +431,37 @@ private fun HeaderIconButton(
     contentDescription: String,
     onClick: () -> Unit,
     active: Boolean = false,
-    size: Dp = ProferSizes.minTouchTarget,
 ) {
     Box(
         modifier = Modifier
-            .size(size)
+            .size(ProferSizes.minTouchTarget)
             .clip(CircleShape)
-            .background(
-                if (active) MaterialTheme.colorScheme.surfaceContainer else Color.Transparent,
-                CircleShape,
-            )
             .clickable(onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
-        Icon(
-            imageVector = icon,
-            contentDescription = contentDescription,
-            tint = if (active) {
-                MaterialTheme.colorScheme.primary
-            } else {
-                MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.85f)
-            },
-            modifier = Modifier.size(20.dp),
-        )
+        // 可见圆与「新建」按钮同为 40dp，48dp 只做热区。
+        ProferChrome(
+            modifier = Modifier.size(ProferSizes.actionVisual).clip(CircleShape),
+            pill = true,
+        ) {
+            Box(contentAlignment = Alignment.Center) {
+                Icon(
+                    imageVector = icon,
+                    contentDescription = contentDescription,
+                    tint = if (active) {
+                        MaterialTheme.colorScheme.primary
+                    } else {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    },
+                    modifier = Modifier.size(ProferSizes.icon),
+                )
+            }
+        }
     }
 }
 
 @Composable
-private fun NewSessionButton(onClick: () -> Unit) {
+private fun NewSessionButton(onClick: () -> Unit, contentDescription: String) {
     Box(
         modifier = Modifier
             .size(ProferSizes.minTouchTarget)
@@ -474,14 +472,14 @@ private fun NewSessionButton(onClick: () -> Unit) {
         Surface(
             shape = CircleShape,
             color = MaterialTheme.colorScheme.primary,
-            modifier = Modifier.size(34.dp),
+            modifier = Modifier.size(ProferSizes.actionVisual),
         ) {
             Box(contentAlignment = Alignment.Center) {
                 Icon(
                     imageVector = Icons.Outlined.Add,
-                    contentDescription = "新建会话",
+                    contentDescription = contentDescription,
                     tint = MaterialTheme.colorScheme.onPrimary,
-                    modifier = Modifier.size(19.dp),
+                    modifier = Modifier.size(ProferSizes.icon),
                 )
             }
         }
@@ -498,24 +496,20 @@ private fun SearchField(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = ProferSpacing.lg, vertical = ProferSpacing.xs),
-        shape = MaterialTheme.shapes.small,
-        color = MaterialTheme.colorScheme.surfaceContainerLow,
-        border = BorderStroke(
-            1.dp,
-            MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.85f),
-        ),
+        shape = MaterialTheme.shapes.extraLarge,
+        color = MaterialTheme.colorScheme.surfaceContainerHighest,
     ) {
         Row(
             modifier = Modifier
                 .heightIn(min = ProferSizes.minTouchTarget)
-                .padding(start = 14.dp, end = 4.dp),
+                .padding(start = ProferSpacing.lg, end = ProferSpacing.xs),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             Icon(
                 imageVector = Icons.Outlined.Search,
                 contentDescription = null,
-                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.size(17.dp),
             )
             Box(modifier = Modifier.weight(1f)) {
@@ -523,7 +517,7 @@ private fun SearchField(
                     Text(
                         text = "搜索会话或项目",
                         style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
                 BasicTextField(
@@ -534,7 +528,10 @@ private fun SearchField(
                     ),
                     cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
                     singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = ProferSpacing.sm)
+                        .semantics { contentDescription = "搜索会话或项目" },
                 )
             }
             Box(
@@ -578,7 +575,8 @@ private fun ProjectHeader(
             modifier = Modifier
                 .fillMaxWidth()
                 // sticky 项目头会盖在会话行上，底色必须不透明。
-                .background(MaterialTheme.colorScheme.surfaceContainerHigh)
+                .background(MaterialTheme.colorScheme.surfaceContainerLow)
+                .padding(top = ProferSpacing.xs)
                 .padding(horizontal = ProferSpacing.xs)
                 .clip(MaterialTheme.shapes.medium)
                 .combinedClickable(
@@ -591,40 +589,45 @@ private fun ProjectHeader(
                     },
                 )
                 .heightIn(min = ProferSizes.minTouchTarget)
-                .padding(start = 2.dp, end = 8.dp),
+                .padding(horizontal = ProferSpacing.xs, vertical = ProferSpacing.sm),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Box(
-                modifier = Modifier.size(28.dp),
+                modifier = Modifier.size(20.dp),
                 contentAlignment = Alignment.Center,
             ) {
                 Icon(
                     imageVector = Icons.Outlined.ExpandMore,
                     contentDescription = if (expanded) "收起 ${group.name}" else "展开 ${group.name}",
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.72f),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier
                         .size(15.dp)
                         .graphicsLayer { rotationZ = rotation },
                 )
             }
-            // 一级题名用衬线：项目是「编」，会话是「篇」，层级靠字形分开，不靠分割线。
-            Text(
-                text = group.name,
-                style = ProferTitleSerif,
-                color = MaterialTheme.colorScheme.onSurface,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
+            // 项目名与置顶标记同一组：图标不再被推到行尾、悬在一片空白里。
+            Row(
                 modifier = Modifier.weight(1f),
-            )
-            if (group.pinned) {
-                Icon(
-                    imageVector = Icons.Outlined.PushPin,
-                    contentDescription = "已置顶项目",
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.45f),
-                    modifier = Modifier
-                        .padding(start = 6.dp)
-                        .size(13.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = group.name,
+                    style = MaterialTheme.typography.titleSmall,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 3,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f, fill = false),
                 )
+                if (group.pinned) {
+                    Icon(
+                        imageVector = Icons.Outlined.PushPin,
+                        contentDescription = "已置顶项目",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier
+                            .padding(start = 6.dp)
+                            .size(14.dp),
+                    )
+                }
             }
             if (group.kind == SessionGroupKind.Project && group.runningCount > 0) {
                 Spacer(Modifier.width(8.dp))
@@ -683,14 +686,14 @@ private fun EmptyProjectRow(onCreateSession: () -> Unit) {
             .clip(MaterialTheme.shapes.small)
             .clickable(onClick = onCreateSession)
             .heightIn(min = ProferSizes.minTouchTarget)
-            .padding(start = 44.dp, end = ProferSpacing.md),
+            .padding(start = ProferSpacing.xl, end = ProferSpacing.md),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         Text(
             text = "还没有会话",
             style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.weight(1f),
         )
         // 空项目行与二级会话同缩进，保持目录的垂直线。
@@ -713,19 +716,21 @@ private fun RelatedSummaryButton(
     summary: RelatedSummary,
     expanded: Boolean,
     onToggle: () -> Unit,
+    compact: Boolean = false,
 ) {
     val rotation by animateFloatAsState(
         targetValue = if (expanded) 0f else -90f,
         animationSpec = tween(durationMillis = 150, easing = ClearEase),
         label = "related-summary-chevron",
     )
-    val tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.55f)
+    val tint = MaterialTheme.colorScheme.onSurfaceVariant
     Row(
         modifier = Modifier
             .clip(CircleShape)
             .clickable(onClick = onToggle)
-            .heightIn(min = ProferSizes.minTouchTarget)
-            .padding(horizontal = 2.dp)
+            .heightIn(min = 32.dp)
+            .widthIn(min = 32.dp)
+            .padding(horizontal = ProferSpacing.xxs)
             // 与 ProferIconAction 同一套写法：标签与点击动作落在同一个语义节点上。
             .semantics {
                 contentDescription = if (expanded) "收起${summary.label}" else "展开${summary.label}"
@@ -742,14 +747,14 @@ private fun RelatedSummaryButton(
         )
         if (summary.showCount) {
             // 大字号下省掉「子会话」三个字，把宽度留给标题；完整语义在 contentDescription 里。
-            val compact = LocalDensity.current.fontScale >= 1.5f
+            val compact = compact || LocalDensity.current.fontScale >= 1.5f
             Text(
                 text = if (compact) {
                     "${summary.completed}/${summary.total}"
                 } else {
                     "${summary.completed}/${summary.total} ${summary.label}"
                 },
-                style = MaterialTheme.typography.labelSmall.copy(letterSpacing = 0.1.sp),
+                style = MaterialTheme.typography.labelSmall,
                 color = tint,
                 maxLines = 1,
                 softWrap = false,
@@ -829,12 +834,14 @@ private fun SessionRow(
     // 菜单开合不参与状态恢复：进程重建后不应该自己弹出一个操作菜单。
     var menuOpen by remember(session.id) { mutableStateOf(false) }
     val longPressFeedback = rememberLongPressFeedback()
+    // 大字号下标题会换行，子会话开关必须让到下一行，否则会把标题挤成两截。
+    val largeFont = LocalDensity.current.fontScale >= 1.5f
     Box {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 2.dp)
-                .clip(MaterialTheme.shapes.small)
+                .padding(horizontal = ProferSpacing.xs, vertical = ProferSpacing.xxs)
+                .clip(MaterialTheme.shapes.medium)
                 .combinedClickable(
                     onClick = onClick,
                     onLongClick = {
@@ -843,142 +850,158 @@ private fun SessionRow(
                     },
                 )
                 .background(
-                    if (selected) {
-                        // 4.5% 的主色叠在抽屉底色上几乎看不见；10% 才能让当前会话有存在感。
-                        MaterialTheme.colorScheme.primary.copy(alpha = 0.10f)
-                    } else {
-                        Color.Transparent
-                    },
+                    if (selected) MaterialTheme.colorScheme.surfaceContainer
+                    else Color.Transparent,
                 )
                 .heightIn(min = ProferSizes.minTouchTarget)
-                // 二级缩进比一级（项目名 42dp）再深一档：层级用几何分开，不只靠字形。
-                // 子会话再退一档，并与母行共用同一条左侧竖线。
-                .padding(start = 30.dp + (depth * 14).dp, end = 8.dp),
+                .padding(
+                    start = ProferSpacing.xl + (if (depth > 0) ProferSpacing.lg else 0.dp),
+                    end = ProferSpacing.sm,
+                    top = ProferSpacing.xs,
+                    bottom = ProferSpacing.xs,
+                ),
             verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(ProferSpacing.sm),
         ) {
-            // 选中标记做成页边的一条短竖线，比整行色块安静。
-            Box(
-                modifier = Modifier
-                    .width(3.dp)
-                    .height(18.dp)
-                    .background(
-                        color = if (selected) {
-                            MaterialTheme.colorScheme.primary
-                        } else {
-                            Color.Transparent
-                        },
-                        shape = RoundedCornerShape(1.dp),
-                    ),
-            )
-            Spacer(Modifier.width(if (depth > 0) 8.dp else 10.dp))
-            // 子行用分支/分叉图标表达血缘（对齐桌面 GitBranch / GitFork），不再挂文字胶囊。
             if (depth > 0) {
                 Icon(
-                    imageVector = if (session.isExploration) {
-                        Icons.Outlined.CallSplit
-                    } else {
-                        Icons.Outlined.AccountTree
-                    },
+                    imageVector = if (session.isExploration) Icons.Outlined.CallSplit else Icons.Outlined.AccountTree,
                     contentDescription = session.roleLabel,
                     tint = when (session.delegationStatus) {
                         "running" -> ProferThemeExtras.semantic.success
-                        "completed" -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
-                        else -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.35f)
+                        else -> MaterialTheme.colorScheme.onSurfaceVariant
                     },
-                    modifier = Modifier.size(12.dp),
+                    modifier = Modifier.size(ProferSizes.iconSmall),
                 )
-                Spacer(Modifier.width(6.dp))
             }
-            Text(
-                text = session.title,
-                style = MaterialTheme.typography.bodyMedium.copy(
-                    fontWeight = if (selected) FontWeight.Medium else FontWeight.Normal,
-                ),
-                color = if (depth > 0) {
-                    MaterialTheme.colorScheme.onSurface.copy(alpha = 0.88f)
-                } else {
-                    MaterialTheme.colorScheme.onSurface
-                },
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f),
-            )
-            // 子会话以根行身份出现时（置顶/搜索）才需要角色胶囊；子行已有分支图标。
-            val roleLabel = session.roleLabel.takeIf { depth == 0 }
-            if (roleLabel != null) {
-                Spacer(Modifier.width(6.dp))
-                Surface(
-                    shape = RoundedCornerShape(4.dp),
-                    color = MaterialTheme.colorScheme.primary.copy(alpha = 0.10f),
+            if (!largeFont) {
+                Row(
+                    modifier = Modifier.weight(1f),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(ProferSpacing.sm),
                 ) {
+                    // 定时任务创建/复用的会话：与桌面侧栏同口径，标题前用钟表标记。
+                    if (session.sourcedByAutomation) {
+                        Icon(
+                            imageVector = Icons.Outlined.Schedule,
+                            contentDescription = "定时任务会话",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(ProferSizes.iconSmall),
+                        )
+                    }
                     Text(
-                        text = roleLabel,
-                        style = MaterialTheme.typography.labelSmall.copy(
-                            color = MaterialTheme.colorScheme.primary.copy(alpha = 0.9f),
+                        text = session.title,
+                        style = MaterialTheme.typography.bodyMedium.copy(
+                            fontWeight = if (selected) FontWeight.Medium else FontWeight.Normal,
                         ),
-                        maxLines = 1,
-                        modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp),
-                    )
-                }
-            }
-            if (projectName != null) {
-                Spacer(Modifier.width(8.dp))
-                Surface(
-                    shape = CircleShape,
-                    color = Color.Transparent,
-                    border = BorderStroke(
-                        1.dp,
-                        MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.9f),
-                    ),
-                ) {
-                    Text(
-                        text = projectName,
-                        style = MaterialTheme.typography.labelSmall.copy(
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        ),
+                        color = MaterialTheme.colorScheme.onSurface,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier
-                            .widthIn(max = 76.dp)
-                            .padding(horizontal = 7.dp, vertical = 1.dp),
+                        modifier = Modifier.weight(1f),
                     )
+                    if (!projectName.isNullOrBlank()) {
+                        Text(
+                            text = projectName,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.widthIn(max = 84.dp),
+                        )
+                    }
+                    if (session.running || session.unread) {
+                        ProferStatusDot(
+                            color = if (session.running) ProferThemeExtras.semantic.success else MaterialTheme.colorScheme.tertiary,
+                            pulsing = session.running,
+                            size = 6.dp,
+                            modifier = Modifier.semantics {
+                                contentDescription = if (session.running) "运行中" else "未读"
+                            },
+                        )
+                    }
+                    Text(
+                        text = session.timeLabel,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                    )
+                    val related = session.relatedSummary
+                    if (related != null && onToggleChildren != null) {
+                        RelatedSummaryButton(
+                            summary = related,
+                            expanded = childrenExpanded,
+                            onToggle = onToggleChildren,
+                            compact = true,
+                        )
+                    }
+                }
+            } else {
+                Column(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(ProferSpacing.xxs),
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        if (session.sourcedByAutomation) {
+                            Icon(
+                                imageVector = Icons.Outlined.Schedule,
+                                contentDescription = "定时任务会话",
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier
+                                    .size(ProferSizes.iconSmall)
+                                    .padding(end = ProferSpacing.xxs),
+                            )
+                        }
+                        Text(
+                            text = session.title,
+                            style = MaterialTheme.typography.bodyMedium.copy(
+                                fontWeight = if (selected) FontWeight.Medium else FontWeight.Normal,
+                            ),
+                            color = MaterialTheme.colorScheme.onSurface,
+                            maxLines = 3,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f),
+                        )
+                    }
+                    if (!projectName.isNullOrBlank()) {
+                        Text(
+                            text = projectName,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(ProferSpacing.sm),
+                    ) {
+                        Text(
+                            text = session.timeLabel,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        if (session.running || session.unread) {
+                            ProferStatusDot(
+                                color = if (session.running) ProferThemeExtras.semantic.success else MaterialTheme.colorScheme.tertiary,
+                                pulsing = session.running,
+                                size = 6.dp,
+                                modifier = Modifier.semantics {
+                                    contentDescription = if (session.running) "运行中" else "未读"
+                                },
+                            )
+                        }
+                        val related = session.relatedSummary
+                        if (related != null && onToggleChildren != null) {
+                            RelatedSummaryButton(
+                                summary = related,
+                                expanded = childrenExpanded,
+                                onToggle = onToggleChildren,
+                            )
+                        }
+                    }
                 }
             }
-            // 母行右侧的关联会话开关：桌面把「x/y 子会话」放在标题之后、时间之前。
-            val relatedSummary = session.relatedSummary
-            if (relatedSummary != null && onToggleChildren != null) {
-                Spacer(Modifier.width(4.dp))
-                RelatedSummaryButton(
-                    summary = relatedSummary,
-                    expanded = childrenExpanded,
-                    onToggle = onToggleChildren,
-                )
-            }
-            if (session.running) {
-                Spacer(Modifier.width(8.dp))
-                ProferStatusDot(
-                    color = ProferThemeExtras.semantic.success,
-                    pulsing = true,
-                    size = 6.dp,
-                    modifier = Modifier.semantics { contentDescription = "运行中" },
-                )
-            } else if (session.unread) {
-                Spacer(Modifier.width(8.dp))
-                ProferStatusDot(
-                    color = MaterialTheme.colorScheme.tertiary,
-                    size = 6.dp,
-                    modifier = Modifier.semantics { contentDescription = "未读" },
-                )
-            }
-            Spacer(Modifier.width(8.dp))
-            Text(
-                text = session.timeLabel,
-                style = MaterialTheme.typography.labelSmall.copy(letterSpacing = 0.1.sp),
-                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.66f),
-                maxLines = 1,
-                textAlign = TextAlign.End,
-                modifier = Modifier.widthIn(min = 34.dp, max = 64.dp),
-            )
         }
 
         DropdownMenu(
@@ -991,11 +1014,14 @@ private fun SessionRow(
                 icon = Icons.Outlined.DriveFileRenameOutline,
                 onClick = { menuOpen = false; onRename() },
             )
-            SessionMenuItem(
-                label = if (session.pinned) "取消置顶" else "置顶会话",
-                icon = Icons.Outlined.PushPin,
-                onClick = { menuOpen = false; onTogglePin() },
-            )
+            // 子会话归并在母会话行下，位置由母会话决定，不提供置顶入口。
+            if (depth == 0 && !session.isSubSession) {
+                SessionMenuItem(
+                    label = if (session.pinned) "取消置顶" else "置顶会话",
+                    icon = Icons.Outlined.PushPin,
+                    onClick = { menuOpen = false; onTogglePin() },
+                )
+            }
             SessionMenuItem(
                 label = if (session.unread) "标记为已读" else "标记为未读",
                 icon = if (session.unread) Icons.Outlined.MarkEmailRead else Icons.Outlined.MarkEmailUnread,
@@ -1064,90 +1090,85 @@ private fun SessionListDock(
     } else {
         ProferThemeExtras.semantic.warning
     }
-    Column(
+    Row(
         modifier = Modifier
             .fillMaxWidth()
             .navigationBarsPadding()
-            .padding(bottom = 2.dp),
+            .padding(horizontal = ProferSpacing.lg, vertical = ProferSpacing.md),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(ProferSpacing.sm),
     ) {
-        Hairline(modifier = Modifier.padding(horizontal = ProferSpacing.lg))
-        Row(
+        Box(
             modifier = Modifier
-                .fillMaxWidth()
-                .height(48.dp),
-            verticalAlignment = Alignment.CenterVertically,
+                .heightIn(min = ProferSizes.minTouchTarget)
+                .clip(CircleShape)
+                .clickable(onClick = onOpenConnection),
+            contentAlignment = Alignment.Center,
         ) {
-            Row(
-                modifier = Modifier
-                    .weight(1f)
-                    .fillMaxHeight()
-                    .clip(MaterialTheme.shapes.medium)
-                    .clickable(onClick = onOpenConnection)
-                    .padding(start = 18.dp, end = 6.dp),
-                verticalAlignment = Alignment.CenterVertically,
+            ProferChrome(
+                modifier = Modifier.height(ProferSizes.actionVisual),
+                pill = true,
             ) {
-                Box(
-                    modifier = Modifier.size(16.dp),
-                    contentAlignment = Alignment.Center,
+                Row(
+                    modifier = Modifier.padding(horizontal = ProferSpacing.md),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(ProferSpacing.sm),
                 ) {
-                    Box(
-                        modifier = Modifier
-                            .size(13.dp)
-                            .border(1.dp, statusColor.copy(alpha = 0.35f), CircleShape),
-                    )
-                    ProferStatusDot(
-                        color = statusColor,
-                        pulsing = !state.connected,
-                        size = 5.dp,
-                    )
-                }
-                Spacer(Modifier.width(9.dp))
-                Text(
-                    text = if (state.connected) "已连接" else "未连接",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurface,
-                    maxLines = 1,
-                )
-                if (state.connected) {
+                    ProferStatusDot(color = statusColor, pulsing = !state.connected, size = 6.dp)
                     Text(
-                        text = "· " + state.deviceLabel.substringBefore(" · ").ifBlank { "本机" },
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.55f),
+                        text = if (state.connected) {
+                            "已连接 · " + state.deviceLabel.substringBefore(" · ").ifBlank { "本机" }
+                        } else {
+                            "未连接"
+                        },
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurface,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.padding(start = 4.dp),
                     )
                 }
             }
-            Box(
-                modifier = Modifier
-                    .size(48.dp)
-                    .clip(CircleShape)
-                    .clickable(onClick = onOpenSettings),
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(
-                    imageVector = Icons.Outlined.Settings,
-                    contentDescription = "设置",
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.85f),
-                    modifier = Modifier.size(19.dp),
-                )
-            }
-            Spacer(Modifier.width(2.dp))
         }
+        Spacer(modifier = Modifier.weight(1f))
+        ProferIconAction(
+            icon = Icons.Outlined.Settings,
+            contentDescription = "设置",
+            onClick = onOpenSettings,
+        )
     }
 }
 
+/** 初次读取时保留目录的行高与节奏，避免空态闪现。 */
 @Composable
-private fun Hairline(
-    modifier: Modifier = Modifier,
-    start: Dp = 0.dp,
-    end: Dp = 0.dp,
-) {
-    HorizontalDivider(
-        modifier = modifier.padding(start = start, end = end),
-        thickness = 1.dp,
-        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.8f),
-    )
+internal fun SessionListSkeleton() {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = ProferSpacing.lg, vertical = ProferSpacing.md)
+            .clearAndSetSemantics { contentDescription = "正在读取会话" },
+        verticalArrangement = Arrangement.spacedBy(ProferSpacing.md),
+    ) {
+        repeat(5) { index ->
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = ProferSizes.minTouchTarget)
+                    .padding(vertical = ProferSpacing.sm),
+                verticalArrangement = Arrangement.spacedBy(ProferSpacing.sm),
+            ) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth(if (index % 2 == 0) 0.8f else 0.6f)
+                        .height(ProferSpacing.lg)
+                        .background(MaterialTheme.colorScheme.surfaceContainerHighest, MaterialTheme.shapes.small),
+                )
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth(0.3f)
+                        .height(ProferSpacing.sm)
+                        .background(MaterialTheme.colorScheme.surfaceContainerHighest, MaterialTheme.shapes.small),
+                )
+            }
+        }
+    }
 }
-

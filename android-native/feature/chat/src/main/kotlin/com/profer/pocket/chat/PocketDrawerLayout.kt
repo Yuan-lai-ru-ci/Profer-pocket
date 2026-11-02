@@ -11,13 +11,18 @@ import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -35,6 +40,12 @@ import androidx.compose.ui.input.pointer.util.VelocityTracker
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
+import com.profer.pocket.designsystem.adaptive.LocalProferWindowSize
+import com.profer.pocket.designsystem.adaptive.ProferHinge
+import com.profer.pocket.designsystem.adaptive.ProferWindowSize
+import com.profer.pocket.designsystem.adaptive.rememberProferHinge
+import com.profer.pocket.designsystem.adaptive.windowWidthClass
+import com.profer.pocket.designsystem.theme.ProferSizes
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -183,74 +194,163 @@ fun PocketDrawerLayout(
     drawerContent: @Composable () -> Unit,
     content: @Composable () -> Unit,
 ) {
-    BoxWithConstraints(
-        modifier = modifier
-            .fillMaxSize()
-            .clipToBounds()
-            // 手势挂在静止的外层：挂在会跟着手势位移的内容层上，坐标系会跟着动，
-            // 手指拖 1px 只算出不到 1px 的位移，抽屉跟手变“滞”，阈值也就变得很远。
-            .drawerDrag(drawerState)
-            // 与抽屉同色：卡片缩小时露出的缝隙不能比抽屉更深，否则会显脏。
-            .background(MaterialTheme.colorScheme.surfaceContainerHigh),
-    ) {
-        val density = LocalDensity.current
-        val drawerWidth = maxWidth - (DrawerEdge + DrawerGap)
-        val pushDistance = maxWidth - DrawerEdge
-        val drawerWidthPx = with(density) { drawerWidth.toPx() }
-        val pushPx = with(density) { pushDistance.toPx() }
-        // 抽屉在内容下层：关闭时整体移到屏幕左侧之外。
-        Box(
-            modifier = Modifier
-                .width(drawerWidth)
-                .fillMaxHeight()
-                .offset { IntOffset((drawerWidthPx * (drawerState.progress - 1f)).roundToInt(), 0) }
-                // 抽屉底色比内容卡片深：卡片缩小时四周的留白才看得出层次。
-                .background(MaterialTheme.colorScheme.surfaceContainerHigh),
-        ) {
-            drawerContent()
-        }
+    val hinge = rememberProferHinge()
 
-        // 内容层：关闭时全屏；抽屉打开时缩成一张悬浮卡片（上下留白），推向右只留 DrawerEdge 宽的圆角边缘。
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .offset { IntOffset((pushPx * drawerState.progress).roundToInt(), 0) }
-                .graphicsLayer {
-                    val progress = drawerState.progress
-                    // 收起态全屏；抽屉打开时内容区缩成一张悬浮卡片（上下留白）。
-                    val scale = 1f - 0.03f * progress
-                    scaleX = scale
-                    scaleY = scale
-                    // 以左边缘为锚点：卡片左边缘不因缩放右移，和抽屉之间只留 DrawerGap。
-                    transformOrigin = TransformOrigin(0f, 0.5f)
-                    shape = RoundedCornerShape((DrawerCorner.value * progress).dp)
-                    clip = true
-                }
-                .background(MaterialTheme.colorScheme.surfaceContainerHigh),
-        ) {
-            content()
-        }
+    // 只测量，不挂手势：双栏时手势要彻底关掉，否则会抢内容区里的横向滚动。
+    BoxWithConstraints(modifier = modifier.fillMaxSize()) {
+        val window = ProferWindowSize(
+            width = maxWidth,
+            height = maxHeight,
+            widthClass = windowWidthClass(maxWidth),
+        )
+        // 半折叠（帐篷/桌面模式）时可用高度只剩一半，双栏没有意义，退回单栏并把内容放到铰链下方。
+        val halfOpenHorizontal = hinge?.let { !it.vertical && it.isSeparating } == true
 
-        // 返回手势：API 34+ 走预测性返回，抽屉跟着手指退；更低版本保留普通 BackHandler。
-        // 两个回调不能同时注册，否则后注册的那个会吞掉前一个。
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-            PredictiveBackHandler(enabled = drawerState.isOpen) { progress ->
-                try {
-                    progress.collect { event ->
-                        drawerState.previewProgress(1f - event.progress)
-                    }
-                    // 手势完成：已经跟到接近 0，直接收尾。
-                    drawerState.close()
-                } catch (cancel: CancellationException) {
-                    // 手势取消：回弹到完全打开。
-                    drawerState.open()
-                    throw cancel
-                }
+        CompositionLocalProvider(LocalProferWindowSize provides window) {
+            if (window.isTwoPane && !halfOpenHorizontal) {
+                TwoPaneLayout(
+                    window = window,
+                    hinge = hinge,
+                    drawerState = drawerState,
+                    drawerContent = drawerContent,
+                    content = content,
+                    modifier = Modifier.fillMaxSize(),
+                )
+                return@CompositionLocalProvider
             }
-        } else {
-            BackHandler(enabled = drawerState.isOpen) { drawerState.close() }
+
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .clipToBounds()
+                    // 手势挂在静止的外层：挂在会跟着手势位移的内容层上，坐标系会跟着动，
+                    // 手指拖 1px 只算出不到 1px 的位移，抽屉跟手变“滞”，阈值也就变得很远。
+                    .drawerDrag(drawerState)
+                    // 与抽屉同色：卡片缩小时露出的缝隙不能比抽屉更深，否则会显脏。
+                    .background(MaterialTheme.colorScheme.surfaceContainerLow),
+            ) {
+            val density = LocalDensity.current
+            val drawerWidth = window.width - (DrawerEdge + DrawerGap)
+            val pushDistance = window.width - DrawerEdge
+            val drawerWidthPx = with(density) { drawerWidth.toPx() }
+            val pushPx = with(density) { pushDistance.toPx() }
+            // 横向半折叠：整块内容停到铰链下方，不让正文压在折痕上。
+            val hingeTopPadding = hinge
+                ?.takeIf { !it.vertical && it.isSeparating }
+                ?.let { it.start + it.size }
+                ?: 0.dp
+            // 抽屉在内容下层：关闭时整体移到屏幕左侧之外。
+            Box(
+                modifier = Modifier
+                    .width(drawerWidth)
+                    .fillMaxHeight()
+                    .offset { IntOffset((drawerWidthPx * (drawerState.progress - 1f)).roundToInt(), 0) }
+                    .padding(top = hingeTopPadding)
+                    // 抽屉底色比内容卡片深：卡片缩小时四周的留白才看得出层次。
+                    .background(MaterialTheme.colorScheme.surfaceContainerLow),
+            ) {
+                drawerContent()
+            }
+
+            // 内容层：关闭时全屏；抽屉打开时缩成一张悬浮卡片（上下留白），推向右只留 DrawerEdge 宽的圆角边缘。
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .offset { IntOffset((pushPx * drawerState.progress).roundToInt(), 0) }
+                    .padding(top = hingeTopPadding)
+                    .graphicsLayer {
+                        val progress = drawerState.progress
+                        // 收起态全屏；抽屉打开时内容区缩成一张悬浮卡片（上下留白）。
+                        val scale = 1f - 0.03f * progress
+                        scaleX = scale
+                        scaleY = scale
+                        // 以左边缘为锚点：卡片左边缘不因缩放右移，和抽屉之间只留 DrawerGap。
+                        transformOrigin = TransformOrigin(0f, 0.5f)
+                        shape = RoundedCornerShape((DrawerCorner.value * progress).dp)
+                        clip = true
+                    }
+                    .background(MaterialTheme.colorScheme.surfaceContainerLow),
+            ) {
+                content()
+            }
+
+            // 返回手势：API 34+ 走预测性返回，抽屉跟着手指退；更低版本保留普通 BackHandler。
+            // 两个回调不能同时注册，否则后注册的那个会吞掉前一个。
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                PredictiveBackHandler(enabled = drawerState.isOpen) { progress ->
+                    try {
+                        progress.collect { event ->
+                            drawerState.previewProgress(1f - event.progress)
+                        }
+                        // 手势完成：已经跟到接近 0，直接收尾。
+                        drawerState.close()
+                    } catch (cancel: CancellationException) {
+                        // 手势取消：回弹到完全打开。
+                        drawerState.open()
+                        throw cancel
+                    }
+                }
+            } else {
+                BackHandler(enabled = drawerState.isOpen) { drawerState.close() }
+            }
+            }
         }
     }
+}
+
+/**
+ * 双栏：左侧列表常驻，右侧内容。垂直铰链时把分栏线对到铰链左侧，内容不跨折痕。
+ */
+@Composable
+private fun TwoPaneLayout(
+    window: ProferWindowSize,
+    hinge: ProferHinge?,
+    drawerState: PocketDrawerState,
+    drawerContent: @Composable () -> Unit,
+    content: @Composable () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    // 从单栏转过来时可能还留着一个打开的抽屉：列表已经常驻，状态必须归零。
+    LaunchedEffect(drawerState) {
+        if (drawerState.isOpen) drawerState.close()
+    }
+
+    val spec = resolveTwoPaneSpec(window, hinge)
+
+    Row(
+        modifier = modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.surfaceContainerLow),
+    ) {
+        Box(Modifier.width(spec.listWidth).fillMaxHeight()) { drawerContent() }
+        // 一条 hairline 分开目录与内容：双栏靠色阶已经能分，但列表行滚动时会贴到正文上。
+        Box(
+            Modifier
+                .width(ProferSizes.hairline)
+                .fillMaxHeight()
+                .background(MaterialTheme.colorScheme.outlineVariant),
+        )
+        if (spec.hingeGap > 0.dp) {
+            Spacer(Modifier.width(spec.hingeGap))
+        }
+        Box(Modifier.weight(1f).fillMaxHeight()) { content() }
+    }
+}
+
+/** 双栏几何：列表宽度与铰链留白。纯函数，便于单测折叠屏的各种铰链位置。 */
+internal data class TwoPaneSpec(val listWidth: androidx.compose.ui.unit.Dp, val hingeGap: androidx.compose.ui.unit.Dp)
+
+internal fun resolveTwoPaneSpec(window: ProferWindowSize, hinge: ProferHinge?): TwoPaneSpec {
+    val verticalHinge = hinge?.takeIf { it.vertical && it.isSeparating }
+    // 铰链太靠边时按普通双栏宽度，否则列表栏会被压成一条缝；太靠中间时也不对齐，
+    // 否则内容栏会被挤到不足 240dp。
+    val hingeListWidth = verticalHinge
+        ?.takeIf { it.start >= window.width * 0.25f && it.start <= window.width * 0.6f }
+        ?.start
+    return TwoPaneSpec(
+        listWidth = hingeListWidth ?: window.listPaneWidth,
+        hingeGap = if (hingeListWidth != null) verticalHinge!!.size else 0.dp,
+    )
 }
 
 /**

@@ -15,14 +15,12 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.FolderOpen
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
@@ -38,15 +36,19 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import com.profer.pocket.designsystem.component.sheetMaxHeight
-import com.profer.pocket.designsystem.theme.ProferHeadingSerif
+import com.profer.pocket.designsystem.theme.ProferSizes
 import com.profer.pocket.designsystem.theme.ProferSpacing
+import com.profer.pocket.designsystem.component.ProferAdaptiveSheet
 
 /** 新建/移动会话时的项目选项；`id == null` 表示不归入项目。 */
 data class ProjectOption(
@@ -62,13 +64,7 @@ fun NewSessionSheet(
     onSelect: (String?) -> Unit,
     onDismiss: () -> Unit,
 ) {
-    ModalBottomSheet(
-        onDismissRequest = onDismiss,
-        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
-        containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
-        // 弹层最高只到 86%，顶部不再需要状态栏内边距；底部由内容自己 navigationBarsPadding。
-        contentWindowInsets = { WindowInsets(0, 0, 0, 0) },
-    ) {
+    ProferAdaptiveSheet(onDismissRequest = onDismiss) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -87,7 +83,7 @@ fun NewSessionSheet(
                 contentPadding = androidx.compose.foundation.layout.PaddingValues(
                     horizontal = ProferSpacing.sm,
                 ),
-                verticalArrangement = Arrangement.spacedBy(1.dp),
+                verticalArrangement = Arrangement.spacedBy(ProferSpacing.xs),
             ) {
                 item(key = "none") {
                     SheetRow(
@@ -118,13 +114,7 @@ fun MoveSessionSheet(
     onSelect: (String) -> Unit,
     onDismiss: () -> Unit,
 ) {
-    ModalBottomSheet(
-        onDismissRequest = onDismiss,
-        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
-        containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
-        // 弹层最高只到 86%，顶部不再需要状态栏内边距；底部由内容自己 navigationBarsPadding。
-        contentWindowInsets = { WindowInsets(0, 0, 0, 0) },
-    ) {
+    ProferAdaptiveSheet(onDismissRequest = onDismiss) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -140,7 +130,7 @@ fun MoveSessionSheet(
                 contentPadding = androidx.compose.foundation.layout.PaddingValues(
                     horizontal = ProferSpacing.sm,
                 ),
-                verticalArrangement = Arrangement.spacedBy(1.dp),
+                verticalArrangement = Arrangement.spacedBy(ProferSpacing.xs),
             ) {
                 items(projects.filter { it.id != null }, key = { it.id!! }) { project ->
                     val current = project.id == currentWorkspaceId
@@ -170,7 +160,7 @@ fun RenameSessionDialog(
     AlertDialog(
         onDismissRequest = { if (!busy) onDismiss() },
         containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
-        title = { Text("重命名会话", style = ProferHeadingSerif) },
+        title = { Text("重命名会话", style = MaterialTheme.typography.titleLarge) },
         text = {
             SessionTextField(
                 value = value,
@@ -203,7 +193,7 @@ fun DeleteSessionDialog(
     AlertDialog(
         onDismissRequest = { if (!busy) onDismiss() },
         containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
-        title = { Text("删除会话", style = ProferHeadingSerif) },
+        title = { Text("删除会话", style = MaterialTheme.typography.titleLarge) },
         text = {
             Text(
                 text = "「${title.ifBlank { "未命名会话" }}」会从 Mac 和手机上删除，无法恢复。",
@@ -229,17 +219,17 @@ private fun SheetTitle(title: String, subtitle: String) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = ProferSpacing.lg, vertical = ProferSpacing.md),
-        verticalArrangement = Arrangement.spacedBy(2.dp),
+            .padding(horizontal = ProferSpacing.xl, vertical = ProferSpacing.lg),
+        verticalArrangement = Arrangement.spacedBy(ProferSpacing.sm),
     ) {
         Text(
             text = title,
-            style = ProferHeadingSerif,
+            style = MaterialTheme.typography.titleLarge,
             color = MaterialTheme.colorScheme.onSurface,
         )
         Text(
             text = subtitle,
-            style = MaterialTheme.typography.labelSmall,
+            style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }
@@ -256,8 +246,13 @@ private fun SheetRow(
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .clip(MaterialTheme.shapes.large)
+            .background(
+                if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.10f)
+                else Color.Transparent,
+            )
             .clickable(onClick = onClick)
-            .heightIn(min = 56.dp)
+            .heightIn(min = ProferSizes.listItemHeightTwoLine)
             .padding(horizontal = ProferSpacing.md, vertical = ProferSpacing.sm),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(ProferSpacing.md),
@@ -286,20 +281,19 @@ private fun SheetRow(
                 modifier = Modifier.size(18.dp),
             )
         }
-        Column(modifier = Modifier.weight(1f)) {
+        Column(
+            modifier = Modifier.weight(1f),
+            verticalArrangement = Arrangement.spacedBy(ProferSpacing.xs),
+        ) {
             Text(
                 text = title,
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurface,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
             )
             Text(
                 text = subtitle,
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
             )
         }
     }
@@ -313,36 +307,38 @@ private fun SessionTextField(
     focusRequester: FocusRequester? = null,
 ) {
     Surface(
-        shape = RoundedCornerShape(12.dp),
+        shape = MaterialTheme.shapes.large,
         color = MaterialTheme.colorScheme.surfaceContainer,
         modifier = Modifier.fillMaxWidth(),
     ) {
-        Box(
+        BasicTextField(
+            value = value,
+            onValueChange = onValueChange,
+            textStyle = MaterialTheme.typography.bodyMedium.copy(
+                color = MaterialTheme.colorScheme.onSurface,
+            ),
+            cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+            singleLine = true,
             modifier = Modifier
-                .heightIn(min = 48.dp)
-                .padding(horizontal = ProferSpacing.md, vertical = 12.dp),
-        ) {
-            if (value.isEmpty()) {
-                Text(
-                    text = placeholder,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                .fillMaxWidth()
+                .heightIn(min = ProferSizes.minTouchTarget)
+                .then(
+                    if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier,
                 )
-            }
-            BasicTextField(
-                value = value,
-                onValueChange = onValueChange,
-                textStyle = MaterialTheme.typography.bodyMedium.copy(
-                    color = MaterialTheme.colorScheme.onSurface,
-                ),
-                cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
-                singleLine = true,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .then(
-                        if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier,
-                    ),
-            )
-        }
+                .padding(horizontal = ProferSpacing.lg, vertical = ProferSpacing.md)
+                .semantics { contentDescription = placeholder },
+            decorationBox = { innerTextField ->
+                Box(contentAlignment = Alignment.CenterStart) {
+                    if (value.isEmpty()) {
+                        Text(
+                            text = placeholder,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    innerTextField()
+                }
+            },
+        )
     }
 }

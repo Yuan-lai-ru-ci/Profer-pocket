@@ -41,6 +41,15 @@ data class SessionSummary(
     val explorationSourceMessageId: String? = null,
     /** 探索来源标签（桌面按选区文本截断后的文案）。 */
     val explorationSourceLabel: String? = null,
+    // ===== 来源事实：定时任务 / 来源会话 / 派工关系 =====
+    /** 该会话由定时任务创建或复用；桌面侧栏在标题前显示钟表图标。 */
+    val sourceAutomationId: String? = null,
+    /** 创建该会话的来源会话（派工/交接）；不等于 parentSessionId。 */
+    val sourceSessionId: String? = null,
+    /** subtask / independent；仅派工产生的会话有值。 */
+    val delegationRelation: String? = null,
+    /** current / child / independent；current 在父会话内展开，不单独建会话。 */
+    val delegationPlacement: String? = null,
 ) {
     val isActive: Boolean get() = active == true
     val isUnread: Boolean get() = unread == true
@@ -65,6 +74,10 @@ data class SessionSummary(
         }
 
     val isSubSession: Boolean get() = relatedParentSessionId != null
+
+    /** 定时任务来源会话：列表行用钟表标记，与桌面侧栏同口径（委派子会话优先显示分支）。 */
+    val isAutomationSourced: Boolean
+        get() = !sourceAutomationId.isNullOrBlank() && sourceDelegationId.isNullOrBlank()
 
     /** 子会话仍在跑（委派状态可能比 run 终态晚一拍，两者都算）。 */
     val isDelegationRunning: Boolean get() = isDelegatedChild && delegationStatus == "running"
@@ -102,6 +115,11 @@ data class SessionSummary(
             explorationParentSessionId = incoming.explorationParentSessionId ?: explorationParentSessionId,
             explorationSourceMessageId = incoming.explorationSourceMessageId ?: explorationSourceMessageId,
             explorationSourceLabel = incoming.explorationSourceLabel ?: explorationSourceLabel,
+            // 来源事实同样是创建时写定；projection 不带时保留旧值，不因一次重命名就丢掉来源。
+            sourceAutomationId = incoming.sourceAutomationId ?: sourceAutomationId,
+            sourceSessionId = incoming.sourceSessionId ?: sourceSessionId,
+            delegationRelation = incoming.delegationRelation ?: delegationRelation,
+            delegationPlacement = incoming.delegationPlacement ?: delegationPlacement,
         )
     }
 }

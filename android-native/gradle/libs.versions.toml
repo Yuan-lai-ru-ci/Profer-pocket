@@ -14,6 +14,7 @@ cameraX = "1.4.1"
 zxing = "3.4.1"
 testExtJunit = "1.2.1"
 testRunner = "1.6.2"
+androidxWindow = "1.3.0"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -41,6 +42,7 @@ json = { group = "org.json", name = "json", version.ref = "json" }
 androidx-test-ext-junit = { group = "androidx.test.ext", name = "junit", version.ref = "testExtJunit" }
 androidx-test-runner = { group = "androidx.test", name = "runner", version.ref = "testRunner" }
 
+androidx-window = { group = "androidx.window", name = "window", version.ref = "androidxWindow" }
 androidx-compose-bom = { group = "androidx.compose", name = "compose-bom", version.ref = "composeBom" }
 androidx-compose-ui = { group = "androidx.compose.ui", name = "ui" }
 androidx-compose-ui-graphics = { group = "androidx.compose.ui", name = "ui-graphics" }

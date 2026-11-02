@@ -23,6 +23,15 @@ object ChatPreviewData {
             contextLabel = "来自 profer-main · Bash · 预计 1.2s",
         ),
         messages = listOf(
+            // 定时任务触发的输入：来源卡而不是用户气泡，用于验收密度与可读来源。
+            ChatMessage.Source(
+                id = "src-1",
+                authorLabel = "定时任务触发",
+                sourceLabel = "来自定时任务",
+                text = "检查今天的部署日志，失败就贴出最近 50 行。",
+                scheduled = true,
+                timeLabel = "22:10",
+            ),
             ChatMessage.User(
                 id = "u1",
                 text = "重连之后 Pocket 会丢最后几条消息，帮我定位一下。",

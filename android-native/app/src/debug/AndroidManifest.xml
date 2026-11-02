@@ -5,6 +5,12 @@
          导出是刻意的（adb shell am broadcast 以 shell 身份发送，拿不到自定义权限），
          因此只做 tools:ignore 说明，不在 release 里放宽任何东西。 -->
     <application>
+        <!-- 仅 debug：无网络和凭据的 UI 样本，用于真实渲染与交互回归。 -->
+        <activity
+            android:name=".debug.UiGalleryActivity"
+            android:exported="true"
+            android:windowSoftInputMode="adjustResize"
+            tools:ignore="ExportedActivity" />
         <receiver
             android:name=".debug.DebugCommandReceiver"
             android:enabled="true"

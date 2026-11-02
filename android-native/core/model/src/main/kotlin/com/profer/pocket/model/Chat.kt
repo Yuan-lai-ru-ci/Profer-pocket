@@ -1,8 +1,8 @@
 package com.profer.pocket.model
 
 /**
- * 工具调用在移动端只保留次数统计：不搬运入参、不搬运结果、不做逐条卡片。
- * 统计按工具名聚合，按 tool_use id 去重（partial 与 final 会重复携带同一个工具调用）。
+ * 工具调用统计：抽屉/回合摘要用，按工具名聚合，按 tool_use id 去重
+ * （partial 与 final 会重复携带同一个工具调用）。逐条工具卡不读这里，读助手消息自己的调用列表。
  */
 data class ToolTally(
     val total: Int = 0,
@@ -64,6 +64,8 @@ sealed interface ChatEntry {
         val thinking: String? = null,
         /** 本回合工具产出的图片（send_local_image / generate_image），按路径去重。 */
         val images: List<ChatImage> = emptyList(),
+        /** 这条助手消息自己发起的工具调用（按发生顺序），用于逐条渲染工具卡。 */
+        val toolCalls: List<ToolCall> = emptyList(),
     ) : ChatEntry
 
     data class Notice(
@@ -71,6 +73,25 @@ sealed interface ChatEntry {
         val text: String,
         val tone: NoticeTone,
         override val at: Long,
+    ) : ChatEntry
+
+    /**
+     * 非用户作者的任务输入与触发通知（定时任务、Agent 交接、外部请求）。
+     * 正文照常展示，但不伪装成「用户刚刚发送了一条消息」；来源不可访问时只显示状态，不回显原始 ID。
+     */
+    data class Source(
+        override val id: String,
+        /** 作者标签：定时任务触发 / Agent 任务交接 / 系统任务接续 / 外部请求 / 历史任务来源。 */
+        val authorLabel: String,
+        /** 来源引用类型（automation / session / task / request / message）；只用于定位可读来源。 */
+        val sourceType: String? = null,
+        /** 来源引用 id；不直接当文案展示，由 UI 换成可读名称。 */
+        val sourceId: String? = null,
+        /** 任务正文；task_trigger 通知本身没有正文。 */
+        val text: String,
+        override val at: Long,
+        /** 定时任务触发：用钟表图标，其余用来源图标。 */
+        val scheduled: Boolean = false,
     ) : ChatEntry
 }
 
@@ -154,7 +175,7 @@ data class SessionChat(
     val pendingInteraction: PendingInteraction? = null,
     val tools: ToolTally = ToolTally(),
     val countedToolIds: Set<String> = emptySet(),
-    /** 本轮工具调用（按发生顺序），用于逐条渲染各自的图标与状态。 */
+    /** 本轮工具调用（按发生顺序）；回合汇总与兼容旧快照用，UI 逐条渲染走助手消息。 */
     val toolCalls: List<ToolCall> = emptyList(),
     /** 已收到 tool_result 的工具 id（不区分成功失败）。 */
     val completedToolIds: Set<String> = emptySet(),
@@ -162,6 +183,11 @@ data class SessionChat(
     val turnFiles: List<TurnFile> = emptyList(),
     val failedToolIds: Set<String> = emptySet(),
     val loaded: Boolean = false,
+    /**
+     * 后台仍在跑（run 已结束但 backgroundTasksPending）。此时插话只注入、不打断；
+     * 与桌面「backgroundWaiting 注入而不中断」同口径。
+     */
+    val backgroundWaiting: Boolean = false,
     val contextWindow: Int? = null,
     /** 最近一条 assistant usage；上下文占用与明细都从这里来。 */
     val contextUsage: ContextUsage? = null,

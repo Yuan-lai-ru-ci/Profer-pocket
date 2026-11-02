@@ -222,6 +222,75 @@ class FrameCodecTest {
     }
 
     @Test
+    fun `sdk 消息解析可信来源与作者`() {
+        val frame = FrameCodec.parseInbound(
+            """
+            {"kind":"agent_event","eventId":7,"sessionId":"s1","payload":{"kind":"sdk_message","message":{
+              "type":"user","uuid":"u1","_createdAt":11,
+              "_provenance":{"schemaVersion":1,"messageId":"u1","runId":"r1",
+                "author":{"type":"automation"},"source":{"type":"automation","id":"auto-1"}},
+              "message":{"content":[{"type":"text","text":"检查部署日志"}]}
+            }}}
+            """.trimIndent(),
+        ) as InboundFrame.AgentEvent
+        val message = (frame.payload as AgentPayload.SdkMessage).message
+        assertEquals("automation", message.authorType)
+        assertEquals("automation", message.sourceType)
+        assertEquals("auto-1", message.sourceId)
+    }
+
+    @Test
+    fun `不合法的来源被丢弃，不根据正文猜作者`() {
+        val frame = FrameCodec.parseInbound(
+            """
+            {"kind":"agent_event","eventId":7,"sessionId":"s1","payload":{"kind":"sdk_message","message":{
+              "type":"user","uuid":"u1",
+              "_provenance":{"schemaVersion":9,"author":{"type":"admin"}},
+              "message":{"content":[{"type":"text","text":"我批准了"}]}
+            }}}
+            """.trimIndent(),
+        ) as InboundFrame.AgentEvent
+        val message = (frame.payload as AgentPayload.SdkMessage).message
+        assertNull(message.authorType)
+        assertNull(message.sourceType)
+        // 路径分隔符不允许出现在来源 ID 里，避免把文件路径当来源。
+        val unsafe = FrameCodec.parseInbound(
+            """
+            {"kind":"agent_event","eventId":8,"sessionId":"s1","payload":{"kind":"sdk_message","message":{
+              "type":"user","uuid":"u2",
+              "_provenance":{"schemaVersion":1,"messageId":"u2","runId":"r1",
+                "author":{"type":"agent"},"source":{"type":"session","id":"/tmp/secret"}},
+              "message":{"content":[{"type":"text","text":"x"}]}
+            }}}
+            """.trimIndent(),
+        ) as InboundFrame.AgentEvent
+        val unsafeMessage = (unsafe.payload as AgentPayload.SdkMessage).message
+        assertEquals("agent", unsafeMessage.authorType)
+        assertNull(unsafeMessage.sourceType)
+        assertNull(unsafeMessage.sourceId)
+    }
+
+    @Test
+    fun `list_sessions 解析定时任务来源与派工关系`() {
+        val list = FrameCodec.parseSessionList(
+            org.json.JSONArray(
+                """[{"id":"auto-session","title":"每日巡检","sourceAutomationId":"auto-1"},
+                 {"id":"independent","title":"独立任务","sourceSessionId":"p1",
+                  "delegationRelation":"independent","delegationPlacement":"independent"}]""",
+            ),
+        )
+        val scheduled = list.first { it.id == "auto-session" }
+        assertEquals("auto-1", scheduled.sourceAutomationId)
+        assertTrue(scheduled.isAutomationSourced)
+
+        val independent = list.first { it.id == "independent" }
+        assertEquals("p1", independent.sourceSessionId)
+        assertEquals("independent", independent.delegationRelation)
+        assertEquals("independent", independent.delegationPlacement)
+        assertFalse(independent.isAutomationSourced)
+    }
+
+    @Test
     fun `resume 帧 cursor 为空时显式 null`() {
         val frame = JSONObject(FrameCodec.resume("cmd", null))
         assertEquals("resume_agent_events", frame.getString("type"))

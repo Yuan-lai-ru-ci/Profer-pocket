@@ -156,7 +156,11 @@ object UiMapping {
         val endpoint = device.profile.endpoints.firstOrNull()
         return DeviceUi(
             id = device.profile.deviceId,
-            name = device.profile.deviceName,
+            // 手动设备一律叫「手动连接」，列表里两台就重名了；用主机名代替，地址仍单列一行。
+            name = device.profile.deviceName
+                .takeIf { device.transportMode != TransportMode.LEGACY_QUERY }
+                ?.takeIf { it.isNotBlank() }
+                ?: hostOf(endpoint?.url.orEmpty()).ifBlank { "手动连接" },
             address = endpoint?.url.orEmpty(),
             scopeLabel = if (endpoint?.scope == EndpointScope.PUBLIC) "公网" else "局域网",
             trustLabel = trustLabel(device),
@@ -263,11 +267,38 @@ object UiMapping {
                                     body = body,
                                 )
                             },
+                            // 工具卡恢复逐条显示：挂在这条助手消息自己身上，不再汇总成图标条。
+                            tools = entry.toolCalls.map { call -> toolBlock(call, chat) },
                             blocks = parseRichBlocks(entry.text),
                             streaming = entry.streaming,
                             images = entry.images,
                         ),
                     )
+
+                    is ChatEntry.Source -> if (!isInternalUserText(entry.text)) {
+                        add(
+                            ChatMessage.Source(
+                                id = entry.id,
+                                authorLabel = entry.authorLabel,
+                                // 只展示可读来源；找不到来源会话时说明不可访问，不回显内部 ID。
+                                sourceLabel = when (entry.sourceType) {
+                                    "session" -> sessions.firstOrNull { it.id == entry.sourceId }
+                                        ?.title?.takeIf { it.isNotBlank() }
+                                        ?.let { "来自会话「$it」" }
+                                        ?: "来源会话不可访问"
+
+                                    "automation" -> "来自定时任务"
+                                    "task" -> "来自上级任务"
+                                    "request" -> "来自外部请求"
+                                    "message" -> "关联到来源消息"
+                                    else -> null
+                                },
+                                text = entry.text,
+                                scheduled = entry.scheduled,
+                                timeLabel = timeLabel(entry.at),
+                            ),
+                        )
+                    }
 
                     is ChatEntry.Notice -> add(
                         ChatMessage.Notice(
@@ -320,32 +351,35 @@ object UiMapping {
             pendingQuestionId = (chat?.pendingInteraction as? PendingInteraction.Question)?.id,
             pendingQuestions = (chat?.pendingInteraction as? PendingInteraction.Question)?.questions.orEmpty(),
             turnFiles = chat?.visibleTurnFiles.orEmpty(),
-            toolCalls = chat?.let { current ->
-                current.toolCalls.map { call ->
-                    val status = when {
-                        call.id in current.failedToolIds -> ToolStatus.Error
-                        call.id in current.completedToolIds -> ToolStatus.Success
-                        current.running -> ToolStatus.Running
-                        else -> ToolStatus.Waiting
-                    }
-                    ToolBlock(
-                        id = call.id,
-                        kind = toolKind(call.name),
-                        title = toolTitle(call.name),
-                        // 入参只透传了 file_path；拿不到路径时用状态文案，
-                        // 不伪造命令/结果，也不把工具名重复写两遍。
-                        subtitle = call.path ?: when (status) {
-                            ToolStatus.Running -> "运行中…"
-                            ToolStatus.Success -> "已完成"
-                            ToolStatus.Error -> "执行失败"
-                            ToolStatus.Waiting -> "未返回结果"
-                        },
-                        status = status,
-                    )
-                }
-            }.orEmpty(),
             parentSessionId = parentSession?.id ?: summary?.relatedParentSessionId,
             subSessionLabel = subSessionLabel,
+        )
+    }
+
+    /** 单条工具调用 → 卡片模型：图标分类与状态，入参只透传了文件路径，不伪造命令/结果。 */
+    private fun toolBlock(
+        call: com.profer.pocket.model.ToolCall,
+        chat: SessionChat,
+    ): ToolBlock {
+        val status = when {
+            call.id in chat.failedToolIds -> ToolStatus.Error
+            call.id in chat.completedToolIds -> ToolStatus.Success
+            chat.running -> ToolStatus.Running
+            else -> ToolStatus.Waiting
+        }
+        return ToolBlock(
+            id = call.id,
+            kind = toolKind(call.name),
+            title = toolTitle(call.name),
+            // 入参只透传了 file_path；拿不到路径时用状态文案，
+            // 不伪造命令/结果，也不把工具名重复写两遍。
+            subtitle = call.path ?: when (status) {
+                ToolStatus.Running -> "运行中…"
+                ToolStatus.Success -> "已完成"
+                ToolStatus.Error -> "执行失败"
+                ToolStatus.Waiting -> "未返回结果"
+            },
+            status = status,
         )
     }
 
@@ -595,11 +629,12 @@ object UiMapping {
             draft = session.isDraft,
             workspaceId = session.workspaceId,
             projectName = projectName,
-            // 子会话以根行身份出现时（置顶/搜索）靠这两个字段保留层级信息。
+            // 子会话以根行身份出现时（搜索）靠这两个字段保留层级信息。
             isSubSession = session.isSubSession,
             roleLabel = subSessionLabel(session),
             delegationStatus = session.delegationStatus,
             isExploration = session.isExplorationChild,
+            sourcedByAutomation = session.isAutomationSourced,
         )
         synchronized(sessionCacheLock) { sessionItemCache[key] = item }
         return item

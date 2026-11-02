@@ -10,10 +10,10 @@ private val Sans = FontFamily.Default
 private val Mono = FontFamily.Monospace
 
 /**
- * 衬线档只服务「题名」层级（品牌字、项目名、空态与弹层标题）。
- * 正文与操作保持无衬线：中文衬线在 14sp 以下笔画会发虚。
+ * 兼容旧调用的标题字体入口；全应用统一无衬线字族。
+ * 层级只通过 M3 type scale、字重与间距表达，不再混入另一套字体。
  */
-val ProferSerif = FontFamily.Serif
+val ProferSerif = Sans
 
 /**
  * 中文正文 15sp / 行高 1.6（24sp）；英文与代码各自成档。
@@ -112,8 +112,8 @@ val ProferTypography = Typography(
     labelSmall = TextStyle(
         fontFamily = Sans,
         fontWeight = FontWeight.Medium,
-        fontSize = 11.sp,
-        lineHeight = 15.sp,
+        fontSize = 12.sp,
+        lineHeight = 16.sp,
         letterSpacing = 0.3.sp,
     ),
 )

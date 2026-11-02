@@ -912,6 +912,8 @@ class PocketRepository(
             _chats.value = _chats.value + (sessionId to base.append(entry).copy(
                 channelId = channelId,
                 running = true,
+                // 新 run 开始：不再处于「后台等待」，插话恢复为直接插入。
+                backgroundWaiting = false,
                 lastError = null,
                 tools = com.profer.pocket.model.ToolTally(),
                 countedToolIds = emptySet(),
@@ -996,8 +998,15 @@ class PocketRepository(
     /**
      * 运行中插话：消息注入当前 run，uuid 与乐观气泡一致，服务端广播时自动去重。
      * 会话已结束（未运行）时降级为普通发送。
+     *
+     * [interrupt] 与桌面「运行中发送」同口径：流式回复时软打断当前 turn 后直接插入；
+     * 后台等待（run 已结束、后台任务未完成）时只注入不打断。
      */
-    suspend fun queueMessage(sessionId: String, rawText: String): Result<Unit> = runCatching {
+    suspend fun queueMessage(
+        sessionId: String,
+        rawText: String,
+        interrupt: Boolean = true,
+    ): Result<Unit> = runCatching {
         val text = rawText.trim()
         if (text.isEmpty()) return@runCatching
         val uuid = newId()
@@ -1011,6 +1020,7 @@ class PocketRepository(
             put("sessionId", sessionId)
             put("userMessage", text)
             put("uuid", uuid)
+            put("interrupt", interrupt)
         }
         if (!result.ok) {
             // 回滚乐观气泡，避免“本地有、服务端没有”。
@@ -1302,15 +1312,47 @@ class PocketRepository(
         } ?: return
         when (outcome) {
             is SendOutcome.Accepted -> updateSendStatus(sessionId, outcome.clientMessageId, com.profer.pocket.model.SendStatus.Sent)
-            is SendOutcome.Rejected -> updateSendStatus(
-                sessionId,
-                outcome.clientMessageId,
-                com.profer.pocket.model.SendStatus.Failed,
-                outcome.message,
-            )
+            is SendOutcome.Rejected -> {
+                // 竞态：本地还没看到 running，但服务端已有活跃 run。
+                // 与桌面「运行中发送直接插入」同口径：降级为插话，不把用户输入丢成失败气泡。
+                val busy = outcome.message.contains("仍在处理中") ||
+                    outcome.message.contains("AGENT_RUN_ALREADY_ACTIVE")
+                val text = currentUserText(sessionId, outcome.clientMessageId)
+                if (busy && text != null && requeueRejectedSend(sessionId, outcome.clientMessageId, text)) {
+                    updateSendStatus(sessionId, outcome.clientMessageId, com.profer.pocket.model.SendStatus.Sent)
+                } else {
+                    updateSendStatus(
+                        sessionId,
+                        outcome.clientMessageId,
+                        com.profer.pocket.model.SendStatus.Failed,
+                        outcome.message,
+                    )
+                }
+            }
             // 断线队列：消息还没发出去，保持「发送中」由全局连接横幅表达。
             is SendOutcome.Queued -> Unit
         }
+    }
+
+    private suspend fun currentUserText(sessionId: String, messageId: String): String? = stateMutex.withLock {
+        _chats.value[sessionId]?.messages
+            ?.firstOrNull { it is ChatEntry.User && it.id == messageId }
+            ?.let { (it as ChatEntry.User).text }
+    }
+
+    /** 把被 busy 拒绝的消息按原 uuid 重投为插话；服务端按 clientMessageId 幂等，不会多出一条。 */
+    private suspend fun requeueRejectedSend(sessionId: String, messageId: String, text: String): Boolean {
+        // 后台等待时只注入不打断，与正常发送路径同一判断。
+        val interrupt = stateMutex.withLock { _chats.value[sessionId]?.backgroundWaiting != true }
+        val result = runCatching {
+            connection.request("queue_message") {
+                put("sessionId", sessionId)
+                put("userMessage", text)
+                put("uuid", messageId)
+                put("interrupt", interrupt)
+            }
+        }.getOrNull() ?: return false
+        return result.ok
     }
 
     /** 更新单条用户消息的发送状态；失败时同时结束 running，避免界面一直转。 */

@@ -20,7 +20,13 @@ object ProferSizes {
     val minTouchTarget = 48.dp
     val listItemHeight = 64.dp
     val listItemHeightTwoLine = 72.dp
-    val composerMinHeight = 52.dp
+    val composerMinHeight = 56.dp
     val topBarHeight = 64.dp
     val drawerWidth = 320.dp
+    val actionVisual = 40.dp
+    val icon = 22.dp
+    val iconSmall = 16.dp
+    val contentMaxWidth = 760.dp
+    val floatingElevation = 2.dp
+    val hairline = 1.dp
 }

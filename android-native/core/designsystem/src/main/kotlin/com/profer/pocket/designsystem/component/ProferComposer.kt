@@ -2,17 +2,21 @@ package com.profer.pocket.designsystem.component
 
 import android.content.res.Configuration
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -24,6 +28,7 @@ import androidx.compose.material.icons.outlined.ArrowUpward
 import androidx.compose.material.icons.outlined.Bolt
 import androidx.compose.material.icons.outlined.Build
 import androidx.compose.material.icons.outlined.ExpandMore
+import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material.icons.outlined.Stop
 import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material.icons.outlined.WorkOutline
@@ -32,11 +37,16 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -54,23 +64,29 @@ import androidx.compose.ui.unit.dp
 import com.profer.pocket.designsystem.theme.ProferSizes
 import com.profer.pocket.designsystem.theme.ProferSpacing
 import com.profer.pocket.designsystem.theme.ProferTheme
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.material.icons.outlined.ChevronRight
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.rememberModalBottomSheetState
+import com.profer.pocket.designsystem.component.sheetMaxHeight
+import com.profer.pocket.designsystem.theme.ProferHeadingSerif
+import androidx.compose.material.icons.outlined.PhotoLibrary
+import androidx.compose.material3.HorizontalDivider
 
 /**
- * 输入区：上方一行上下文入口（模型 / 岗位预设 / 权限档位），下方一条浮起的胶囊输入条。
+ * 输入区：一条浮起的胶囊输入条，上下文入口（模型 / 预设 / 权限）收进左侧「+」菜单。
  *
- * 视觉按「浮起的一条」而不是「描边的一个框」做：画布 #F1F0EE 上再用 1dp 描边分隔，
- * 会和上方入口的描边叠成好几层线框，越看越脏。改成最亮面 + 2dp 投影；
- * 深色里投影只会发脏，所以深色改成纯色调分层（surfaceContainer），不加投影。
+ * 之前模型、预设、权限三颗 chip 单独浮在输入条上方：既多占一行，又和胶囊脱节。
+ * 现在输入条保持 dsh-go 的 56dp 单行几何，点「+」弹出菜单，附件与三个选择器都在里面。
+ *
+ * 视觉按「浮起的一条」而不是「描边的一个框」做：浅色用最亮面 + 2dp 投影，
+ * 深色不投影（投影在深色只会发脏），靠 surfaceContainer 色阶分层。
  * 圆角走 MaterialTheme.shapes.extraLarge（28dp），组件里不写魔法数字。
  *
- * 底部只留一块实心面：上方三个入口不画底色，按下时用 ripple 反馈。
- * 四块色块叠在一起是底部“重”的主因，靠半透明解决不了（见 README）。
- *
- * 只保留输入与发送/停止：模型、预设、权限交给上方入口，底部不再堆第二排。
  * 流式时发送键原位变成停止键，既不新增行高，也不会误发。
  *
- * 尺寸：整条最小高度 52dp（[ProferSizes.composerMinHeight]），左右图标保持 48dp 热区，
- * 内部可见图形缩到 22dp / 40dp——热区不变大，视觉变轻。
+ * 尺寸：单行 8 + 40 + 8 = 56dp，两端圆键 40dp、四周内缩 8dp，圆角 28 = 键半径 20 + 8。
  */
 @Composable
 fun ProferComposer(
@@ -113,19 +129,6 @@ fun ProferComposer(
             .padding(top = ProferSpacing.xs, bottom = ProferSpacing.sm),
         verticalArrangement = Arrangement.spacedBy(ProferSpacing.xxs),
     ) {
-        if (showSelectors) {
-            SelectorRow(
-                modelLabel = modelLabel,
-                modelIconRes = modelIconRes,
-                onModelClick = onModelClick,
-                presetLabel = presetLabel,
-                onPresetClick = onPresetClick,
-                modeLabel = modeLabel,
-                onModeClick = onModeClick,
-                showModeSelector = showModeSelector,
-            )
-        }
-
         ComposerField(
             value = value,
             onValueChange = onValueChange,
@@ -138,122 +141,16 @@ fun ProferComposer(
             placeholder = placeholder,
             focusRequester = focusRequester,
             dark = dark,
+            modelLabel = modelLabel,
+            modelIconRes = modelIconRes,
+            onModelClick = onModelClick,
+            presetLabel = presetLabel,
+            onPresetClick = onPresetClick,
+            modeLabel = modeLabel,
+            onModeClick = onModeClick,
+            showSelectors = showSelectors,
+            showModeSelector = showModeSelector,
         )
-    }
-}
-
-/**
- * 上下文胶囊行：模型、岗位预设、权限档位。
- *
- * 宽度分配用 weight 声明比例，不再按 fontScale 手算像素上限——
- * 放不下就省略号，本来就不该换行；手算反而在大字号下把模型名压得比预设还短。
- * 权限档位不参与收缩：它是安全相关的，必须一直完整可见。
- */
-@Composable
-private fun SelectorRow(
-    modelLabel: String,
-    modelIconRes: Int?,
-    onModelClick: () -> Unit,
-    presetLabel: String?,
-    onPresetClick: (() -> Unit)?,
-    modeLabel: String,
-    onModeClick: () -> Unit,
-    showModeSelector: Boolean,
-) {
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        ComposerChip(
-            text = modelLabel,
-            icon = Icons.Outlined.Bolt,
-            iconRes = modelIconRes,
-            onClick = onModelClick,
-            modifier = Modifier.weight(if (presetLabel != null) 0.9f else 1f, fill = false),
-        )
-        if (presetLabel != null && onPresetClick != null) {
-            ComposerChip(
-                text = presetLabel,
-                icon = Icons.Outlined.WorkOutline,
-                onClick = onPresetClick,
-                modifier = Modifier.weight(1.4f, fill = false),
-            )
-        }
-        if (showModeSelector) {
-            ComposerChip(
-                text = modeLabel,
-                icon = Icons.Outlined.Tune,
-                onClick = onModeClick,
-                modifier = Modifier.widthIn(max = 112.dp),
-            )
-        }
-    }
-}
-
-/**
- * 轻量选择器：**不画底色**，直接坐在画布上，只靠图标 + 文字 + 下拉箭头表达可点。
- *
- * 原来三颗胶囊各一块填充色，加上输入条就是四块色块叠在底部，
- * 底部一看就“重”。半透明在背后没内容时等于把颜色调浅（见提交说明），
- * 所以直接去掉底，按下时用 ripple 反馈。
- *
- * 热区仍为 48dp（[ProferSizes.minTouchTarget]），可见内容约 24dp 高：
- * 手指接触面 7–10mm ≈ 45–64dp，热区不能跟着视觉缩。
- */
-@Composable
-private fun ComposerChip(
-    text: String,
-    icon: ImageVector,
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier,
-    iconRes: Int? = null,
-) {
-    Box(
-        modifier = modifier
-            .height(ProferSizes.minTouchTarget)
-            .clip(CircleShape)
-            // 标签和点击动作放在同一语义节点：读屏焦点不会落到没有点击动作的文字子节点。
-            .semantics { contentDescription = text }
-            .clickable(role = Role.Button, onClick = onClick)
-            .padding(horizontal = 8.dp),
-        contentAlignment = Alignment.Center,
-    ) {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(5.dp),
-        ) {
-            if (iconRes != null) {
-                Image(
-                    painter = painterResource(iconRes),
-                    contentDescription = null,
-                    contentScale = ContentScale.Crop,
-                    modifier = Modifier
-                        .size(15.dp)
-                        .clip(RoundedCornerShape(4.dp)),
-                )
-            } else {
-                Icon(
-                    imageVector = icon,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f),
-                    modifier = Modifier.size(14.dp),
-                )
-            }
-            Text(
-                text = text,
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            Icon(
-                imageVector = Icons.Outlined.ExpandMore,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.45f),
-                modifier = Modifier.size(14.dp),
-            )
-        }
     }
 }
 
@@ -271,46 +168,56 @@ private fun ComposerField(
     placeholder: String,
     focusRequester: FocusRequester?,
     dark: Boolean,
+    modelLabel: String,
+    modelIconRes: Int?,
+    onModelClick: () -> Unit,
+    presetLabel: String?,
+    onPresetClick: (() -> Unit)?,
+    modeLabel: String,
+    onModeClick: () -> Unit,
+    showSelectors: Boolean,
+    showModeSelector: Boolean,
 ) {
     val canSend = value.isNotBlank()
-    val actionEnabled = streaming || canSend
+    val active = streaming || canSend
+
+    // dsh-go 的输入条几何：40dp 圆键做胶囊两端，四周 8dp 内缩；
+    // 单行时 8 + 40 + 8 = 56，圆角 28 = 键半径 20 + 8，键与胶囊两端同心。
+    val keySize = 40.dp
+    val keyGap = 8.dp
 
     Surface(
         modifier = Modifier.fillMaxWidth(),
         shape = MaterialTheme.shapes.extraLarge,
-        color = if (dark) {
-            MaterialTheme.colorScheme.surfaceContainer
-        } else {
-            MaterialTheme.colorScheme.surfaceContainerLowest
-        },
-        // 深色下投影不可见，只会让边缘发脏：靠色阶分层，不叠阴影。
+        color = proferFloatingSurface(),
+        // 浮起靠软投影 + 极淡边线；深色不投影，靠色阶分层。
         shadowElevation = if (dark) 0.dp else 2.dp,
+        border = androidx.compose.foundation.BorderStroke(
+            ProferSizes.hairline,
+            MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.7f),
+        ),
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 4.dp),
-            verticalAlignment = Alignment.CenterVertically,
+                .padding(keyGap),
+            verticalAlignment = Alignment.Bottom,
         ) {
-            if (onAttach != null) {
-                ProferIconAction(
-                    icon = Icons.Outlined.Add,
-                    contentDescription = "添加附件",
-                    onClick = onAttach,
-                )
-            }
-            if (onToolsClick != null) {
-                ProferIconAction(
-                    icon = Icons.Outlined.Build,
-                    contentDescription = "选择工具",
-                    onClick = onToolsClick,
-                    tint = if (toolsActive) {
-                        MaterialTheme.colorScheme.primary
-                    } else {
-                        MaterialTheme.colorScheme.onSurfaceVariant
-                    },
-                )
-            }
+            ComposerMenuButton(
+                modelLabel = modelLabel,
+                modelIconRes = modelIconRes,
+                onModelClick = onModelClick,
+                presetLabel = presetLabel,
+                onPresetClick = onPresetClick,
+                modeLabel = modeLabel,
+                onModeClick = onModeClick,
+                showSelectors = showSelectors,
+                showModeSelector = showModeSelector,
+                onAttach = onAttach,
+                onToolsClick = onToolsClick,
+                toolsActive = toolsActive,
+            )
+            Spacer(Modifier.width(keyGap))
             BasicTextField(
                 value = value,
                 onValueChange = onValueChange,
@@ -323,37 +230,45 @@ private fun ComposerField(
                             Modifier
                         },
                     )
-                    // 上下 14dp + 单行字高 24dp = 52dp，与 composerMinHeight 对齐。
-                    .padding(horizontal = 4.dp, vertical = 14.dp),
+                    .padding(horizontal = 4.dp),
                 textStyle = MaterialTheme.typography.bodyLarge.copy(
                     color = MaterialTheme.colorScheme.onSurface,
                 ),
                 cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
-                maxLines = 5,
+                maxLines = 6,
                 keyboardOptions = KeyboardOptions(
                     capitalization = KeyboardCapitalization.Sentences,
                     keyboardType = KeyboardType.Text,
                     imeAction = ImeAction.Default,
                 ),
                 decorationBox = { innerTextField ->
-                    Box {
+                    // 文字和两端圆键共用 40dp 的中线：单行时容器正好 40dp，
+                    // 多行时容器随内容长高，Row 底部对齐让圆键继续贴底。
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = keySize),
+                        contentAlignment = Alignment.CenterStart,
+                    ) {
                         if (value.isEmpty()) {
                             Text(
                                 text = placeholder,
                                 style = MaterialTheme.typography.bodyLarge,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.75f),
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
+                                // 光标画在文本起点；不错开 2dp 会和占位符首字叠在一起。
+                                modifier = Modifier.padding(start = 2.dp),
                             )
                         }
                         innerTextField()
                     }
                 },
             )
+            Spacer(Modifier.width(keyGap))
             SendAction(
                 streaming = streaming,
-                canSend = canSend,
-                enabled = actionEnabled,
+                active = active,
                 onSend = onSend,
                 onStop = onStop,
             )
@@ -362,58 +277,342 @@ private fun ComposerField(
 }
 
 /**
- * 发送 / 停止：48dp 热区里放 40dp 圆。
- * 空输入时退成浅色圆，不消失——位置稳定，用户不用找按钮。
+ * 左侧「+」：附件、工具与三个上下文选择器都收进这个菜单。
+ *
+ * 选择器原来单独占输入条上方一行，既多一层浮块，又和胶囊脱节；
+ * 收进菜单后输入条回到单行 56dp，模型/预设/权限仍是一次点击可达。
+ */
+@Composable
+private fun ComposerMenuButton(
+    modelLabel: String,
+    modelIconRes: Int?,
+    onModelClick: () -> Unit,
+    presetLabel: String?,
+    onPresetClick: (() -> Unit)?,
+    modeLabel: String,
+    onModeClick: () -> Unit,
+    showSelectors: Boolean,
+    showModeSelector: Boolean,
+    onAttach: (() -> Unit)?,
+    onToolsClick: (() -> Unit)?,
+    toolsActive: Boolean,
+) {
+    var open by remember { mutableStateOf(false) }
+    Box {
+        ComposerKey(
+            icon = Icons.Outlined.Add,
+            contentDescription = "更多选项",
+            onClick = { open = true },
+        )
+        if (open) {
+            ComposerOptionsSheet(
+                modelLabel = modelLabel,
+                modelIconRes = modelIconRes,
+                onModelClick = { open = false; onModelClick() },
+                presetLabel = presetLabel,
+                onPresetClick = onPresetClick?.let { click -> { open = false; click() } },
+                modeLabel = modeLabel,
+                onModeClick = { open = false; onModeClick() },
+                showSelectors = showSelectors,
+                showModeSelector = showModeSelector,
+                onAttach = onAttach?.let { attach -> { open = false; attach() } },
+                onToolsClick = onToolsClick?.let { tools -> { open = false; tools() } },
+                toolsActive = toolsActive,
+                onDismiss = { open = false },
+            )
+        }
+    }
+}
+
+/**
+ * 「+」弹出的底部弹层：附件与三个上下文选择器。
+ *
+ * 样式跟「选择预设 / 选择模型」一致（衬线标题 + 一行说明 + 分组行），
+ * 不再用贴着「+」的小下拉——下拉在屏幕底部既容易挡住输入区，也不成体系。
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ComposerOptionsSheet(
+    modelLabel: String,
+    modelIconRes: Int?,
+    onModelClick: () -> Unit,
+    presetLabel: String?,
+    onPresetClick: (() -> Unit)?,
+    modeLabel: String,
+    onModeClick: () -> Unit,
+    showSelectors: Boolean,
+    showModeSelector: Boolean,
+    onAttach: (() -> Unit)?,
+    onToolsClick: (() -> Unit)?,
+    toolsActive: Boolean,
+    onDismiss: () -> Unit,
+) {
+    ProferAdaptiveSheet(onDismissRequest = onDismiss) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .sheetMaxHeight()
+                .navigationBarsPadding()
+                .padding(bottom = ProferSpacing.md),
+        ) {
+            // 不放标题和说明：这一层只是动作与当前值，多说一句都是噪音。
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = ProferSpacing.xl, vertical = ProferSpacing.md),
+                horizontalArrangement = Arrangement.spacedBy(ProferSpacing.lg),
+            ) {
+                if (onAttach != null) {
+                    ComposerActionTile(
+                        icon = Icons.Outlined.PhotoLibrary,
+                        label = "相册",
+                        container = MaterialTheme.colorScheme.primaryContainer,
+                        content = MaterialTheme.colorScheme.onPrimaryContainer,
+                        onClick = onAttach,
+                    )
+                }
+                if (onToolsClick != null) {
+                    ComposerActionTile(
+                        icon = Icons.Outlined.Build,
+                        label = "工具",
+                        container = MaterialTheme.colorScheme.secondaryContainer,
+                        content = MaterialTheme.colorScheme.onSecondaryContainer,
+                        onClick = onToolsClick,
+                        badge = if (toolsActive) "已启用" else null,
+                    )
+                }
+            }
+
+            if (showSelectors) {
+                ComposerSheetSection("本轮")
+                Surface(
+                    shape = MaterialTheme.shapes.extraLarge,
+                    // 深色里 surfaceContainerLowest 比弹层更暗，会看成被挖掉一块；跟着主题取浮层色。
+                    color = proferFloatingSurface(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = ProferSpacing.lg),
+                ) {
+                    Column {
+                        ComposerSheetRow(Icons.Outlined.Bolt, "模型", modelLabel, onModelClick, iconRes = modelIconRes)
+                        if (presetLabel != null && onPresetClick != null) {
+                            ComposerSheetRow(Icons.Outlined.WorkOutline, "预设", presetLabel, onPresetClick, divider = true)
+                        }
+                        if (showModeSelector) {
+                            ComposerSheetRow(Icons.Outlined.Tune, "权限", modeLabel, onModeClick, divider = true)
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/** 动作方块：软色底 + 图标，标签在下方；和参考稿的相册/拍照/文件同一种形体。 */
+@Composable
+private fun ComposerActionTile(
+    icon: ImageVector,
+    label: String,
+    container: Color,
+    content: Color,
+    onClick: () -> Unit,
+    badge: String? = null,
+) {
+    Column(
+        modifier = Modifier
+            .width(76.dp)
+            .clip(MaterialTheme.shapes.large)
+            .clickable(role = Role.Button, onClick = onClick)
+            .padding(vertical = ProferSpacing.xs),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(ProferSpacing.xs),
+    ) {
+        Box(
+            modifier = Modifier
+                .size(60.dp)
+                .clip(MaterialTheme.shapes.large)
+                .background(container),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                tint = content,
+                modifier = Modifier.size(26.dp),
+            )
+        }
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurface,
+            maxLines = 1,
+        )
+        if (badge != null) {
+            Text(
+                text = badge,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.primary,
+                maxLines = 1,
+            )
+        }
+    }
+}
+
+/** 分组标题，和「选择预设」里的分组标签同一套。 */
+@Composable
+private fun ComposerSheetSection(text: String) {
+    Text(
+        text = text,
+        style = MaterialTheme.typography.labelMedium,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(
+                start = ProferSpacing.xl,
+                end = ProferSpacing.xl,
+                top = ProferSpacing.md,
+                bottom = 4.dp,
+            ),
+    )
+}
+
+/** 弹层行：图标 + 标签 + 当前值 + chevron，整行 56dp 可点。 */
+@Composable
+private fun ComposerSheetRow(
+    icon: ImageVector,
+    label: String,
+    value: String?,
+    onClick: () -> Unit,
+    iconRes: Int? = null,
+    chevron: Boolean = true,
+    divider: Boolean = false,
+) {
+    Column {
+        if (divider) {
+            HorizontalDivider(
+                modifier = Modifier.padding(start = 52.dp),
+                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f),
+            )
+        }
+        Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(role = Role.Button, onClick = onClick)
+            .heightIn(min = 56.dp)
+            .padding(horizontal = ProferSpacing.md, vertical = ProferSpacing.sm),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(ProferSpacing.md),
+    ) {
+        if (iconRes != null) {
+            Image(
+                painter = painterResource(iconRes),
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier
+                    .size(20.dp)
+                    .clip(RoundedCornerShape(5.dp)),
+            )
+        } else {
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(20.dp),
+            )
+        }
+        Text(
+            text = label,
+            style = MaterialTheme.typography.bodyLarge,
+            color = MaterialTheme.colorScheme.onSurface,
+            maxLines = 1,
+            modifier = Modifier.weight(1f),
+        )
+        if (value != null) {
+            Text(
+                text = value,
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.widthIn(max = 168.dp),
+            )
+        }
+        if (chevron) {
+            Icon(
+                imageVector = Icons.Outlined.ChevronRight,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+                modifier = Modifier.size(18.dp),
+            )
+        }
+        }
+    }
+}
+
+/** 端键：40dp 圆，淡底，图标 22dp。和发送键同一尺寸、同一位置。 */
+@Composable
+private fun ComposerKey(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    contentDescription: String,
+    onClick: () -> Unit,
+    tint: Color = MaterialTheme.colorScheme.onSurfaceVariant,
+) {
+    Box(
+        modifier = Modifier
+            .size(40.dp)
+            .clip(CircleShape)
+            .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f))
+            .clickable(role = Role.Button, onClick = onClick)
+            .semantics { this.contentDescription = contentDescription },
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = null,
+            tint = tint,
+            modifier = Modifier.size(22.dp),
+        )
+    }
+}
+
+/**
+ * 发送 / 停止：40dp 圆始终存在。
+ * 空输入是淡底 + 38% 箭头，有字或运行中变实心主色——位置不变，用户不用找。
  */
 @Composable
 private fun SendAction(
     streaming: Boolean,
-    canSend: Boolean,
-    enabled: Boolean,
+    active: Boolean,
     onSend: () -> Unit,
     onStop: () -> Unit,
 ) {
-    val active = streaming || canSend
+    val container = if (active) {
+        MaterialTheme.colorScheme.primary
+    } else {
+        MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f)
+    }
+    val content = if (active) {
+        MaterialTheme.colorScheme.onPrimary
+    } else {
+        MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
+    }
     Box(
         modifier = Modifier
-            .size(ProferSizes.minTouchTarget)
+            .size(40.dp)
             .clip(CircleShape)
-            .clickable(enabled = enabled, role = Role.Button) {
+            .background(container)
+            .clickable(enabled = active, role = Role.Button) {
                 if (streaming) onStop() else onSend()
             }
-            // 标签跟点击动作放同一节点：读屏焦点不会落到 20dp 的图标上。
             .semantics { contentDescription = if (streaming) "停止" else "发送" },
         contentAlignment = Alignment.Center,
     ) {
-        // 空输入时不画圆：一块灰圆盘会和胶囊抢焦点，而且看起来像已经能按。
-        // 只留一枚淡箭头，位置不变，有字时再浮出实心圆。
-        if (!active) {
-            Icon(
-                imageVector = Icons.Outlined.ArrowUpward,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.38f),
-                modifier = Modifier.size(22.dp),
-            )
-        } else {
-            Surface(
-                modifier = Modifier.size(40.dp),
-                shape = CircleShape,
-                color = MaterialTheme.colorScheme.primary,
-            ) {
-                Box(contentAlignment = Alignment.Center) {
-                    Icon(
-                        imageVector = if (streaming) {
-                            Icons.Outlined.Stop
-                        } else {
-                            Icons.Outlined.ArrowUpward
-                        },
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.onPrimary,
-                        modifier = Modifier.size(20.dp),
-                    )
-                }
-            }
-        }
+        Icon(
+            imageVector = if (streaming) Icons.Outlined.Stop else Icons.Outlined.ArrowUpward,
+            contentDescription = null,
+            tint = content,
+            modifier = Modifier.size(if (streaming) 20.dp else 22.dp),
+        )
     }
 }
 

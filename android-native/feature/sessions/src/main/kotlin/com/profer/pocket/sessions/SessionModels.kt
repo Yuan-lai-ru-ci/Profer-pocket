@@ -18,7 +18,7 @@ data class SessionItem(
     val projectName: String? = null,
     /** 挂在当前行下面的子会话（委派子会话 / 探索分支）；根会话恒为空。 */
     val children: List<SessionItem> = emptyList(),
-    /** 自己就是子会话：以根行身份出现时（置顶/搜索）靠它标出层级。 */
+    /** 自己就是子会话：以根行身份出现时（搜索）靠它标出层级。 */
     val isSubSession: Boolean = false,
     /** 子会话角色标签：「探索分支」「调研」「实现」…；普通会话为 null。 */
     val roleLabel: String? = null,
@@ -26,6 +26,8 @@ data class SessionItem(
     val delegationStatus: String? = null,
     /** 探索分支：子行用分叉图标，而不是委派的分支图标。 */
     val isExploration: Boolean = false,
+    /** 由定时任务创建/复用：行内用钟表标记（与桌面侧栏同口径）。 */
+    val sourcedByAutomation: Boolean = false,
 ) {
     /** 本行及其子会话的运行中数量。 */
     val activeCount: Int get() = (if (running) 1 else 0) + children.count { it.running }

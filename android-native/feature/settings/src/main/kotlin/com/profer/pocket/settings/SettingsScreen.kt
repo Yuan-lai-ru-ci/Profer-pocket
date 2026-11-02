@@ -1,56 +1,64 @@
 package com.profer.pocket.settings
 
+import android.content.res.Configuration
 import android.os.Build
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.consumeWindowInsets
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.selectableGroup
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.ChevronRight
-import androidx.compose.material.icons.outlined.DesktopWindows
-import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.SegmentedButton
-import androidx.compose.material3.SegmentedButtonDefaults
-import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
-import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import com.profer.pocket.designsystem.adaptive.rememberProferWindowSize
+import com.profer.pocket.designsystem.component.ProferBackdrop
 import com.profer.pocket.designsystem.component.ProferDivider
+import com.profer.pocket.designsystem.component.ProferHeaderRow
 import com.profer.pocket.designsystem.component.ProferIconAction
 import com.profer.pocket.designsystem.component.ProferMark
 import com.profer.pocket.designsystem.component.ProferSectionLabel
-import com.profer.pocket.designsystem.component.ProferStatusDot
+import com.profer.pocket.designsystem.theme.ProferSizes
 import com.profer.pocket.designsystem.theme.ProferSpacing
-import com.profer.pocket.designsystem.theme.ProferThemeExtras
+import com.profer.pocket.designsystem.theme.ProferTheme
 
 enum class ThemePreference(val label: String) {
     System("跟随系统"),
@@ -58,7 +66,40 @@ enum class ThemePreference(val label: String) {
     Dark("深色"),
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+/** 设置分组。平板左侧导航按这个顺序排，手机仍是一列长滚动。 */
+private enum class SettingsSection(val label: String) {
+    Appearance("外观"),
+    Update("更新"),
+    Notifications("通知"),
+    Connection("连接"),
+    About("关于"),
+    Developer("开发者"),
+}
+
+/** 设置页参数集合：两栏时右侧只渲染一个分组，参数要能整体传给分组卡片。 */
+private data class SettingsParams(
+    val themePreference: ThemePreference,
+    val onThemePreferenceChange: (ThemePreference) -> Unit,
+    val updateLabel: String?,
+    val onCheckUpdate: () -> Unit,
+    val internalUpdateLabel: String?,
+    val notificationsEnabled: Boolean,
+    val onNotificationsChange: (Boolean) -> Unit,
+    val permissionAlertsEnabled: Boolean,
+    val onPermissionAlertsChange: (Boolean) -> Unit,
+    val autoReconnect: Boolean,
+    val onAutoReconnectChange: (Boolean) -> Unit,
+    val backgroundConnection: Boolean,
+    val onBackgroundConnectionChange: (Boolean) -> Unit,
+    val connected: Boolean,
+    val deviceLabel: String,
+    val onOpenConnection: () -> Unit,
+    val versionLabel: String,
+    val onVersionTap: () -> Unit,
+    val showDeveloperTools: Boolean,
+    val onOpenStressTest: () -> Unit,
+)
+
 @Composable
 fun SettingsScreen(
     themePreference: ThemePreference,
@@ -98,223 +139,306 @@ fun SettingsScreen(
             "$name ($code)"
         }.getOrNull() ?: "未知"
     }
-    Scaffold(
-        modifier = modifier,
-        containerColor = MaterialTheme.colorScheme.background,
-        topBar = {
-            TopAppBar(
-                title = {
-                    Text(
-                        text = "设置",
-                        style = MaterialTheme.typography.titleMedium,
-                        color = MaterialTheme.colorScheme.onSurface,
-                    )
-                },
-                navigationIcon = {
-                    ProferIconAction(
-                        icon = Icons.AutoMirrored.Outlined.ArrowBack,
-                        contentDescription = "返回",
-                        onClick = onBack,
-                    )
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.background,
-                ),
-            )
+    val params = SettingsParams(
+        themePreference = themePreference,
+        onThemePreferenceChange = onThemePreferenceChange,
+        updateLabel = updateLabel,
+        onCheckUpdate = onCheckUpdate,
+        internalUpdateLabel = internalUpdateLabel,
+        notificationsEnabled = notificationsEnabled,
+        onNotificationsChange = onNotificationsChange,
+        permissionAlertsEnabled = permissionAlertsEnabled,
+        onPermissionAlertsChange = onPermissionAlertsChange,
+        autoReconnect = autoReconnect,
+        onAutoReconnectChange = onAutoReconnectChange,
+        backgroundConnection = backgroundConnection,
+        onBackgroundConnectionChange = onBackgroundConnectionChange,
+        connected = connected,
+        deviceLabel = deviceLabel,
+        onOpenConnection = onOpenConnection,
+        versionLabel = versionLabel,
+        onVersionTap = {
+            // 连点 10 次才走 AList 测试通道；平时只是普通点击。
+            versionTapCount += 1
+            if (versionTapCount >= 10) {
+                versionTapCount = 0
+                onCheckInternalUpdate()
+            }
         },
-    ) { innerPadding ->
+        showDeveloperTools = showDeveloperTools,
+        onOpenStressTest = onOpenStressTest,
+    )
+    val sections = remember(showDeveloperTools) {
+        SettingsSection.entries.filter { it != SettingsSection.Developer || showDeveloperTools }
+    }
+    var selected by rememberSaveable { mutableStateOf(SettingsSection.Appearance) }
+    val twoPane = rememberProferWindowSize().isTwoPane
+
+    ProferBackdrop(modifier = modifier) {
+        // 平板/桌面下顶栏与内容一起居中；两栏时整页放宽到 1120dp。
+        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
+            Scaffold(
+                modifier = Modifier
+                    .widthIn(max = if (twoPane) 1120.dp else ProferSizes.contentMaxWidth)
+                    .fillMaxHeight(),
+                containerColor = Color.Transparent,
+                topBar = {
+                    ProferHeaderRow {
+                        ProferIconAction(Icons.AutoMirrored.Outlined.ArrowBack, "返回", onBack)
+                        Text(
+                            "设置",
+                            style = MaterialTheme.typography.headlineSmall,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            modifier = Modifier.weight(1f).padding(horizontal = ProferSpacing.md),
+                        )
+                    }
+                },
+            ) { innerPadding ->
+                if (twoPane) {
+                    SettingsTwoPane(
+                        sections = sections,
+                        selected = selected,
+                        onSelect = { selected = it },
+                        params = params,
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(innerPadding)
+                            .consumeWindowInsets(innerPadding),
+                    )
+                } else {
+                    SettingsSinglePane(
+                        sections = sections,
+                        params = params,
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(innerPadding)
+                            .consumeWindowInsets(innerPadding),
+                    )
+                }
+            }
+        }
+    }
+}
+
+/**
+ * 平板两栏：左侧分组导航（220dp），右侧只渲染当前分组。
+ * 手机是一列长滚动，平板再照搬会让人滚十屏找「通知」。
+ */
+@Composable
+private fun SettingsTwoPane(
+    sections: List<SettingsSection>,
+    selected: SettingsSection,
+    onSelect: (SettingsSection) -> Unit,
+    params: SettingsParams,
+    modifier: Modifier = Modifier,
+) {
+    Row(modifier = modifier) {
         Column(
             modifier = Modifier
-                .padding(innerPadding)
-                .fillMaxSize()
-                .verticalScroll(rememberScrollState())
-                .navigationBarsPadding()
-                .padding(horizontal = ProferSpacing.lg),
-            verticalArrangement = Arrangement.spacedBy(ProferSpacing.sm),
+                .width(220.dp)
+                .fillMaxHeight()
+                .padding(horizontal = ProferSpacing.sm, vertical = ProferSpacing.md),
+            verticalArrangement = Arrangement.spacedBy(ProferSpacing.xxs),
         ) {
-            SectionTitle("外观")
-            SettingsCard {
-                Column(modifier = Modifier.padding(ProferSpacing.md)) {
-                    SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
-                        ThemePreference.entries.forEachIndexed { index, preference ->
-                            SegmentedButton(
-                                selected = preference == themePreference,
-                                onClick = { onThemePreferenceChange(preference) },
-                                shape = SegmentedButtonDefaults.itemShape(
-                                    index = index,
-                                    count = ThemePreference.entries.size,
-                                ),
-                                colors = SegmentedButtonDefaults.colors(
-                                    activeContainerColor = MaterialTheme.colorScheme.primaryContainer,
-                                    activeContentColor = MaterialTheme.colorScheme.onPrimaryContainer,
-                                    inactiveContainerColor = MaterialTheme.colorScheme.surfaceContainerLow,
-                                    inactiveContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                                ),
-                            ) {
-                                Text(
-                                    text = preference.label,
-                                    style = MaterialTheme.typography.labelMedium,
-                                    maxLines = 1,
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-
-            SectionTitle("更新")
-            SettingsCard {
-                SettingsActionRow(
-                    title = "检查更新",
-                    subtitle = updateLabel,
-                    onClick = onCheckUpdate,
-                )
-                if (internalUpdateLabel != null) {
-                    ProferDivider(insetStart = 16.dp)
-                    SettingsValueRow(title = "测试通道", value = internalUpdateLabel)
-                }
-            }
-
-            SectionTitle("通知")
-            SettingsCard {
-                SettingsSwitchRow(
-                    title = "任务完成通知",
-                    checked = notificationsEnabled,
-                    onCheckedChange = onNotificationsChange,
-                )
-                ProferDivider(insetStart = 16.dp)
-                SettingsSwitchRow(
-                    title = "需要你决定时提醒",
-                    checked = permissionAlertsEnabled,
-                    onCheckedChange = onPermissionAlertsChange,
+            sections.forEach { section ->
+                SettingsNavItem(
+                    label = section.label,
+                    selected = section == selected,
+                    onClick = { onSelect(section) },
                 )
             }
-
-            SectionTitle("连接")
-            SettingsCard {
-                SettingsSwitchRow(
-                    title = "自动重连",
-                    checked = autoReconnect,
-                    onCheckedChange = onAutoReconnectChange,
+        }
+        Box(
+            Modifier
+                .width(ProferSizes.hairline)
+                .fillMaxHeight()
+                .background(MaterialTheme.colorScheme.outlineVariant),
+        )
+        Box(
+            modifier = Modifier.weight(1f).fillMaxHeight(),
+            // 宽屏下右栏比内容宽：居中，避免内容贴在分隔线、右边空一大块。
+            contentAlignment = Alignment.TopCenter,
+        ) {
+            Column(
+                modifier = Modifier
+                    .widthIn(max = 640.dp)
+                    .fillMaxHeight()
+                    .verticalScroll(rememberScrollState())
+                    .padding(horizontal = ProferSpacing.xl, vertical = ProferSpacing.lg),
+                verticalArrangement = Arrangement.spacedBy(ProferSpacing.md),
+            ) {
+                Text(
+                    text = "让 Profer 按你的习惯工作。",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-                ProferDivider(insetStart = 16.dp)
-                SettingsSwitchRow(
-                    title = "后台保持连接",
-                    checked = backgroundConnection,
-                    onCheckedChange = onBackgroundConnectionChange,
-                )
-                ProferDivider(insetStart = 16.dp)
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(14.dp))
-                        .clickable(onClick = onOpenConnection)
-                        .heightIn(min = 60.dp)
-                        .padding(horizontal = ProferSpacing.md),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(ProferSpacing.md),
-                ) {
-                    Icon(
-                        imageVector = Icons.Outlined.DesktopWindows,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.size(20.dp),
-                    )
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = if (connected) "已连接的设备" else "未连接",
-                            style = MaterialTheme.typography.bodyLarge,
-                            color = MaterialTheme.colorScheme.onSurface,
-                        )
-                        if (connected) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                            ) {
-                                ProferStatusDot(
-                                    color = ProferThemeExtras.semantic.success,
-                                    size = 5.dp,
-                                )
-                                Text(
-                                    text = deviceLabel,
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
-                            }
-                        }
-                    }
-                    Icon(
-                        imageVector = Icons.Outlined.ChevronRight,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.size(18.dp),
-                    )
-                }
+                SettingsSectionCard(selected, params)
             }
+        }
+    }
+}
 
-            SectionTitle("关于")
-            SettingsCard {
-                SettingsValueRow(
-                    title = "版本",
-                    value = versionLabel,
-                    onClick = {
-                        // 连点 10 次才走 AList 测试通道；平时只是普通点击。
-                        versionTapCount += 1
-                        if (versionTapCount >= 10) {
-                            versionTapCount = 0
-                            onCheckInternalUpdate()
-                        }
-                    },
-                )
-                ProferDivider(insetStart = 16.dp)
-                SettingsValueRow(title = "协议", value = "Pocket WS v1")
-            }
+@Composable
+private fun SettingsNavItem(label: String, selected: Boolean, onClick: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(min = ProferSizes.minTouchTarget)
+            .clip(MaterialTheme.shapes.large)
+            .background(
+                if (selected) MaterialTheme.colorScheme.surfaceContainerHigh else Color.Transparent,
+            )
+            .clickable(role = Role.Tab, onClick = onClick)
+            .padding(horizontal = ProferSpacing.md, vertical = ProferSpacing.sm),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.bodyLarge,
+            color = if (selected) {
+                MaterialTheme.colorScheme.onSurface
+            } else {
+                MaterialTheme.colorScheme.onSurfaceVariant
+            },
+        )
+    }
+}
 
-            if (showDeveloperTools) {
-                SectionTitle("开发者")
-                SettingsCard {
+@Composable
+private fun SettingsSinglePane(
+    sections: List<SettingsSection>,
+    params: SettingsParams,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier = modifier
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = ProferSpacing.lg),
+        verticalArrangement = Arrangement.spacedBy(ProferSpacing.sm),
+    ) {
+        Text(
+            "让 Profer 按你的习惯工作。",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        sections.forEach { section ->
+            SectionTitle(section.label)
+            SettingsSectionCard(section, params)
+        }
+        Spacer(modifier = Modifier.height(ProferSpacing.lg))
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(bottom = ProferSpacing.xxl),
+            horizontalArrangement = Arrangement.Center,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            ProferMark(size = ProferSizes.iconSmall)
+            Text(
+                text = "Profer 安卓原生版",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(start = ProferSpacing.sm),
+            )
+        }
+    }
+}
+
+/** 单个分组的内容面；手机与平板共用，避免两套设置项各写一遍。 */
+@Composable
+private fun SettingsSectionCard(section: SettingsSection, params: SettingsParams) {
+    when (section) {
+        SettingsSection.Appearance -> SettingsCard {
+            Column(Modifier.selectableGroup()) {
+                ThemePreference.entries.forEachIndexed { index, preference ->
+                    if (index > 0) ProferDivider(insetStart = ProferSpacing.lg)
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clip(RoundedCornerShape(14.dp))
-                            .clickable(onClick = onOpenStressTest)
-                            .heightIn(min = 60.dp)
-                            .padding(horizontal = ProferSpacing.md),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = "长列表滚动检查",
-                                style = MaterialTheme.typography.bodyLarge,
-                                color = MaterialTheme.colorScheme.onSurface,
+                            .heightIn(min = ProferSizes.listItemHeight)
+                            .selectable(
+                                selected = preference == params.themePreference,
+                                role = Role.RadioButton,
+                                onClick = { params.onThemePreferenceChange(preference) },
                             )
-                        }
-                        Icon(
-                            imageVector = Icons.Outlined.ChevronRight,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.size(18.dp),
+                            .padding(horizontal = ProferSpacing.lg, vertical = ProferSpacing.sm),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(ProferSpacing.md),
+                    ) {
+                        Text(
+                            preference.label,
+                            style = MaterialTheme.typography.bodyLarge,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            modifier = Modifier.weight(1f),
                         )
+                        RadioButton(selected = preference == params.themePreference, onClick = null)
                     }
                 }
             }
+        }
 
-            Spacer(modifier = Modifier.height(ProferSpacing.lg))
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(bottom = ProferSpacing.xxl),
-                horizontalArrangement = Arrangement.Center,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                ProferMark(size = 18.dp)
-                Text(
-                    text = "Profer 安卓原生版",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(start = 8.dp),
-                )
+        SettingsSection.Update -> SettingsCard {
+            SettingsActionRow(
+                title = "检查更新",
+                subtitle = params.updateLabel ?: "获取最新版本与改进",
+                onClick = params.onCheckUpdate,
+            )
+            if (params.internalUpdateLabel != null) {
+                ProferDivider(insetStart = ProferSpacing.lg)
+                SettingsValueRow(title = "测试通道", value = params.internalUpdateLabel)
             }
+        }
+
+        SettingsSection.Notifications -> SettingsCard {
+            SettingsSwitchRow(
+                title = "任务完成通知",
+                checked = params.notificationsEnabled,
+                onCheckedChange = params.onNotificationsChange,
+            )
+            ProferDivider(insetStart = ProferSpacing.lg)
+            SettingsSwitchRow(
+                title = "需要你决定时提醒",
+                checked = params.permissionAlertsEnabled,
+                onCheckedChange = params.onPermissionAlertsChange,
+            )
+        }
+
+        SettingsSection.Connection -> SettingsCard {
+            SettingsSwitchRow(
+                title = "自动重连",
+                checked = params.autoReconnect,
+                onCheckedChange = params.onAutoReconnectChange,
+            )
+            ProferDivider(insetStart = ProferSpacing.lg)
+            SettingsSwitchRow(
+                title = "后台保持连接",
+                checked = params.backgroundConnection,
+                onCheckedChange = params.onBackgroundConnectionChange,
+            )
+            ProferDivider(insetStart = ProferSpacing.lg)
+            SettingsActionRow(
+                title = if (params.connected) "已连接的设备" else "连接电脑",
+                subtitle = if (params.connected) params.deviceLabel else "当前离线，扫码或手动连接以继续",
+                onClick = params.onOpenConnection,
+            )
+        }
+
+        SettingsSection.About -> SettingsCard {
+            SettingsValueRow(
+                title = "版本",
+                value = params.versionLabel,
+                onClick = params.onVersionTap,
+            )
+            ProferDivider(insetStart = ProferSpacing.lg)
+            SettingsValueRow(title = "协议", value = "Pocket WS v1")
+        }
+
+        SettingsSection.Developer -> SettingsCard {
+            SettingsActionRow(
+                title = "长列表滚动检查",
+                subtitle = "240 条消息的滚动位置与性能",
+                onClick = params.onOpenStressTest,
+            )
         }
     }
 }
@@ -324,9 +448,9 @@ private fun SectionTitle(text: String) {
     ProferSectionLabel(
         text = text,
         modifier = Modifier.padding(
-            start = 2.dp,
-            end = 2.dp,
-            top = ProferSpacing.md,
+            start = ProferSpacing.xs,
+            end = ProferSpacing.xs,
+            top = ProferSpacing.lg,
         ),
     )
 }
@@ -335,9 +459,8 @@ private fun SectionTitle(text: String) {
 private fun SettingsCard(content: @Composable () -> Unit) {
     Surface(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(16.dp),
+        shape = MaterialTheme.shapes.large,
         color = MaterialTheme.colorScheme.surfaceContainerLow,
-        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
     ) {
         Column { content() }
     }
@@ -352,9 +475,9 @@ private fun SettingsActionRow(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .heightIn(min = 64.dp)
-            .clip(RoundedCornerShape(16.dp))
-            .clickable(onClick = onClick)
+            .heightIn(min = ProferSizes.listItemHeight)
+            .clip(MaterialTheme.shapes.large)
+            .clickable(role = Role.Button, onClick = onClick)
             .padding(horizontal = ProferSpacing.md, vertical = ProferSpacing.sm),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -378,8 +501,9 @@ private fun SettingsSwitchRow(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .heightIn(min = 64.dp)
-            .padding(horizontal = ProferSpacing.md, vertical = ProferSpacing.sm),
+            .heightIn(min = ProferSizes.listItemHeight)
+            .toggleable(value = checked, role = Role.Switch, onValueChange = onCheckedChange)
+            .padding(horizontal = ProferSpacing.lg, vertical = ProferSpacing.md),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Column(modifier = Modifier.weight(1f)) {
@@ -391,48 +515,53 @@ private fun SettingsSwitchRow(
             if (!subtitle.isNullOrBlank()) {
                 Text(
                     text = subtitle,
-                    style = MaterialTheme.typography.labelSmall,
+                    style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
         }
         Box(modifier = Modifier.padding(start = ProferSpacing.sm)) {
-            Switch(
-                checked = checked,
-                onCheckedChange = onCheckedChange,
-                colors = SwitchDefaults.colors(
-                    checkedThumbColor = MaterialTheme.colorScheme.onTertiary,
-                    checkedTrackColor = MaterialTheme.colorScheme.tertiary,
-                    checkedBorderColor = androidx.compose.ui.graphics.Color.Transparent,
-                    uncheckedThumbColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                    uncheckedTrackColor = MaterialTheme.colorScheme.surfaceContainerHigh,
-                    uncheckedBorderColor = MaterialTheme.colorScheme.outline,
-                ),
-            )
+            Switch(checked = checked, onCheckedChange = null)
         }
     }
 }
 
 @Composable
 private fun SettingsValueRow(title: String, value: String, onClick: (() -> Unit)? = null) {
-    Row(
+    Column(
         modifier = Modifier
             .fillMaxWidth()
-            .heightIn(min = 52.dp)
-            .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
-            .padding(horizontal = ProferSpacing.md),
-        verticalAlignment = Alignment.CenterVertically,
+            .heightIn(min = ProferSizes.listItemHeight)
+            .then(if (onClick != null) Modifier.clickable(role = Role.Button, onClick = onClick) else Modifier)
+            .padding(horizontal = ProferSpacing.lg, vertical = ProferSpacing.md),
+        verticalArrangement = Arrangement.spacedBy(ProferSpacing.xs),
     ) {
         Text(
             text = title,
             style = MaterialTheme.typography.bodyLarge,
             color = MaterialTheme.colorScheme.onSurface,
-            modifier = Modifier.weight(1f),
         )
         Text(
             text = value,
-            style = MaterialTheme.typography.labelMedium,
+            style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
+
+@Preview(name = "设置 · 浅色", showBackground = true)
+@Preview(name = "设置 · 深色", showBackground = true, uiMode = Configuration.UI_MODE_NIGHT_YES)
+@Preview(name = "设置 · 大字号", showBackground = true, fontScale = 2f)
+@Composable
+private fun SettingsPreview() {
+    ProferTheme(darkTheme = isSystemInDarkTheme()) {
+        SettingsScreen(
+            themePreference = ThemePreference.System, onThemePreferenceChange = {},
+            notificationsEnabled = true, onNotificationsChange = {},
+            permissionAlertsEnabled = true, onPermissionAlertsChange = {},
+            autoReconnect = true, onAutoReconnectChange = {},
+            backgroundConnection = false, onBackgroundConnectionChange = {},
+            connected = false, deviceLabel = "MacBook Pro", onOpenConnection = {}, onBack = {},
         )
     }
 }

@@ -62,4 +62,33 @@ class UiMappingConnectionStateTest {
         assertEquals("192.168.1.9", state.deviceName)
         assertEquals("ws://192.168.1.9:7788/ws", state.deviceAddress)
     }
+
+    @Test
+    fun `两台手动设备的列表名可区分`() {
+        val first = RemoteDevice(
+            profile.copy(
+                deviceId = "legacy-1",
+                deviceName = "手动连接",
+                endpoints = listOf(RemoteEndpoint("ws://192.168.1.9:7788/ws", EndpointScope.LAN)),
+            ),
+            TransportMode.LEGACY_QUERY,
+        )
+        val second = RemoteDevice(
+            profile.copy(
+                deviceId = "legacy-2",
+                deviceName = "手动连接",
+                endpoints = listOf(RemoteEndpoint("ws://yuan.profer.cn:24221/ws", EndpointScope.PUBLIC)),
+            ),
+            TransportMode.LEGACY_QUERY,
+        )
+        val state = UiMapping.connectionState(
+            status = ConnectionStatus.Connected("ws://192.168.1.9:7788/ws"),
+            url = "",
+            token = "token",
+            hasSavedToken = true,
+            devices = listOf(first, second),
+            activeDeviceId = "legacy-1",
+        )
+        assertEquals(listOf("192.168.1.9", "yuan.profer.cn"), state.devices.map { it.name })
+    }
 }

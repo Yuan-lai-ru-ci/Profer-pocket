@@ -733,11 +733,15 @@ class PocketViewModel(application: Application) : AndroidViewModel(application) 
             }
         }
         _attachments.update { it - id }
-        // 运行中的发送默认排队（queue_message），不打断当前 turn；停止键仍是显式动作。
-        val running = repository.chats.value[id]?.running == true
+        // 运行中发送与桌面同口径：流式回复时直接插入（软打断当前 turn），
+        // 后台等待（run 已结束、后台任务未完成）时只注入不打断；停止键仍是显式动作。
+        val chat = repository.chats.value[id]
+        val running = chat?.running == true || chat?.backgroundWaiting == true
+        val interrupt = chat?.backgroundWaiting != true
         viewModelScope.launch {
             if (running) {
-                repository.queueMessage(id, payload).onFailure { _message.value = it.toPocketMessage() }
+                repository.queueMessage(id, payload, interrupt = interrupt)
+                    .onFailure { _message.value = it.toPocketMessage() }
             } else {
                 repository.sendMessage(id, payload)
             }
@@ -858,10 +862,14 @@ class PocketViewModel(application: Application) : AndroidViewModel(application) 
 
     fun resend(text: String) {
         val id = currentSessionId() ?: return
-        val running = repository.chats.value[id]?.running == true
+        val chat = repository.chats.value[id]
+        val running = chat?.running == true || chat?.backgroundWaiting == true
+        // 与 send() 同口径：流式时直接插入，后台等待只注入不打断。
+        val interrupt = chat?.backgroundWaiting != true
         viewModelScope.launch {
             if (running) {
-                repository.queueMessage(id, text).onFailure { _message.value = it.toPocketMessage() }
+                repository.queueMessage(id, text, interrupt = interrupt)
+                    .onFailure { _message.value = it.toPocketMessage() }
             } else {
                 repository.sendMessage(id, text)
             }
@@ -961,6 +969,19 @@ class PocketViewModel(application: Application) : AndroidViewModel(application) 
 
     fun updatePin(pin: String) {
         _pinInput.value = pin.trim()
+    }
+
+    /**
+     * 清空手动连接表单。
+     *
+     * 已连接时表单会回显当前设备的地址与端口，直接改成另一台电脑容易被旧值误导；
+     * 清空只影响输入框，不动已保存的设备与凭据。
+     */
+    fun clearManualForm() {
+        _urlInput.value = ""
+        _portInput.value = ""
+        _tokenInput.value = ""
+        _pinInput.value = ""
     }
 
     /** 地址 + 端口拼成连接地址：已带 scheme 时保留 scheme，缺端口时补上端口。 */

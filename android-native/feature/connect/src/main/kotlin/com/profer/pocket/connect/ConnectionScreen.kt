@@ -1,80 +1,69 @@
 package com.profer.pocket.connect
 
+import android.content.res.Configuration
+import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.consumeWindowInsets
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
-import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.BasicTextField
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
-import androidx.compose.material.icons.outlined.Check
-import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.DesktopWindows
 import androidx.compose.material.icons.outlined.ErrorOutline
-import androidx.compose.material.icons.outlined.KeyboardArrowDown
-import androidx.compose.material.icons.outlined.KeyboardArrowUp
-import androidx.compose.material.icons.outlined.Link
-import androidx.compose.material.icons.outlined.Lock
-import androidx.compose.material.icons.outlined.QrCodeScanner
 import androidx.compose.material.icons.outlined.Refresh
-import androidx.compose.material.icons.outlined.Wifi
-import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TopAppBarDefaults
-import android.widget.Toast
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.saveable.rememberSaveable
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.text.input.PasswordVisualTransformation
-import androidx.compose.ui.unit.dp
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.tooling.preview.Preview
+import com.profer.pocket.designsystem.component.ProferBackdrop
 import com.profer.pocket.designsystem.component.ProferDivider
+import com.profer.pocket.designsystem.component.ProferHeaderRow
 import com.profer.pocket.designsystem.component.ProferIconAction
+import com.profer.pocket.designsystem.component.ProferSectionLabel
 import com.profer.pocket.designsystem.component.ProferStatusDot
-import com.profer.pocket.designsystem.theme.ProferCodeTextStyle
 import com.profer.pocket.designsystem.theme.ProferSizes
 import com.profer.pocket.designsystem.theme.ProferSpacing
+import com.profer.pocket.designsystem.theme.ProferTheme
 import com.profer.pocket.designsystem.theme.ProferThemeExtras
 
-@OptIn(ExperimentalMaterial3Api::class)
+/**
+ * 连接页：以「设备」为中心，而不是以「连接阶段」为中心。
+ *
+ * - 任何阶段都能添加设备：扫码与手动地址 + Token 两条入口并列（见 [AddDeviceCard]）；
+ * - 已绑定设备列表常驻，可直接切换或移除，不必先断开；
+ * - 阶段只决定状态卡片形态，不决定用户还能做什么。
+ */
 @Composable
 fun ConnectionScreen(
     state: ConnectionUiState,
@@ -87,6 +76,8 @@ fun ConnectionScreen(
     onDisconnect: () -> Unit,
     onCancel: () -> Unit,
     onScan: () -> Unit,
+    onPairingText: (String) -> Unit,
+    onClearForm: () -> Unit,
     onSelectDevice: (String) -> Unit,
     onRemoveDevice: (String) -> Unit,
     onDismissPairing: () -> Unit,
@@ -94,135 +85,128 @@ fun ConnectionScreen(
 ) {
     val clipboard = LocalClipboardManager.current
     val context = LocalContext.current
-    // 粘贴地址：连不上时最常用的一条恢复动作，连接页两个入口共用一份实现。
-    val pasteAddress: () -> Unit = {
+    // 粘贴：换设备或连不上时最常用的一条动作，扫码与手动表单共用一份实现。
+    // 剪贴板里是配对二维码 JSON 时直接走配对，等同扫码，不必再找摄像头。
+    val pasteConnection: () -> Unit = {
         val text = clipboard.getText()?.text?.trim().orEmpty()
-        if (text.isBlank()) {
-            Toast.makeText(context, "剪贴板里没有可用地址", Toast.LENGTH_SHORT).show()
-        } else {
-            onUrlChange(text)
-            Toast.makeText(context, "已粘贴连接地址", Toast.LENGTH_SHORT).show()
+        when {
+            text.isBlank() ->
+                Toast.makeText(context, "剪贴板里没有可用地址", Toast.LENGTH_SHORT).show()
+
+            ConnectionPaste.isPairingPayload(text) -> {
+                onPairingText(text)
+                Toast.makeText(context, "已粘贴配对信息，正在配对…", Toast.LENGTH_SHORT).show()
+            }
+
+            else -> {
+                onUrlChange(text)
+                Toast.makeText(context, "已粘贴连接地址", Toast.LENGTH_SHORT).show()
+            }
         }
     }
 
-    Scaffold(
-        modifier = modifier,
-        containerColor = MaterialTheme.colorScheme.background,
-        topBar = {
-            TopAppBar(
-                title = {
-                    Text(
-                        text = "连接",
-                        style = MaterialTheme.typography.titleMedium,
-                        color = MaterialTheme.colorScheme.onSurface,
-                    )
-                },
-                navigationIcon = {
-                    ProferIconAction(
-                        icon = Icons.AutoMirrored.Outlined.ArrowBack,
-                        contentDescription = "返回",
-                        onClick = onBack,
-                    )
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.background,
-                ),
-            )
-        },
-    ) { innerPadding ->
-        Column(
+    ProferBackdrop(modifier = modifier) {
+        // 平板/桌面下顶栏与内容一起限制在 760dp 居中，避免标题贴在屏幕最左、内容却缩在中间。
+        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
+        Scaffold(
             modifier = Modifier
-                .padding(innerPadding)
-                .fillMaxSize()
-                .verticalScroll(rememberScrollState())
-                .imePadding()
-                .navigationBarsPadding()
-                .padding(horizontal = ProferSpacing.lg),
-        ) {
-            Spacer(modifier = Modifier.height(ProferSpacing.md))
-
-            when (state.phase) {
-                ConnectionPhase.Connected -> Column(
-                    verticalArrangement = Arrangement.spacedBy(ProferSpacing.md),
-                ) {
-                    ConnectedCard(
-                        state = state,
-                        onDisconnect = onDisconnect,
-                    )
-                    ConnectionDetails(state = state)
-                    ScanAnotherDeviceCard(
-                        pairing = state.pairing,
-                        onScan = onScan,
-                        onDismiss = onDismissPairing,
-                    )
+                .widthIn(max = ProferSizes.contentMaxWidth)
+                .fillMaxHeight(),
+            containerColor = Color.Transparent,
+            topBar = {
+                ProferHeaderRow {
+                    ProferIconAction(Icons.AutoMirrored.Outlined.ArrowBack, "返回", onBack)
+                    Text("连接", style = MaterialTheme.typography.headlineSmall,
+                        color = MaterialTheme.colorScheme.onSurface, modifier = Modifier.weight(1f).padding(horizontal = ProferSpacing.md))
                 }
-
-                ConnectionPhase.Disconnected -> Column(
+            },
+        ) { innerPadding ->
+            Box(Modifier.fillMaxSize().padding(innerPadding).consumeWindowInsets(innerPadding), contentAlignment = Alignment.TopCenter) {
+                Column(
+                    modifier = Modifier
+                        .widthIn(max = ProferSizes.contentMaxWidth)
+                        .fillMaxSize()
+                        .verticalScroll(rememberScrollState())
+                        .imePadding()
+                        .padding(horizontal = ProferSpacing.lg),
                     verticalArrangement = Arrangement.spacedBy(ProferSpacing.md),
                 ) {
-                    ScanCard(pairing = state.pairing, onScan = onScan, onDismiss = onDismissPairing)
-                    ManualConnectPanel(
-                        url = state.url,
-                        port = state.port,
-                        token = state.token,
-                        pin = state.pin,
-                        hasSavedToken = state.hasSavedToken,
-                        errorMessage = state.errorMessage,
-                        onUrlChange = onUrlChange,
-                        onPortChange = onPortChange,
-                        onTokenChange = onTokenChange,
-                        onPinChange = onPinChange,
-                        onConnect = onConnect,
-                        onPaste = pasteAddress,
-                    )
-                    RecoveryList(
-                        state = state,
-                        onSelectDevice = onSelectDevice,
-                        onRemoveDevice = onRemoveDevice,
-                    )
-                }
+                    Spacer(modifier = Modifier.height(ProferSpacing.md))
 
-                ConnectionPhase.Connecting -> ConnectingPanel(onCancel = onCancel)
+                    // 区块顺序与默认展开状态由 ConnectionLayout 单点描述，测试断言的就是这里渲染的顺序。
+                    ConnectionLayout.sections(state.phase).forEach { section ->
+                        when (section) {
+                            ConnectionSection.Status -> StatusSection(
+                                state = state,
+                                onDisconnect = onDisconnect,
+                                onCancel = onCancel,
+                                onRetry = onConnect,
+                            )
 
-                ConnectionPhase.Failed -> Column(
-                    verticalArrangement = Arrangement.spacedBy(ProferSpacing.md),
-                ) {
-                    FailedPanel(
-                        message = state.errorMessage.orEmpty(),
-                        onRetry = onConnect,
-                    )
-                    // 失败后同样要能改地址重连：只留「重试 + 扫码」会把用户锁死在同一个错误地址上。
-                    // 失败原因已由 FailedPanel 展示，这里默认展开表单直接给出修正入口。
-                    ManualConnectPanel(
-                        url = state.url,
-                        port = state.port,
-                        token = state.token,
-                        pin = state.pin,
-                        hasSavedToken = state.hasSavedToken,
-                        errorMessage = null,
-                        initiallyExpanded = true,
-                        onUrlChange = onUrlChange,
-                        onPortChange = onPortChange,
-                        onTokenChange = onTokenChange,
-                        onPinChange = onPinChange,
-                        onConnect = onConnect,
-                        onPaste = pasteAddress,
-                    )
-                    ScanAnotherDeviceCard(
-                        pairing = state.pairing,
-                        onScan = onScan,
-                        onDismiss = onDismissPairing,
-                    )
-                    RecoveryList(
-                        state = state,
-                        onSelectDevice = onSelectDevice,
-                        onRemoveDevice = onRemoveDevice,
-                    )
+                            ConnectionSection.AddDevice -> AddDeviceCard(
+                                phase = state.phase,
+                                deviceCount = state.devices.size,
+                                pairing = state.pairing,
+                                url = state.url,
+                                port = state.port,
+                                token = state.token,
+                                pin = state.pin,
+                                hasSavedToken = state.hasSavedToken,
+                                // 失败原因已由上方 FailedPanel 展示，卡片里不重复一遍。
+                                errorMessage = state.errorMessage.takeIf { state.phase != ConnectionPhase.Failed },
+                                onScan = onScan,
+                                onUrlChange = onUrlChange,
+                                onPortChange = onPortChange,
+                                onTokenChange = onTokenChange,
+                                onPinChange = onPinChange,
+                                onConnect = onConnect,
+                                onPaste = pasteConnection,
+                                onClearForm = onClearForm,
+                                onDismissPairing = onDismissPairing,
+                            )
+
+                            ConnectionSection.Devices -> DeviceSection(
+                                state = state,
+                                onSelectDevice = onSelectDevice,
+                                onRemoveDevice = onRemoveDevice,
+                            )
+
+                            ConnectionSection.EndpointFailures -> if (state.endpointFailures.isNotEmpty()) {
+                                EndpointFailureCard(state.endpointFailures)
+                            }
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(ProferSpacing.xxl))
                 }
             }
-
-            Spacer(modifier = Modifier.height(ProferSpacing.xxl))
         }
+    }
+        }
+}
+
+@Composable
+private fun StatusSection(
+    state: ConnectionUiState,
+    onDisconnect: () -> Unit,
+    onCancel: () -> Unit,
+    onRetry: () -> Unit,
+) {
+    when (state.phase) {
+        ConnectionPhase.Connected -> ConnectedCard(state = state, onDisconnect = onDisconnect)
+
+        ConnectionPhase.Disconnected -> Text(
+            "尚未连接电脑",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+
+        ConnectionPhase.Connecting -> ConnectingPanel(onCancel = onCancel)
+
+        ConnectionPhase.Failed -> FailedPanel(
+            message = state.errorMessage.orEmpty(),
+            onRetry = onRetry,
+        )
     }
 }
 
@@ -232,456 +216,130 @@ private fun ConnectedCard(
     onDisconnect: () -> Unit,
 ) {
     val semantic = ProferThemeExtras.semantic
+    // 大字号下三行信息比 48dp 图标高得多，居中会让图标夹在两行中间；回到顶部对齐。
+    val largeFont = LocalDensity.current.fontScale >= 1.3f
     Surface(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(16.dp),
+        shape = MaterialTheme.shapes.large,
         color = MaterialTheme.colorScheme.surfaceContainerLow,
-        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
     ) {
         Column {
             Row(
                 modifier = Modifier.padding(ProferSpacing.lg),
-                verticalAlignment = Alignment.CenterVertically,
+                verticalAlignment = if (largeFont) Alignment.Top else Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(ProferSpacing.md),
             ) {
                 Box(
                     modifier = Modifier
-                        .size(44.dp)
-                        .background(MaterialTheme.colorScheme.surfaceContainerHigh, RoundedCornerShape(12.dp)),
+                        .size(ProferSizes.minTouchTarget)
+                        .background(MaterialTheme.colorScheme.surfaceContainerHigh, MaterialTheme.shapes.medium),
                     contentAlignment = Alignment.Center,
                 ) {
                     Icon(
                         imageVector = Icons.Outlined.DesktopWindows,
                         contentDescription = null,
                         tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.size(22.dp),
+                        modifier = Modifier.size(ProferSizes.icon),
                     )
                 }
-                Column(modifier = Modifier.weight(1f)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        ProferStatusDot(color = semantic.success, size = 6.dp)
-                        Text(
-                            text = state.deviceName,
-                            style = MaterialTheme.typography.titleMedium,
-                            color = MaterialTheme.colorScheme.onSurface,
-                            modifier = Modifier.padding(start = 7.dp),
-                        )
+                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(ProferSpacing.sm)) {
+                    Text(state.deviceName, style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.onSurface)
+                    // 空地址仍会占一行行高，大字号下变成一块莫名其妙的空白。
+                    if (state.deviceAddress.isNotBlank()) {
+                        Text(state.deviceAddress, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
-                    Text(
-                        text = state.deviceAddress,
-                        style = ProferCodeTextStyle,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(top = 3.dp),
-                    )
-                }
-                Surface(
-                    shape = CircleShape,
-                    color = semantic.successContainer,
-                ) {
-                    Text(
-                        text = if (state.latencyMs > 0) "${state.latencyMs}ms" else "在线",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = semantic.onSuccessContainer,
-                        modifier = Modifier.padding(horizontal = 9.dp, vertical = 4.dp),
-                    )
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(ProferSpacing.sm)) {
+                        ProferStatusDot(color = semantic.success, size = ProferSpacing.sm)
+                        Text(if (state.latencyMs > 0) "在线 · ${state.latencyMs} ms" else "已连接",
+                            style = MaterialTheme.typography.labelLarge, color = semantic.success)
+                    }
                 }
             }
             ProferDivider()
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = ProferSpacing.lg, vertical = ProferSpacing.sm),
-                verticalAlignment = Alignment.CenterVertically,
+            Column(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = ProferSpacing.lg, vertical = ProferSpacing.sm),
+                verticalArrangement = Arrangement.spacedBy(ProferSpacing.xs),
             ) {
                 Text(
                     text = "Profer ${state.daemonVersion}",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.weight(1f),
                 )
-                Text(
-                    text = "断开连接",
-                    style = MaterialTheme.typography.labelLarge,
-                    color = MaterialTheme.colorScheme.error,
-                    fontWeight = FontWeight.Medium,
-                    modifier = Modifier
-                        .heightIn(min = ProferSizes.minTouchTarget)
-                        .clip(RoundedCornerShape(10.dp))
-                        .clickable(onClick = onDisconnect)
-                        .padding(horizontal = 4.dp, vertical = 8.dp),
-                )
+                TextButton(
+                    onClick = onDisconnect,
+                    modifier = Modifier.heightIn(min = ProferSizes.minTouchTarget),
+                    colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error),
+                ) { Text("断开连接") }
             }
         }
     }
 }
 
+/** 已绑定设备常驻：断线时是恢复入口，已连接时是切换入口。 */
 @Composable
-private fun ConnectionDetails(state: ConnectionUiState) {
-    Surface(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(16.dp),
-        color = MaterialTheme.colorScheme.surfaceContainerLow,
-        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-    ) {
-        Column(modifier = Modifier.padding(horizontal = ProferSpacing.lg, vertical = ProferSpacing.sm)) {
-            DetailRow(label = "网络", value = state.networkLabel)
-            ProferDivider()
-            DetailRow(label = "协议", value = state.protocolLabel)
-            ProferDivider()
-            DetailRow(label = "最后同步", value = state.lastSyncLabel)
-        }
-    }
-}
-
-@Composable
-private fun DetailRow(label: String, value: String) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .heightIn(min = 44.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
+private fun DeviceSection(
+    state: ConnectionUiState,
+    onSelectDevice: (String) -> Unit,
+    onRemoveDevice: (String) -> Unit,
+) {
+    if (state.devices.isEmpty()) {
         Text(
-            text = label,
+            "还没有绑定设备。扫码配对或手动连接后，设备会保存在这里，随时切换。",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.weight(1f),
+            modifier = Modifier.padding(horizontal = ProferSpacing.xs),
         )
-        Text(
-            text = value,
-            style = MaterialTheme.typography.labelMedium,
-            color = MaterialTheme.colorScheme.onSurface,
+    } else {
+        DeviceList(
+            devices = state.devices,
+            onSelectDevice = onSelectDevice,
+            onRemoveDevice = onRemoveDevice,
         )
     }
 }
 
+/** 设备列表：当前设备高亮，可切换或移除。 */
 @Composable
-private fun ManualConnectPanel(
-    url: String,
-    port: String,
-    token: String,
-    pin: String,
-    hasSavedToken: Boolean,
-    errorMessage: String?,
-    onUrlChange: (String) -> Unit,
-    onPortChange: (String) -> Unit,
-    onTokenChange: (String) -> Unit,
-    onPinChange: (String) -> Unit,
-    onConnect: () -> Unit,
-    onPaste: () -> Unit,
-    initiallyExpanded: Boolean = false,
+private fun DeviceList(
+    devices: List<DeviceUi>,
+    onSelectDevice: (String) -> Unit,
+    onRemoveDevice: (String) -> Unit,
 ) {
-    var expanded by rememberSaveable { mutableStateOf(initiallyExpanded) }
-    // 有错误就必须让用户看到原因：表单收起时错误信息等于被藏起来。
-    LaunchedEffect(errorMessage) {
-        if (!errorMessage.isNullOrBlank()) expanded = true
-    }
-    Column(verticalArrangement = Arrangement.spacedBy(ProferSpacing.md)) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .heightIn(min = ProferSizes.minTouchTarget)
-                .clickable { expanded = !expanded }
-                .semantics {
-                    contentDescription = if (expanded) "收起手动连接" else "展开手动连接"
-                },
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text(
-                text = "手动填写连接",
-                style = MaterialTheme.typography.titleSmall,
-                color = MaterialTheme.colorScheme.onSurface,
-            )
-            Spacer(modifier = Modifier.weight(1f))
-            Icon(
-                imageVector = if (expanded) Icons.Outlined.KeyboardArrowUp else Icons.Outlined.KeyboardArrowDown,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.size(20.dp),
-            )
-        }
-        if (!expanded) return@Column
-
-        if (!errorMessage.isNullOrBlank()) {
-            Text(
-                text = errorMessage,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.error,
-            )
-        }
-
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(ProferSpacing.sm),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Surface(
-                modifier = Modifier.weight(1f),
-                shape = RoundedCornerShape(14.dp),
-                color = MaterialTheme.colorScheme.surfaceContainerLow,
-                border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-            ) {
-                Row(
-                    modifier = Modifier
-                        .heightIn(min = 52.dp)
-                        .padding(start = 14.dp, end = 4.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    Icon(
-                        imageVector = Icons.Outlined.Link,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.size(18.dp),
-                    )
-                    Box(modifier = Modifier.weight(1f)) {
-                        BasicTextField(
-                            value = url,
-                            onValueChange = onUrlChange,
-                            textStyle = ProferCodeTextStyle.copy(
-                                color = MaterialTheme.colorScheme.onSurface,
-                            ),
-                            cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
-                            singleLine = true,
-                            decorationBox = { inner ->
-                                if (url.isEmpty()) {
-                                    Text(
-                                        text = "电脑 IP 或域名",
-                                        style = MaterialTheme.typography.bodyMedium,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    )
-                                }
-                                inner()
-                            },
-                        )
-                    }
-                    ProferIconAction(
-                        icon = Icons.Outlined.ContentCopy,
-                        contentDescription = "粘贴地址",
-                        onClick = onPaste,
-                    )
-                }
-            }
-            Surface(
-                modifier = Modifier.width(104.dp),
-                shape = RoundedCornerShape(14.dp),
-                color = MaterialTheme.colorScheme.surfaceContainerLow,
-                border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-            ) {
-                Box(
-                    modifier = Modifier
-                        .heightIn(min = 52.dp)
-                        .padding(horizontal = 14.dp),
-                    contentAlignment = Alignment.CenterStart,
-                ) {
-                    BasicTextField(
-                        value = port,
-                        onValueChange = onPortChange,
-                        textStyle = ProferCodeTextStyle.copy(
-                            color = MaterialTheme.colorScheme.onSurface,
-                        ),
-                        cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
-                        singleLine = true,
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                        decorationBox = { inner ->
-                            if (port.isEmpty()) {
+    Column(verticalArrangement = Arrangement.spacedBy(ProferSpacing.sm)) {
+        ProferSectionLabel("已绑定设备", modifier = Modifier.padding(start = ProferSpacing.xs))
+        Surface(shape = MaterialTheme.shapes.large, color = MaterialTheme.colorScheme.surfaceContainerLow) {
+            Column {
+                devices.forEachIndexed { index, device ->
+                    if (index > 0) ProferDivider(insetStart = ProferSpacing.lg)
+                    Column(Modifier.fillMaxWidth()) {
+                        Column(
+                            Modifier.fillMaxWidth().heightIn(min = ProferSizes.listItemHeight)
+                                .clickable(enabled = !device.isActive, role = Role.Button) { onSelectDevice(device.id) }
+                                .padding(horizontal = ProferSpacing.lg, vertical = ProferSpacing.md),
+                            verticalArrangement = Arrangement.spacedBy(ProferSpacing.xs),
+                        ) {
+                            Text(device.name, style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurface)
+                            // 地址是区分两台手动设备（都叫「手动连接」）的唯一可靠字段。
+                            if (device.address.isNotBlank()) {
                                 Text(
-                                    text = "端口",
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
-                            }
-                            inner()
-                        },
-                    )
-                }
-            }
-        }
-
-        Text(
-            text = "自签证书填指纹；无 TLS 的隧道用 ws://",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-
-        Surface(
-            modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(14.dp),
-            color = MaterialTheme.colorScheme.surfaceContainerLow,
-            border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-        ) {
-            Row(
-                modifier = Modifier
-                    .heightIn(min = 52.dp)
-                    .padding(horizontal = 14.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                Icon(
-                    imageVector = Icons.Outlined.Lock,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.size(18.dp),
-                )
-                Box(modifier = Modifier.weight(1f)) {
-                    BasicTextField(
-                        value = token,
-                        onValueChange = onTokenChange,
-                        textStyle = ProferCodeTextStyle.copy(
-                            color = MaterialTheme.colorScheme.onSurface,
-                        ),
-                        cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
-                        singleLine = true,
-                        visualTransformation = PasswordVisualTransformation(),
-                        decorationBox = { inner ->
-                            if (token.isEmpty()) {
-                                Text(
-                                    text = if (hasSavedToken) "Token 已保存，留空沿用" else "连接 Token",
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
-                            }
-                            inner()
-                        },
-                    )
-                }
-            }
-        }
-
-        Surface(
-            modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(14.dp),
-            color = MaterialTheme.colorScheme.surfaceContainerLow,
-            border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-        ) {
-            Row(
-                modifier = Modifier
-                    .heightIn(min = 52.dp)
-                    .padding(horizontal = 14.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                Icon(
-                    imageVector = Icons.Outlined.Lock,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.size(18.dp),
-                )
-                Box(modifier = Modifier.weight(1f)) {
-                    BasicTextField(
-                        value = pin,
-                        onValueChange = onPinChange,
-                        textStyle = ProferCodeTextStyle.copy(
-                            color = MaterialTheme.colorScheme.onSurface,
-                        ),
-                        cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
-                        singleLine = true,
-                        decorationBox = { inner ->
-                            if (pin.isEmpty()) {
-                                Text(
-                                    text = "证书指纹（自签必填）",
+                                    device.address,
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
                                 )
                             }
-                            inner()
-                        },
-                    )
+                            Text("${device.scopeLabel} · ${device.trustLabel}", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text(if (device.isActive) "当前设备" else "点按切换到此设备", style = MaterialTheme.typography.labelMedium,
+                                color = if (device.isActive) ProferThemeExtras.semantic.success else MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        TextButton(
+                            onClick = { onRemoveDevice(device.id) },
+                            modifier = Modifier.padding(horizontal = ProferSpacing.sm).heightIn(min = ProferSizes.minTouchTarget),
+                            colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error),
+                        ) { Text("移除此设备") }
+                    }
                 }
-            }
-        }
-
-        Button(
-            onClick = onConnect,
-            modifier = Modifier
-                .fillMaxWidth()
-                .heightIn(min = 48.dp),
-            shape = CircleShape,
-            colors = ButtonDefaults.buttonColors(
-                containerColor = MaterialTheme.colorScheme.primary,
-                contentColor = MaterialTheme.colorScheme.onPrimary,
-            ),
-        ) {
-            Text(text = "连接", fontWeight = FontWeight.SemiBold)
-        }
-
-    }
-}
-
-/** 扫码主入口：配对中显示进度，失败给出可操作原因。 */
-@Composable
-private fun ScanCard(
-    pairing: PairingUi,
-    onScan: () -> Unit,
-    onDismiss: () -> Unit,
-) {
-    Column {
-        Button(
-            onClick = onScan,
-            enabled = pairing != PairingUi.Pairing,
-            modifier = Modifier
-                .fillMaxWidth()
-                .heightIn(min = 48.dp),
-            shape = CircleShape,
-        ) {
-            Icon(
-                imageVector = Icons.Outlined.QrCodeScanner,
-                contentDescription = null,
-                modifier = Modifier.size(18.dp),
-            )
-            Text(text = "扫描二维码", modifier = Modifier.padding(start = 8.dp))
-        }
-        when (pairing) {
-            PairingUi.Idle -> Unit
-            PairingUi.Pairing -> Row(
-                modifier = Modifier.padding(top = ProferSpacing.sm),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(ProferSpacing.sm),
-            ) {
-                CircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 1.6.dp)
-                Text(
-                    text = "正在配对…",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-
-            is PairingUi.Succeeded -> Text(
-                text = "已绑定 ${pairing.deviceName}",
-                style = MaterialTheme.typography.bodySmall,
-                color = ProferThemeExtras.semantic.success,
-                modifier = Modifier.padding(top = ProferSpacing.sm),
-            )
-
-            is PairingUi.Failed -> Row(
-                modifier = Modifier
-                    .padding(top = ProferSpacing.sm)
-                    .fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(ProferSpacing.sm),
-            ) {
-                Icon(
-                    imageVector = Icons.Outlined.ErrorOutline,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.error,
-                    modifier = Modifier.size(16.dp),
-                )
-                Text(
-                    text = pairing.message,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.error,
-                    modifier = Modifier.weight(1f),
-                )
-                Text(
-                    text = "知道了",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier
-                        .heightIn(min = ProferSizes.minTouchTarget)
-                        .clip(RoundedCornerShape(10.dp))
-                        .clickable(onClick = onDismiss)
-                        .padding(horizontal = 8.dp, vertical = 12.dp),
-                )
             }
         }
     }
@@ -691,7 +349,7 @@ private fun ScanCard(
 private fun EndpointFailureCard(failures: List<String>) {
     Surface(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(12.dp),
+        shape = MaterialTheme.shapes.medium,
         color = MaterialTheme.colorScheme.surfaceContainerLow,
     ) {
         Column(modifier = Modifier.padding(ProferSpacing.md)) {
@@ -705,92 +363,8 @@ private fun EndpointFailureCard(failures: List<String>) {
                     text = line,
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(top = 2.dp),
+                    modifier = Modifier.padding(top = ProferSpacing.xxs),
                 )
-            }
-        }
-    }
-}
-
-/** 失败/断开时的排障区：端点尝试记录 + 已绑定设备，两个入口共用。 */
-@Composable
-private fun RecoveryList(
-    state: ConnectionUiState,
-    onSelectDevice: (String) -> Unit,
-    onRemoveDevice: (String) -> Unit,
-) {
-    if (state.endpointFailures.isNotEmpty()) {
-        EndpointFailureCard(state.endpointFailures)
-    }
-    if (state.devices.isNotEmpty()) {
-        DeviceList(
-            devices = state.devices,
-            onSelectDevice = onSelectDevice,
-            onRemoveDevice = onRemoveDevice,
-        )
-    }
-}
-
-/** 设备列表：当前设备高亮，可切换或移除。 */
-@Composable
-private fun DeviceList(
-    devices: List<DeviceUi>,    onSelectDevice: (String) -> Unit,
-    onRemoveDevice: (String) -> Unit,
-) {
-    Column(verticalArrangement = Arrangement.spacedBy(ProferSpacing.xs)) {
-        Text(
-            text = "已绑定设备",
-            style = MaterialTheme.typography.labelMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        devices.forEach { device ->
-            Surface(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .heightIn(min = ProferSizes.minTouchTarget)
-                    .clip(RoundedCornerShape(12.dp))
-                    .clickable(enabled = !device.isActive) { onSelectDevice(device.id) },
-                shape = RoundedCornerShape(12.dp),
-                color = if (device.isActive) {
-                    MaterialTheme.colorScheme.surfaceContainerHigh
-                } else {
-                    MaterialTheme.colorScheme.surfaceContainerLow
-                },
-            ) {
-                Row(
-                    modifier = Modifier.padding(horizontal = ProferSpacing.md, vertical = 10.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = device.name,
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurface,
-                        )
-                        Text(
-                            text = "${device.scopeLabel} · ${device.trustLabel}",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                    if (device.isActive) {
-                        Text(
-                            text = "当前",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = ProferThemeExtras.semantic.success,
-                        )
-                    }
-                    Text(
-                        text = "移除",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.error,
-                        modifier = Modifier
-                            .heightIn(min = ProferSizes.minTouchTarget)
-                            .clip(RoundedCornerShape(10.dp))
-                            .clickable { onRemoveDevice(device.id) }
-                            .padding(horizontal = 10.dp, vertical = 12.dp),
-                    )
-                }
             }
         }
     }
@@ -800,174 +374,22 @@ private fun DeviceList(
 private fun ConnectingPanel(onCancel: () -> Unit) {
     Surface(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(16.dp),
+        shape = MaterialTheme.shapes.large,
         color = MaterialTheme.colorScheme.surfaceContainerLow,
-        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
     ) {
-        Column(modifier = Modifier.padding(ProferSpacing.lg)) {
-            Text(
-                text = "正在连接",
-                style = MaterialTheme.typography.titleMedium,
-                color = MaterialTheme.colorScheme.onSurface,
-            )
-            Spacer(modifier = Modifier.height(ProferSpacing.md))
-            ConnectStep(label = "发现设备", state = StepState.Done)
-            ConnectStep(label = "建立安全通道", state = StepState.Active)
-            ConnectStep(label = "同步会话", state = StepState.Pending)
-            Spacer(modifier = Modifier.height(ProferSpacing.md))
-            Box(
-                modifier = Modifier
-                    .heightIn(min = ProferSizes.minTouchTarget)
-                    .clip(RoundedCornerShape(10.dp))
-                    .clickable(onClick = onCancel)
-                    .padding(horizontal = 8.dp, vertical = 12.dp),
-                contentAlignment = Alignment.CenterStart,
-            ) {
-                Text(
-                    text = "取消",
-                    style = MaterialTheme.typography.labelLarge,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-        }
-    }
-}
-
-private enum class StepState { Done, Active, Pending }
-
-@Composable
-private fun ConnectStep(label: String, state: StepState) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(vertical = 7.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(ProferSpacing.md),
-    ) {
-        Box(modifier = Modifier.size(18.dp), contentAlignment = Alignment.Center) {
-            when (state) {
-                StepState.Done -> Icon(
-                    imageVector = Icons.Outlined.Check,
-                    contentDescription = null,
-                    tint = ProferThemeExtras.semantic.success,
-                    modifier = Modifier.size(16.dp),
-                )
-
-                StepState.Active -> CircularProgressIndicator(
-                    modifier = Modifier.size(14.dp),
-                    strokeWidth = 1.6.dp,
-                    color = MaterialTheme.colorScheme.tertiary,
-                )
-
-                StepState.Pending -> Box(
-                    modifier = Modifier
-                        .size(6.dp)
-                        .background(MaterialTheme.colorScheme.outline, CircleShape),
-                )
-            }
-        }
-        Text(
-            text = label,
-            style = MaterialTheme.typography.bodyMedium,
-            color = if (state == StepState.Pending) {
-                MaterialTheme.colorScheme.onSurfaceVariant
-            } else {
-                MaterialTheme.colorScheme.onSurface
-            },
-        )
-    }
-}
-
-/**
- * 已连接或连接失败时的备用扫码入口：换一台电脑不必先手动断开。
- * 配对成功会直接切到新设备，当前链路由连接层切换。
- */
-@Composable
-private fun ScanAnotherDeviceCard(
-    pairing: PairingUi,
-    onScan: () -> Unit,
-    onDismiss: () -> Unit,
-) {
-    Surface(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(16.dp),
-        color = MaterialTheme.colorScheme.surfaceContainerLow,
-        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-    ) {
-        Column(modifier = Modifier.padding(ProferSpacing.lg)) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(ProferSpacing.sm),
-            ) {
-                Icon(
-                    imageVector = Icons.Outlined.QrCodeScanner,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.size(18.dp),
-                )
-                Text(
-                    text = "扫码连接另一台电脑",
-                    style = MaterialTheme.typography.titleSmall,
-                    color = MaterialTheme.colorScheme.onSurface,
-                )
-            }
-            when (pairing) {
-                PairingUi.Idle -> Unit
-                PairingUi.Pairing -> Text(
-                    text = "正在配对…",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(top = ProferSpacing.sm),
-                )
-
-                is PairingUi.Succeeded -> Text(
-                    text = "已绑定 ${pairing.deviceName}",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = ProferThemeExtras.semantic.success,
-                    modifier = Modifier.padding(top = ProferSpacing.sm),
-                )
-
-                is PairingUi.Failed -> Row(
-                    modifier = Modifier
-                        .padding(top = ProferSpacing.sm)
-                        .fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(ProferSpacing.sm),
-                ) {
-                    Text(
-                        text = pairing.message,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.error,
-                        modifier = Modifier.weight(1f),
-                    )
-                    Text(
-                        text = "知道了",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier
-                            .heightIn(min = ProferSizes.minTouchTarget)
-                            .clip(RoundedCornerShape(10.dp))
-                            .clickable(onClick = onDismiss)
-                            .padding(horizontal = 8.dp, vertical = 12.dp),
-                    )
+        Column(Modifier.padding(ProferSpacing.lg), verticalArrangement = Arrangement.spacedBy(ProferSpacing.lg)) {
+            Text("正在连接电脑", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurface)
+            Text("正在建立安全连接，连接完成后会自动同步会话。", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            // 骨架与已连接卡保持相同层级；只消费 Connecting，不虚构分步进度。
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(ProferSpacing.md)) {
+                Box(Modifier.size(ProferSizes.minTouchTarget).background(MaterialTheme.colorScheme.surfaceContainerHigh, MaterialTheme.shapes.medium))
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(ProferSpacing.sm)) {
+                    Box(Modifier.fillMaxWidth(0.65f).height(ProferSpacing.lg).background(MaterialTheme.colorScheme.surfaceContainerHigh, MaterialTheme.shapes.small))
+                    Box(Modifier.fillMaxWidth().height(ProferSpacing.md).background(MaterialTheme.colorScheme.surfaceContainerHigh, MaterialTheme.shapes.small))
                 }
             }
-            OutlinedButton(
-                onClick = onScan,
-                enabled = pairing != PairingUi.Pairing,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = ProferSpacing.md)
-                    .heightIn(min = 48.dp),
-                shape = CircleShape,
-            ) {
-                Icon(
-                    imageVector = Icons.Outlined.QrCodeScanner,
-                    contentDescription = null,
-                    modifier = Modifier.size(18.dp),
-                )
-                Text(text = "扫描二维码", modifier = Modifier.padding(start = 8.dp))
-            }
+            Box(Modifier.fillMaxWidth().height(ProferSpacing.md).background(MaterialTheme.colorScheme.surfaceContainerHigh, MaterialTheme.shapes.small))
+            TextButton(onClick = onCancel, modifier = Modifier.heightIn(min = ProferSizes.minTouchTarget)) { Text("取消连接") }
         }
     }
 }
@@ -976,19 +398,19 @@ private fun ScanAnotherDeviceCard(
 private fun FailedPanel(message: String, onRetry: () -> Unit) {
     Surface(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(16.dp),
+        shape = MaterialTheme.shapes.large,
         color = MaterialTheme.colorScheme.errorContainer,
     ) {
         Column(modifier = Modifier.padding(ProferSpacing.lg)) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                horizontalArrangement = Arrangement.spacedBy(ProferSpacing.sm),
             ) {
                 Icon(
                     imageVector = Icons.Outlined.ErrorOutline,
                     contentDescription = null,
                     tint = MaterialTheme.colorScheme.onErrorContainer,
-                    modifier = Modifier.size(18.dp),
+                    modifier = Modifier.size(ProferSizes.icon),
                 )
                 Text(
                     text = "连接失败",
@@ -997,7 +419,7 @@ private fun FailedPanel(message: String, onRetry: () -> Unit) {
                 )
             }
             Text(
-                text = message,
+                text = message.ifBlank { "暂时无法连接。请确认电脑端远程访问已开启，或修改下方地址后重试。" },
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onErrorContainer,
                 modifier = Modifier.padding(top = ProferSpacing.sm),
@@ -1006,16 +428,16 @@ private fun FailedPanel(message: String, onRetry: () -> Unit) {
                 modifier = Modifier
                     .padding(top = ProferSpacing.md)
                     .heightIn(min = ProferSizes.minTouchTarget)
-                    .clip(RoundedCornerShape(10.dp))
+                    .clip(MaterialTheme.shapes.small)
                     .clickable(onClick = onRetry),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                horizontalArrangement = Arrangement.spacedBy(ProferSpacing.sm),
             ) {
                 Icon(
                     imageVector = Icons.Outlined.Refresh,
                     contentDescription = null,
                     tint = MaterialTheme.colorScheme.onErrorContainer,
-                    modifier = Modifier.size(16.dp),
+                    modifier = Modifier.size(ProferSizes.iconSmall),
                 )
                 Text(
                     text = "重试",
@@ -1026,4 +448,42 @@ private fun FailedPanel(message: String, onRetry: () -> Unit) {
             }
         }
     }
+}
+
+@Preview(name = "连接 · 浅色", showBackground = true)
+@Preview(name = "连接 · 深色", showBackground = true, uiMode = Configuration.UI_MODE_NIGHT_YES)
+@Preview(name = "连接 · 大字号", showBackground = true, fontScale = 2f)
+@Composable
+private fun ConnectionPreview() {
+    ConnectionPreviewContent(ConnectionPreviewData.disconnected)
+}
+
+@Composable
+private fun ConnectionPreviewContent(state: ConnectionUiState) {
+    ProferTheme(darkTheme = isSystemInDarkTheme()) {
+        ConnectionScreen(
+            state = state,
+            onBack = {}, onUrlChange = {}, onPortChange = {}, onTokenChange = {}, onPinChange = {},
+            onConnect = {}, onDisconnect = {}, onCancel = {}, onScan = {}, onPairingText = {},
+            onClearForm = {}, onSelectDevice = {}, onRemoveDevice = {}, onDismissPairing = {},
+        )
+    }
+}
+
+@Preview(name = "连接 · 已连接", showBackground = true)
+@Composable
+private fun ConnectedPreview() {
+    ConnectionPreviewContent(ConnectionPreviewData.connected)
+}
+
+@Preview(name = "连接 · 失败恢复", showBackground = true, fontScale = 1.3f)
+@Composable
+private fun ConnectionFailedPreview() {
+    ConnectionPreviewContent(ConnectionPreviewData.failed)
+}
+
+@Preview(name = "连接 · 骨架屏", showBackground = true)
+@Composable
+private fun ConnectingPreview() {
+    ConnectionPreviewContent(ConnectionPreviewData.connecting)
 }

@@ -23,6 +23,10 @@ class HistoryMapperTest {
         toolResults: List<ToolResultView> = emptyList(),
         usage: TokenUsage? = null,
         modelUsage: Map<String, Int> = emptyMap(),
+        subtype: String? = null,
+        author: String? = null,
+        sourceType: String? = null,
+        sourceId: String? = null,
     ) = SdkMessageView(
         type = type,
         uuid = uuid,
@@ -31,14 +35,79 @@ class HistoryMapperTest {
         text = text,
         toolUses = toolUses,
         toolResults = toolResults,
-        subtype = null,
+        subtype = subtype,
         model = null,
         isError = false,
         errorMessage = null,
         reasoning = reasoning,
         usage = usage,
         modelUsage = modelUsage,
+        authorType = author,
+        sourceType = sourceType,
+        sourceId = sourceId,
     )
+
+    @Test
+    fun `历史里的定时任务触发渲染为来源卡，不伪装用户消息`() {
+        val history = HistoryMapper.map(
+            listOf(
+                message(
+                    "status",
+                    "trig-1",
+                    "定时任务触发",
+                    createdAt = 1L,
+                    subtype = "task_trigger",
+                    author = "automation",
+                    sourceType = "automation",
+                    sourceId = "auto-1",
+                ),
+                message(
+                    "user",
+                    "u-auto",
+                    "检查今天的部署日志",
+                    createdAt = 2L,
+                    author = "automation",
+                    sourceType = "automation",
+                    sourceId = "auto-1",
+                ),
+            ),
+            0L,
+        )
+
+        val entry = history.entries.single() as ChatEntry.Source
+        assertEquals("u-auto", entry.id)
+        assertEquals("检查今天的部署日志", entry.text)
+        assertEquals("定时任务触发", entry.authorLabel)
+        assertEquals("automation", entry.sourceType)
+    }
+
+    @Test
+    fun `历史工具调用挂到各自助手消息上`() {
+        val history = HistoryMapper.map(
+            listOf(
+                message("user", "u1", "看看", createdAt = 1L),
+                message(
+                    "assistant",
+                    "a1",
+                    "先读文件",
+                    createdAt = 2L,
+                    toolUses = listOf(ToolUseView("t1", "Read", "/repo/a.ts")),
+                ),
+                message(
+                    "assistant",
+                    "a2",
+                    "再跑测试",
+                    createdAt = 3L,
+                    toolUses = listOf(ToolUseView("t2", "Bash")),
+                ),
+            ),
+            0L,
+        )
+
+        val assistants = history.entries.filterIsInstance<ChatEntry.Assistant>()
+        assertEquals(listOf(listOf("t1"), listOf("t2")), assistants.map { entry -> entry.toolCalls.map { it.id } })
+        assertEquals("/repo/a.ts", assistants[0].toolCalls.single().path)
+    }
 
     @Test
     fun `历史里工具产出的图片回到对应助手消息`() {

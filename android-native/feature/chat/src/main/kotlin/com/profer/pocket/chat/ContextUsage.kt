@@ -44,6 +44,7 @@ import com.profer.pocket.designsystem.theme.ProferSizes
 import com.profer.pocket.designsystem.theme.ProferSpacing
 import com.profer.pocket.designsystem.theme.ProferThemeExtras
 import com.profer.pocket.model.ContextUsage
+import com.profer.pocket.designsystem.component.ProferAdaptiveSheet
 import kotlin.math.roundToInt
 
 /** 桌面 ContextUsageBadge 同口径：窗口 77.5% 触发自动压缩。 */
@@ -79,7 +80,7 @@ fun ContextUsageIndicator(
     Row(
         modifier = modifier
             .height(ProferSizes.minTouchTarget)
-            .clip(RoundedCornerShape(24.dp))
+            .clip(MaterialTheme.shapes.extraLarge)
             .clickable(onClickLabel = "查看上下文详情", onClick = onClick)
             .padding(horizontal = 6.dp)
             .semantics(mergeDescendants = true) { contentDescription = label },
@@ -160,11 +161,7 @@ fun ContextUsageSheet(
     val warning = contextIsWarning(used, window)
     val accent = if (warning) ProferThemeExtras.semantic.warning else MaterialTheme.colorScheme.onSurface
 
-    ModalBottomSheet(
-        onDismissRequest = onDismiss,
-        sheetState = sheetState,
-        containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
-    ) {
+    ProferAdaptiveSheet(onDismissRequest = onDismiss) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -247,7 +244,7 @@ fun ContextUsageSheet(
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(48.dp),
-                shape = RoundedCornerShape(14.dp),
+                shape = MaterialTheme.shapes.medium,
             ) {
                 Text(
                     text = if (streaming) "运行中无法压缩" else "立即压缩",
