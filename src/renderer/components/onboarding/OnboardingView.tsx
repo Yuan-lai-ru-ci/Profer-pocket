@@ -87,7 +87,7 @@ export function OnboardingView({
               下一代桌面 AI 软件，让通用 Agent 触手可及
             </p>
             <p className="text-sm text-muted-foreground/60 mt-2">
-              基于开源项目 Proma 深度改造
+              基于开源项目 Profer 深度改造
             </p>
           </div>
 

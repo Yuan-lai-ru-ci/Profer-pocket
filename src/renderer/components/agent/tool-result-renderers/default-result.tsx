@@ -31,9 +31,9 @@ function tryParseKeyValue(text: string): Array<{ key: string; value: string }> |
   return null
 }
 
-/** 从文本中提取 PROMA_IMAGE_ATTACHMENT 标记 */
+/** 从文本中提取 PROFER_IMAGE_ATTACHMENT 标记 */
 function parseGeneratedImages(text: string): { images: Array<{ localPath: string; filename: string; mediaType: string }>; cleanText: string } {
-  const markerRegex = /\[PROMA_IMAGE_ATTACHMENT:(.+?)\]/g
+  const markerRegex = /\[PROFER_IMAGE_ATTACHMENT:(.+?)\]/g
   const images: Array<{ localPath: string; filename: string; mediaType: string }> = []
   let match: RegExpExecArray | null
   while ((match = markerRegex.exec(text)) !== null) {

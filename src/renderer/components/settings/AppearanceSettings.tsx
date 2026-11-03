@@ -2,7 +2,7 @@
  * AppearanceSettings - 外观设置页
  *
  * 主题模式切换与本地皮肤管理（浅色/深色/跟随系统）。
- * 通过 Jotai atom 管理状态，持久化到 ~/.proma/settings.json。
+ * 通过 Jotai atom 管理状态，持久化到 ~/.profer/settings.json。
  *
  * pocketMode（平板远程模式）：
  *  - 界面大小只保留 100%～150% 四档（175%/200% 在平板上过度放大、挤压可视内容）
@@ -58,7 +58,7 @@ import proferVeriPeriLogo from '@/assets/bots/profer-logos/profer-veri-peri.png'
 import proferVivaMagentaLogo from '@/assets/bots/profer-logos/profer-viva-magenta.png'
 import proferMochaMousseLogo from '@/assets/bots/profer-logos/profer-mocha-mousse.png'
 import proferEmeraldLogo from '@/assets/bots/profer-logos/profer-emerald.png'
-import proma8bitLogo from '@/assets/bots/profer-logos/profer-8bit.png'
+import profer8bitLogo from '@/assets/bots/profer-logos/profer-8bit.png'
 import proferCyberpunkLogo from '@/assets/bots/profer-logos/profer-cyberpunk.png'
 import proferFuturisticLogo from '@/assets/bots/profer-logos/profer-futuristic.png'
 
@@ -111,7 +111,7 @@ const ICON_VARIANTS: readonly IconVariant[] = [
   { id: 'viva-magenta', name: '非凡洋红', src: proferVivaMagentaLogo, previewBg: 'bg-[#BB2649]' },
   { id: 'mocha-mousse', name: '摩卡慕斯', src: proferMochaMousseLogo, previewBg: 'bg-[#A47764]' },
   { id: 'emerald', name: '翡翠绿', src: proferEmeraldLogo, previewBg: 'bg-[#009473]' },
-  { id: '8bit', name: '8bit 像素', src: proma8bitLogo, previewBg: 'bg-[#1a1a2e]' },
+  { id: '8bit', name: '8bit 像素', src: profer8bitLogo, previewBg: 'bg-[#1a1a2e]' },
   { id: 'cyberpunk', name: '赛博朋克', src: proferCyberpunkLogo, previewBg: 'bg-[#0d0221]' },
   { id: 'futuristic', name: '未来质感', src: proferFuturisticLogo, previewBg: 'bg-[#4a4a4a]' },
 ] as const

@@ -371,7 +371,7 @@ export function SearchDialog(): React.ReactElement {
     )
     const channelId = deepseekChannel?.id ?? currentAgentChannelId ?? undefined
 
-    const configDir = import.meta.env.DEV ? '.profer-dev' : '.proma'
+    const configDir = import.meta.env.DEV ? '.profer-dev' : '.profer'
     const prompt = `请帮我在 Profer 的全部会话历史中搜索与以下描述相关的内容：
 
 "${q}"

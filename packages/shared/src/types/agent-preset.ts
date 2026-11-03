@@ -48,7 +48,7 @@ export type AgentPresetSuppressKey = (typeof AGENT_PRESET_SUPPRESS_KEYS)[number]
  * 两侧注册点按短名匹配过滤，UI 与工具 schema 均从本表渲染/校验。
  */
 export const AGENT_PRESET_GROUP_TOOL_NAMES: Record<AgentPresetToolGroup, readonly string[]> = {
-  'task-graph': ['proma_task_create', 'proma_task_update'],
+  'task-graph': ['profer_task_create', 'profer_task_update'],
   memory: ['search_memory', 'list_team_memories', 'read_team_memory', 'search_team_memories', 'create_team_memory', 'update_team_memory'],
   collaboration: [
     'list_available_agent_models',

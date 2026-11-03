@@ -879,7 +879,7 @@ export const MessageResponse = React.memo(
   function MessageResponse({ children, className, basePath, basePaths, remarkPlugins }: MessageResponseProps): React.ReactElement {
     // 预处理后的 Markdown 文本（供 remarkTableSource 用 position 精确定位表格源码）
     const processed = React.useMemo(
-      () => normalizeLatexDelimiters(children.replace(/<!--PROMA_AUTOMATION:[\s\S]*?-->/g, '').trim()),
+      () => normalizeLatexDelimiters(children.replace(/<!--(?:PROMA|PROFER)_AUTOMATION:[\s\S]*?-->/g, '').trim()),
       [children]
     )
 

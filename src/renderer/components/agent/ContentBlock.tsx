@@ -646,7 +646,7 @@ function ThinkingBlock({ block, dimmed = false }: ThinkingBlockProps): React.Rea
   )
 }
 
-// ===== PROMA_IMAGE_ATTACHMENT 生成图片解析与渲染 =====
+// ===== PROFER_IMAGE_ATTACHMENT 生成图片解析与渲染 =====
 
 /** 从文本中解析的生成图片引用 */
 interface ParsedGeneratedImage {
@@ -655,9 +655,9 @@ interface ParsedGeneratedImage {
   mediaType: string
 }
 
-/** 从文本中提取 [PROMA_IMAGE_ATTACHMENT:{...}] 标记，返回图片列表和清理后的文本 */
+/** 从文本中提取 [PROFER_IMAGE_ATTACHMENT:{...}] 标记，返回图片列表和清理后的文本 */
 function parseGeneratedImages(text: string): { images: ParsedGeneratedImage[]; cleanText: string } {
-  const markerRegex = /\[PROMA_IMAGE_ATTACHMENT:(.+?)\]/g
+  const markerRegex = /\[PROFER_IMAGE_ATTACHMENT:(.+?)\]/g
   const images: ParsedGeneratedImage[] = []
   let match: RegExpExecArray | null
   while ((match = markerRegex.exec(text)) !== null) {
@@ -729,7 +729,7 @@ export function ContentBlock({ block, allMessages, basePath, basePaths, animate 
     const textBlock = block as SDKTextBlock
     if (!textBlock.text) return null
 
-    // 解析生成图片标记 [PROMA_IMAGE_ATTACHMENT:{...}]
+    // 解析生成图片标记 [PROFER_IMAGE_ATTACHMENT:{...}]
     const { images, cleanText } = parseGeneratedImages(textBlock.text)
 
     return (

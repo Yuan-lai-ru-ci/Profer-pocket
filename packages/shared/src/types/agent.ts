@@ -746,7 +746,7 @@ export interface AgentSessionUiProjection {
 /**
  * Agent 会话轻量索引项
  *
- * 存储在 ~/.proma/agent-sessions.json 中，
+ * 存储在 ~/.profer/agent-sessions.json 中，
  * 类似 ConversationMeta，独立存储。
  */
 export interface AgentSessionMeta {
@@ -862,7 +862,7 @@ export function isVisibleAgentSession(session: Pick<AgentSessionMeta, 'draft'>):
 /**
  * Agent 持久化消息
  *
- * 存储在 ~/.proma/agent-sessions/{id}.jsonl 中。
+ * 存储在 ~/.profer/agent-sessions/{id}.jsonl 中。
  */
 export interface AgentMessage {
   /** 消息唯一标识 */
@@ -1879,7 +1879,7 @@ export const AGENT_IPC_CHANNELS = {
   TOGGLE_SKILL: 'agent:toggle-skill',
   /** 获取其他工作区的 Skill 列表 */
   GET_OTHER_WORKSPACE_SKILLS: 'agent:get-other-workspace-skills',
-  /** 获取默认 Skills 的 slug 列表（来自 ~/.proma/default-skills/） */
+  /** 获取默认 Skills 的 slug 列表（来自 ~/.profer/default-skills/） */
   GET_DEFAULT_SKILL_SLUGS: 'agent:get-default-skill-slugs',
   /** 从其他工作区导入 Skill 到当前工作区 */
   IMPORT_SKILL_FROM_WORKSPACE: 'agent:import-skill-from-workspace',
@@ -2239,7 +2239,7 @@ export interface TeamServerConfig {
   baseUrl: string
   authEndpoint: string
   syncEndpoint: string
-  provider: 'self-hosted' | 'proma-cloud'
+  provider: 'self-hosted' | 'profer-cloud'
   enabled: boolean
   lastHealthCheck?: {
     ok: boolean

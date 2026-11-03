@@ -659,7 +659,7 @@ export function AgentMessages({ sessionId, sessionModelId, messagesLoaded, persi
     const live = liveMessages ?? []
     const stampStableKey = (message: SDKMessage): SDKMessage => {
       const key = getSDKMessageStableKey(message)
-      ;(message as Record<string, unknown>)._promaStableKey = key
+      ;(message as Record<string, unknown>)._proferStableKey = key
       return message
     }
     const persistedWithKeys = persisted.map(stampStableKey)

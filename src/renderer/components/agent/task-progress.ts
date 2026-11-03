@@ -2,7 +2,7 @@ import { isTaskCreateTool, isTaskUpdateTool } from '@profer/project-core'
 import type { ToolActivity } from '@/atoms/agent-atoms'
 
 /** Task 工具名集合用于静态 callers；MCP 前缀工具由 isTask*Tool 动态识别。 */
-export const TASK_TOOL_NAMES = new Set(['TaskCreate', 'TaskUpdate', 'TodoWrite', 'proma_task_create', 'proma_task_update'])
+export const TASK_TOOL_NAMES = new Set(['TaskCreate', 'TaskUpdate', 'TodoWrite', 'profer_task_create', 'profer_task_update'])
 
 export function isTaskProgressTool(toolName: string): boolean {
   return toolName === 'TodoWrite' || isTaskCreateTool(toolName) || isTaskUpdateTool(toolName)

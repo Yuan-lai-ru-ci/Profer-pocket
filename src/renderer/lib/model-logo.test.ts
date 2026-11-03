@@ -28,7 +28,7 @@ describe('渠道 Logo 解析（与桌面端新版对齐）', () => {
 
   test('泛化 provider 仍按 Base URL 域名识别真实品牌', async () => {
     const proferLogo = await import('@/assets/models/profer.png')
-    expect(getChannelLogo({ provider: 'anthropic', baseUrl: 'https://api.proma.cool/anthropic', models: [] })).toBe(proferLogo.default)
+    expect(getChannelLogo({ provider: 'anthropic', baseUrl: 'https://api.profer.cn/anthropic', models: [] })).toBe(proferLogo.default)
   })
 })
 

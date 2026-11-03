@@ -443,7 +443,7 @@ function buildTaskProgressData(
 
   const wantedToolUseIds = new Set(taskBlocks.map((block) => block.id))
   const taskCreateIds = new Set(taskBlocks
-    .filter((block) => block.name === 'TaskCreate' || block.name === 'proma_task_create' || block.name.endsWith('__proma_task_create'))
+    .filter((block) => block.name === 'TaskCreate' || block.name === 'profer_task_create' || block.name.endsWith('__profer_task_create'))
     .map((block) => block.id))
   const toolResultMap = new Map<string, string>()
   for (const msg of turnMessages) {
@@ -1132,10 +1132,12 @@ function QuoteChip({ quote }: { quote: QuotedFileRef }): React.ReactElement {
 // ===== 用户输入消息渲染 =====
 
 
-const SCHEDULED_RUN_MARKER = '<!--PROMA_SCHEDULED_RUN-->'
+const SCHEDULED_RUN_MARKER = '<!--PROFER_SCHEDULED_RUN-->'
+/** 旧版（改名前的 proma）定时标记：历史消息里持久化的是它，必须继续剥离。 */
+const LEGACY_SCHEDULED_RUN_MARKER = '<!--PROMA_SCHEDULED_RUN-->'
 
 function stripScheduledRunMarker(text: string): string {
-  return text.replaceAll(SCHEDULED_RUN_MARKER, '').trim()
+  return text.replaceAll(SCHEDULED_RUN_MARKER, '').replaceAll(LEGACY_SCHEDULED_RUN_MARKER, '').trim()
 }
 
 function ScheduledRunBadge(): React.ReactElement {
@@ -1488,7 +1490,7 @@ let fallbackIdCounter = 0
 export function getGroupId(group: MessageGroup): string {
   if (group.type === 'user') {
     if (group.message.uuid) return group.message.uuid
-    const stableKey = (group.message as unknown as Record<string, unknown>)._promaStableKey
+    const stableKey = (group.message as unknown as Record<string, unknown>)._proferStableKey
     if (typeof stableKey === 'string') return stableKey
     // 没有 uuid：使用基于 message 对象引用的缓存 ID（message 引用在重渲染间稳定）
     if (!messageIdCache.has(group.message)) {
@@ -1505,7 +1507,7 @@ export function getGroupId(group: MessageGroup): string {
   // assistant-turn：取首条 assistant 消息的 uuid
   const first = group.assistantMessages[0]
   if (first?.uuid) return first.uuid
-  const stableKey = first ? (first as unknown as Record<string, unknown>)._promaStableKey : undefined
+  const stableKey = first ? (first as unknown as Record<string, unknown>)._proferStableKey : undefined
   if (typeof stableKey === 'string') return stableKey
   // 没有 uuid：使用基于首条 assistant message 对象引用的缓存 ID
   if (first) {
