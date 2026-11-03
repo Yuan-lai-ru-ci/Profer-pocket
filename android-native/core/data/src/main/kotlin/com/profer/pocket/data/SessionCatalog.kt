@@ -3,8 +3,8 @@ package com.profer.pocket.data
 import com.profer.pocket.model.SessionSummary
 import com.profer.pocket.model.WorkspaceSummary
 
-/** 会话目录的分组类型。置顶是跨项目的独立分组，项目分组保持服务端项目顺序。 */
-enum class SessionGroupKind { Pinned, Project, Unassigned }
+/** 会话目录的分组类型。项目分组保持服务端项目顺序；孤儿会话单独成组。 */
+enum class SessionGroupKind { Project, Unassigned }
 
 /**
  * 目录里的一行：根会话 + 挂在它下面的子会话（委派子会话 / 探索分支）。
@@ -42,7 +42,9 @@ data class SessionGroup(
  * 会话目录组织规则：移动端抽屉只认这一套，`UiMapping` 不再各自排序。
  *
  * - 归档会话不进入主列表，只出现在归档视图；
- * - 置顶会话跨项目置顶；其余按项目分组，项目组按最近活动倒序；
+ * - 置顶是「项目置顶」：只调整项目顺序，不再把会话抽成跨项目的置顶组；
+ *   会话自己的 `pinned` 仍然生效，但只在项目内排到最前（与桌面项目内排布一致）；
+ * - 其余按项目分组，项目组按最近活动倒序；
  * - 空项目也保留，这样项目系统在移动端有「入口」而不是消失；
  * - 找不到项目的会话归入「未归入项目」，不伪造项目名；
  * - 搜索匹配会话标题或项目名（项目名命中时展示该项目全部会话）；
@@ -50,7 +52,6 @@ data class SessionGroup(
  */
 object SessionCatalog {
 
-    const val PINNED_GROUP_ID = "__pinned__"
     const val UNASSIGNED_GROUP_ID = "__unassigned__"
     const val UNASSIGNED_GROUP_NAME = "未归入项目"
 
@@ -100,9 +101,6 @@ object SessionCatalog {
             )
         val treeItems = buildTree(treeSource)
 
-        val pinned = treeItems.filter { it.session.isPinned && !it.session.isSubSession }
-        val unpinned = treeItems.filterNot { it.session.isPinned && !it.session.isSubSession }
-
         // 项目顺序按「最近活动」：取该项目里非草稿、非归档会话的最大 updatedAt，
         // 空项目回退项目自身 updatedAt。手机上没有「项目排序」开关，
         // 这条规则与桌面侧栏的「最近」一致；服务端下发的顺序只是索引插入顺序，不适合直接展示。
@@ -118,7 +116,7 @@ object SessionCatalog {
                 },
         )
         val projectGroups = orderedProjects.mapNotNull { workspace ->
-            val list = unpinned.filter { it.session.workspaceId == workspace.id }
+            val list = treeItems.filter { it.session.workspaceId == workspace.id }
             // 搜索时不展示无命中的空项目，避免搜索被一堆空分组撑散。
             if (keyword.isNotEmpty() && list.isEmpty()) return@mapNotNull null
             SessionGroup(
@@ -131,22 +129,11 @@ object SessionCatalog {
             )
         }
 
-        val orphanItems = unpinned.filter {
+        val orphanItems = treeItems.filter {
             it.session.workspaceId == null || it.session.workspaceId !in projectIds
         }
 
         return buildList {
-            if (pinned.isNotEmpty()) {
-                add(
-                    SessionGroup(
-                        id = PINNED_GROUP_ID,
-                        name = "置顶",
-                        kind = SessionGroupKind.Pinned,
-                        workspaceId = null,
-                        items = pinned,
-                    ),
-                )
-            }
             addAll(projectGroups)
             if (orphanItems.isNotEmpty()) {
                 add(

@@ -1,11 +1,13 @@
 package com.profer.pocket.app
 
 import android.Manifest
+import android.content.Context
 import android.content.Intent
 import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
+import android.util.Log
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
@@ -15,6 +17,9 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -82,14 +87,25 @@ class MainActivity : ComponentActivity() {
     private fun handleDebugLiveIntent(intent: Intent?) {
         if (!BuildConfig.DEBUG) return
         when {
-            intent?.getBooleanExtra("debug_live", false) == true ->
+            intent?.getBooleanExtra("debug_live", false) == true -> {
+                // 追问文案：胶囊最多 3 个汉字，真机上要确认不被截断。
+                val (text, short) = when (intent.getStringExtra("debug_live_kind")) {
+                    "permission" -> "等待你确认权限" to "待确认"
+                    "question" -> "等待你的回答" to "待回答"
+                    "plan" -> "等待你审批计划" to "待审批"
+                    "others" -> "正在回复…，另有 2 个会话" to "回复中"
+                    "done" -> "已完成" to "已完成"
+                    "failed" -> "已结束，有错误" to "有错误"
+                    else -> "正在执行 Bash" to "执行中"
+                }
                 PocketNotifications.postLiveUpdate(
                     this,
                     sessionId = "debug-session",
                     title = "Profer · 调试会话",
-                    text = "正在执行 Bash",
-                    shortText = "执行中",
+                    text = text,
+                    shortText = short,
                 )
+            }
 
             intent?.getBooleanExtra("debug_live_cancel", false) == true ->
                 PocketNotifications.cancelLiveUpdate(this)
@@ -226,6 +242,7 @@ fun ProferApp(viewModel: PocketViewModel) {
         }
 
         RequestNotificationPermissionIfNeeded(enabled = settings.notificationsEnabled)
+        PromptLiveUpdateIfNeeded(enabled = settings.notificationsEnabled)
 
         LaunchedEffect(pendingNavigation) {
             val sessionId = pendingNavigation ?: return@LaunchedEffect
@@ -345,6 +362,8 @@ fun ProferApp(viewModel: PocketViewModel) {
                         presets = presets,
                         onSelectPreset = viewModel::selectPreset,
                         onRefreshPresets = viewModel::refreshCurrentPresets,
+                        onSelectThinking = viewModel::selectThinking,
+                        onRefreshThinking = viewModel::refreshReasoningCapability,
                         onRewriteMessage = viewModel::rewriteAndResend,
                         onRetrySend = viewModel::retrySend,
                         onOpenAttachment = { previewFile = it },
@@ -529,6 +548,68 @@ private fun RequestNotificationPermissionIfNeeded(enabled: Boolean) {
         ) == PackageManager.PERMISSION_GRANTED
         if (!granted) launcher.launch(Manifest.permission.POST_NOTIFICATIONS)
     }
+}
+
+/**
+ * 首次检测到「流体云显示实时活动」关闭时提示一次。
+ *
+ * 这个开关是系统 per-app 设置（POST_PROMOTED_NOTIFICATIONS 是 normal|appop 权限），
+ * 没有运行时弹窗可用，只能把用户送到系统开关页；设置页里也有常驻入口。
+ */
+@Composable
+private fun PromptLiveUpdateIfNeeded(enabled: Boolean) {
+    if (!enabled || Build.VERSION.SDK_INT < 36) return
+    val context = LocalContext.current
+    val prefs = remember { context.getSharedPreferences("profer_live_prompt", Context.MODE_PRIVATE) }
+    val capability = remember(context) { PocketNotifications.capability(context) }
+    var show by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) {
+        val prompted = prefs.getBoolean("prompted", false)
+        Log.i(
+            "ProferLive",
+            "prompt: prompted=$prompted supported=${capability.supported} " +
+                "needSwitch=${capability.requiresUserSwitch} surface=${capability.surface} enabled=$enabled",
+        )
+        if (prompted) return@LaunchedEffect
+        // 只有「系统支持、且明确不让发」才提示；探测失败或已开启都不打扰。
+        if (!capability.supported || !capability.requiresUserSwitch) return@LaunchedEffect
+        show = true
+    }
+    if (!show) return
+    fun dismiss() {
+        prefs.edit().putBoolean("prompted", true).apply()
+        show = false
+    }
+    AlertDialog(
+        // 外部点击 / 返回键关闭时不写标记：首次启动常被系统通知权限弹窗挤掉，
+        // 那时用户根本没看到内容，写标记就再也不会提示了。
+        onDismissRequest = { show = false },
+        title = { Text("开启状态栏实时活动") },
+        text = {
+            Text(
+                "开启后，对话运行时会在状态栏显示进度。" +
+                    "本机叫「${capability.displayName}」，需要到系统设置里打开。",
+            )
+        },
+        confirmButton = {
+            TextButton(
+                onClick = {
+                    dismiss()
+                    // 分身/多用户下系统设置页可能拉不起来，至少告诉用户手动路径。
+                    if (!PocketNotifications.openPromotionSettings(context)) {
+                        Toast.makeText(
+                            context,
+                            "请到系统设置 → 通知 → Profer → ${capability.displayName}中开启",
+                            Toast.LENGTH_LONG,
+                        ).show()
+                    }
+                },
+            ) { Text("去开启") }
+        },
+        dismissButton = {
+            TextButton(onClick = { dismiss() }) { Text("稍后") }
+        },
+    )
 }
 
 private fun NavHostController.navigateToChat() {

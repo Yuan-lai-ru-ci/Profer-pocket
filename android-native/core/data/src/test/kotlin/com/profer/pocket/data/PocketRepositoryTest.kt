@@ -19,6 +19,7 @@ import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -1002,5 +1003,104 @@ class PocketRepositoryTest {
         assertEquals("wss://remote.example.com:443/ws?token=t", target.url)
         assertEquals(com.profer.pocket.remote.TrustMode.SYSTEM, target.endpoint?.trustMode)
         assertEquals(null, target.endpoint?.pin)
+    }
+
+    @Test
+    fun `切换思考档位写 level 并回写会话`() = runTest {
+        val snapshot = SessionSnapshotStore.Snapshot(
+            sessions = listOf(SessionSummary(id = "s1", title = "会话", channelId = "c1", modelId = "m1")),
+        )
+        val fixture = fixture(backgroundScope, snapshot)
+        connect(fixture)
+        runCurrent()
+
+        val job = launch { fixture.repository.updateSessionThinkingLevel("s1", "xhigh") }
+        runCurrent()
+        val frame = commandFrame(fixture, "update_session_thinking_level")
+        assertEquals("s1", frame.getString("sessionId"))
+        assertEquals("xhigh", frame.getString("level"))
+        respondCommand(
+            fixture,
+            "update_session_thinking_level",
+            """{"id":"s1","revision":2,"title":"会话","channelId":"c1","modelId":"m1","openAIThinkingLevel":"xhigh"}""",
+        )
+        job.join()
+
+        assertEquals("xhigh", fixture.repository.sessions.value.single().thinkingLevel)
+    }
+
+    @Test
+    fun `恢复跟随预设时显式发送 null 而不是省略字段`() = runTest {
+        val snapshot = SessionSnapshotStore.Snapshot(
+            sessions = listOf(
+                SessionSummary(id = "s1", title = "会话", channelId = "c1", modelId = "m1", thinkingLevel = "max"),
+            ),
+        )
+        val fixture = fixture(backgroundScope, snapshot)
+        connect(fixture)
+        runCurrent()
+
+        val job = launch { fixture.repository.updateSessionThinkingLevel("s1", null) }
+        runCurrent()
+        val frame = commandFrame(fixture, "update_session_thinking_level")
+        // 省略字段会被服务端当成「没带」，档位就清不掉。
+        assertTrue(frame.has("level"))
+        assertTrue(frame.isNull("level"))
+        respondCommand(
+            fixture,
+            "update_session_thinking_level",
+            """{"id":"s1","revision":3,"title":"会话","channelId":"c1","modelId":"m1","openAIThinkingLevel":null}""",
+        )
+        job.join()
+
+        assertNull(fixture.repository.sessions.value.single().thinkingLevel)
+    }
+
+    @Test
+    fun `切换推理强度写 effort`() = runTest {
+        val snapshot = SessionSnapshotStore.Snapshot(
+            sessions = listOf(SessionSummary(id = "s1", title = "会话", channelId = "c1", modelId = "m1")),
+        )
+        val fixture = fixture(backgroundScope, snapshot)
+        connect(fixture)
+        runCurrent()
+
+        val job = launch { fixture.repository.updateSessionAgentEffort("s1", "medium") }
+        runCurrent()
+        val frame = commandFrame(fixture, "update_session_agent_effort")
+        assertEquals("medium", frame.getString("effort"))
+        respondCommand(
+            fixture,
+            "update_session_agent_effort",
+            """{"id":"s1","revision":2,"title":"会话","channelId":"c1","modelId":"m1","agentEffort":"medium"}""",
+        )
+        job.join()
+
+        assertEquals("medium", fixture.repository.sessions.value.single().agentEffort)
+    }
+
+    @Test
+    fun `模型档位能力按渠道模型缓存`() = runTest {
+        val fixture = fixture(backgroundScope, SessionSnapshotStore.Snapshot())
+        connect(fixture)
+        runCurrent()
+
+        val first = launch { fixture.repository.reasoningCapability("deepseek", "deepseek-v4-pro", "https://gw/v1") }
+        runCurrent()
+        val frame = commandFrame(fixture, "get_pi_reasoning_capability")
+        assertEquals("deepseek", frame.getString("provider"))
+        assertEquals("deepseek-v4-pro", frame.getString("modelId"))
+        assertEquals("https://gw/v1", frame.getString("baseUrl"))
+        respondCommand(
+            fixture,
+            "get_pi_reasoning_capability",
+            """{"source":"profile","levels":["off","high","max"],"defaultLevel":"high"}""",
+        )
+        first.join()
+        assertEquals(listOf("off", "high", "max"), fixture.repository.reasoningCapability("deepseek", "deepseek-v4-pro", "https://gw/v1")?.levels)
+
+        // 第二次命中缓存：不再多发一条命令。
+        val before = fixture.factory.created.single().sent.count { JSONObject(it).optString("type") == "get_pi_reasoning_capability" }
+        assertEquals(1, before)
     }
 }

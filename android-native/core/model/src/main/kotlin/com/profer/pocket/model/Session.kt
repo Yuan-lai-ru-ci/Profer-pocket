@@ -16,6 +16,10 @@ data class SessionSummary(
     val modelId: String? = null,
     val presetId: String? = null,
     val permissionMode: String? = null,
+    /** 会话级思考档位覆盖（Pi 档位 off..max）；null = 跟随预设。 */
+    val thinkingLevel: String? = null,
+    /** 会话级推理强度覆盖（Claude 强度档 low..max）；null = 跟随预设。 */
+    val agentEffort: String? = null,
     val createdAt: Long = 0,
     val updatedAt: Long = 0,
     /** 服务端会话元数据版本；projection 乱序/重放时用它拒绝旧快照。 */
@@ -97,6 +101,11 @@ data class SessionSummary(
             modelId = incoming.modelId ?: modelId,
             presetId = incoming.presetId ?: presetId,
             permissionMode = incoming.permissionMode ?: permissionMode,
+            // 思考强度覆盖：null 本身有意义（= 跟随预设），不能像其它字段那样「缺失保留旧值」。
+            // 服务端 list_sessions / session_projection / session_detail 都会显式下发这两个字段，
+            // 直接以服务端为准，电脑端改档位后手机才能跟着回显。
+            thinkingLevel = incoming.thinkingLevel,
+            agentEffort = incoming.agentEffort,
             createdAt = incoming.createdAt.takeIf { it > 0 } ?: createdAt,
             updatedAt = incoming.updatedAt.takeIf { it > 0 } ?: updatedAt,
             revision = maxOf(revision, incoming.revision),
@@ -159,6 +168,8 @@ data class ChannelSummary(
     val id: String,
     val name: String,
     val provider: String? = null,
+    /** 渠道端点：思考档位能力需要它判定实际 reasoning 协议（DeepSeek / Ollama 网关形态可变）。 */
+    val baseUrl: String? = null,
     val enabled: Boolean = true,
     val models: List<ChannelModel> = emptyList(),
 ) {

@@ -14,6 +14,20 @@
     <string name="notification_live_tool">正在执行 %1$s</string>
     <string name="notification_live_short_reply">回复中</string>
     <string name="notification_live_short_tool">执行中</string>
+    <!-- 追问：会话停下来等人，胶囊不能继续显示「回复中」。短文案限 3 个汉字。 -->
+    <string name="notification_live_permission">等待你确认权限</string>
+    <string name="notification_live_question">等待你的回答</string>
+    <string name="notification_live_plan">等待你审批计划</string>
+    <string name="notification_live_short_permission">待确认</string>
+    <string name="notification_live_short_question">待回答</string>
+    <string name="notification_live_short_plan">待审批</string>
+    <!-- 多个会话同时在跑/等人时，正文补一句。 -->
+    <string name="notification_live_others">%1$s，另有 %2$d 个会话</string>
+    <!-- 完成态：任务结束后胶囊停 5 秒再收起。 -->
+    <string name="notification_live_completed">已完成</string>
+    <string name="notification_live_short_completed">已完成</string>
+    <string name="notification_live_failed">已结束，有错误</string>
+    <string name="notification_live_short_failed">有错误</string>
     <string name="notification_keepalive_title">Profer 后台连接</string>
     <string name="notification_keepalive_text">切到其他应用或熄屏后仍保持连接</string>
 </resources>

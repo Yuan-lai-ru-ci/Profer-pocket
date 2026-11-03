@@ -439,7 +439,11 @@ private fun ConversationMessages(
                 )
             }
         }
-        items(state.messages, key = { it.id }) { message ->
+        items(
+            items = state.messages,
+            key = { it.id },
+            contentType = { it::class },
+        ) { message ->
             when (message) {
                 is ConversationMessage.User -> ProferUserMessage(
                     text = message.text,
@@ -474,19 +478,24 @@ private fun ConversationMessages(
                 Column(verticalArrangement = Arrangement.spacedBy(ProferSpacing.sm)) {
                     if (state.streamReasoning.isNotBlank()) {
                         var expanded by remember { mutableStateOf(false) }
+                        // 思考正文可能很长：摘要只在文本真正变化时重算。
+                        val summary = remember(state.streamReasoning) {
+                            thinkingTail(state.streamReasoning)
+                        }
                         ProferThinkingCard(
-                            durationLabel = "思考过程",
                             body = state.streamReasoning,
                             expanded = expanded,
                             onToggle = { expanded = !expanded },
-                            labelPrefix = "",
+                            summary = summary,
                         )
                     }
                     if (state.streamText.isBlank()) {
                         ProferActivityLine(text = "Profer 正在生成…")
                     } else {
+                        // 输入框每敲一个字都会重组这一页，不能跟着重新分块 Markdown。
+                        val blocks = remember(state.streamText) { cachedRichBlocks(state.streamText) }
                         ProferRichText(
-                            blocks = parseRichBlocks(state.streamText),
+                            blocks = blocks,
                             showCursor = true,
                         )
                     }
@@ -517,11 +526,10 @@ private fun AssistantMessage(message: ConversationMessage.Assistant) {
         message.reasoning?.takeIf { it.isNotBlank() }?.let { reasoning ->
             var expanded by rememberSaveable(message.id) { mutableStateOf(false) }
             ProferThinkingCard(
-                durationLabel = "思考过程",
                 body = reasoning,
                 expanded = expanded,
                 onToggle = { expanded = !expanded },
-                labelPrefix = "",
+                summary = thinkingHeadline(reasoning),
             )
         }
         ProferRichText(text = message.text)

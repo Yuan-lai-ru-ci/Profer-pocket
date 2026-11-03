@@ -27,6 +27,17 @@ data class ChatUiState(
     /** 会话绑定的 Agent 预设（岗位）；Chat 模式不用。 */
     val presetId: String? = null,
     val presetLabel: String = "默认",
+    /** 思考强度入口标签（如「高」）；空表示不展示这个入口。 */
+    val thinkingLabel: String = "",
+    /** 当前值的来源：「本会话覆盖」/「跟随预设「高」」。 */
+    val thinkingSourceLabel: String = "",
+    val thinkingOptions: List<com.profer.pocket.model.ReasoningOption> = emptyList(),
+    /** 弹层应勾选的档位；null = 跟随预设（会话覆盖收敛后可能不同于原始覆盖值）。 */
+    val thinkingSelectedValue: String? = null,
+    /** true = 按模型档位（Pi）切换；false = 按强度档（Claude 内核）。 */
+    val thinkingUsesCapability: Boolean = false,
+    /** 正在向电脑端读模型档位能力：弹层显示占位，不先闪回强度档。 */
+    val thinkingLoading: Boolean = false,
     /** 上下文用量：最近一条 assistant usage 的明细；未知时为 null。 */
     val contextUsage: com.profer.pocket.model.ContextUsage? = null,
     val contextWindow: Int? = null,
@@ -104,7 +115,12 @@ data class ToolBlock(
     val title: String,
     val subtitle: String,
     val status: ToolStatus,
-    val detail: String? = null,
+    /** 入参（已截断的可读 JSON）；投影尚未下发时为 null，卡片不显示参数分区。 */
+    val input: String? = null,
+    /** 结果摘要；投影尚未下发时为 null。 */
+    val output: String? = null,
+    /** 失败原因；投影尚未下发时为 null，失败时至少还有状态图标。 */
+    val error: String? = null,
 )
 
 enum class NoticeTone { Info, Success, Warning }

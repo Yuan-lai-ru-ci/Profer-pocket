@@ -32,11 +32,14 @@ import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.AccountTree
 import androidx.compose.material.icons.outlined.CallSplit
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material.icons.outlined.DriveFileMove
 import androidx.compose.material.icons.outlined.DriveFileRenameOutline
+import androidx.compose.material.icons.outlined.ExpandLess
 import androidx.compose.material.icons.outlined.ExpandMore
 import androidx.compose.material.icons.outlined.MarkEmailRead
 import androidx.compose.material.icons.outlined.MarkEmailUnread
@@ -71,6 +74,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -127,34 +131,26 @@ fun SessionListContent(
     // 显式开/关各记一份：否则「当前打开的是子会话」会一直把展开态顶回去，点收起没反应。
     var expandedSubSessions by rememberSaveable { mutableStateOf(emptyList<String>()) }
     var collapsedSubSessions by rememberSaveable { mutableStateOf(emptyList<String>()) }
+    // 项目内默认只铺一屏预览，点「显示更多」的项目记在这里（再点「收起」移除）。
+    var fullyExpandedProjects by rememberSaveable { mutableStateOf(emptyList<String>()) }
     var defaultsApplied by rememberSaveable { mutableStateOf(false) }
     val forceExpand = state.query.isNotBlank()
 
-    // 首屏必须有会话可点：默认展开当前会话所属项目、置顶项目、最近活动的项目与「置顶」组。
-    // 只在第一次拿到项目目录时铺默认值，之后尊重用户手动收起。
+    // 首屏只展开「当前会话所在项目」：手机屏装不下多个项目同时铺开，
+    // 其余项目保持收起，用户点项目头再展开。项目置顶只影响顺序，不替用户展开内容。
     LaunchedEffect(state.projects, state.currentSessionId) {
         if (defaultsApplied || state.projects.isEmpty()) return@LaunchedEffect
         defaultsApplied = true
-        val currentSession = state.projects.asSequence()
-            .flatMap { it.sessions.asSequence() }
-            .firstOrNull { it.id == state.currentSessionId }
-        // 置顶会话的 group.workspaceId 是 null，要用会话自己的 workspaceId 找回项目。
-        val currentProjectId = currentSession?.workspaceId
-            ?: state.projects.firstOrNull { group ->
-                group.kind == SessionGroupKind.Project &&
-                    group.sessions.any { it.id == state.currentSessionId }
-            }?.id
-        val pinnedGroupId = state.projects.firstOrNull { it.kind == SessionGroupKind.Pinned }?.id
-        val pinnedProjectIds = state.projects
-            .filter { it.kind == SessionGroupKind.Project && it.pinned }
-            .map { it.id }
-        // projects 已按「置顶项目 → 最近活动」排好，第一个 Project 就是最近在用的项目。
-        val recentProjectId = state.projects.firstOrNull { it.kind == SessionGroupKind.Project }?.id
-        expandedProjects = (
-            expandedProjects +
-                listOfNotNull(currentProjectId, pinnedGroupId, recentProjectId) +
-                pinnedProjectIds
-            ).distinct()
+        val currentProjectId = state.projects.firstOrNull { group ->
+            group.sessions.any { session ->
+                session.id == state.currentSessionId ||
+                    session.children.any { it.id == state.currentSessionId }
+            }
+        }?.id
+        // 没有当前会话时展开最近活动的项目（projects 已按「置顶项目 → 最近活动」排好），
+        // 免得首屏只剩一排项目标题。
+        val fallbackId = state.projects.firstOrNull { it.kind == SessionGroupKind.Project }?.id
+        expandedProjects = (expandedProjects + listOfNotNull(currentProjectId ?: fallbackId)).distinct()
     }
 
     Column(
@@ -243,6 +239,8 @@ fun SessionListContent(
                             expanded = expanded,
                             onToggle = {
                                 expandedProjects = if (group.id in expandedProjects) {
+                                    // 收起时一并清掉「显示更多」：再展开回到预览态，列表长度可预期。
+                                    fullyExpandedProjects = fullyExpandedProjects - group.id
                                     expandedProjects - group.id
                                 } else {
                                     expandedProjects + group.id
@@ -260,6 +258,12 @@ fun SessionListContent(
                             },
                         )
                     }
+                    // 项目内先铺预览（置顶/活动/当前会话常显），其余收在「显示更多」后面。
+                    val window = projectSessionWindow(
+                        sessions = group.sessions,
+                        currentSessionId = state.currentSessionId,
+                        expanded = forceExpand || group.id in fullyExpandedProjects,
+                    )
                     if (expanded && group.isEmptyProject) {
                         item(key = "empty-${group.id}", contentType = "empty-project") {
                             EmptyProjectRow(
@@ -271,7 +275,7 @@ fun SessionListContent(
                     }
                     if (expanded) {
                         itemsIndexed(
-                            items = group.sessions,
+                            items = window.visible,
                             key = { _, session -> session.id },
                             contentType = { _, _ -> "session" },
                         ) { _, session ->
@@ -295,7 +299,7 @@ fun SessionListContent(
                                     SessionRow(
                                         session = session,
                                         selected = session.id == state.currentSessionId,
-                                        // 项目组内不重复项目名；置顶/未归入/搜索是跨项目列表，用 chip 标出来源。
+                                        // 项目组内不重复项目名；未归入/搜索是跨项目列表，用 chip 标出来源。
                                         projectName = if (
                                             group.kind == SessionGroupKind.Project &&
                                             state.query.isBlank()
@@ -341,6 +345,29 @@ fun SessionListContent(
                                         )
                                     }
                                 }
+                            }
+                        }
+                    }
+                    if (expanded) {
+                        if (window.hiddenCount > 0) {
+                            item(key = "more-${group.id}", contentType = "more") {
+                                ProjectMoreRow(
+                                    hiddenCount = window.hiddenCount,
+                                    expanded = false,
+                                    onToggle = {
+                                        fullyExpandedProjects = fullyExpandedProjects + group.id
+                                    },
+                                )
+                            }
+                        } else if (window.canCollapse) {
+                            item(key = "less-${group.id}", contentType = "more") {
+                                ProjectMoreRow(
+                                    hiddenCount = 0,
+                                    expanded = true,
+                                    onToggle = {
+                                        fullyExpandedProjects = fullyExpandedProjects - group.id
+                                    },
+                                )
                             }
                         }
                     }
@@ -619,21 +646,28 @@ private fun ProjectHeader(
                     modifier = Modifier.weight(1f, fill = false),
                 )
                 if (group.pinned) {
-                    Icon(
-                        imageVector = Icons.Outlined.PushPin,
-                        contentDescription = "已置顶项目",
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier
-                            .padding(start = 6.dp)
-                            .size(14.dp),
-                    )
+                    // 置顶标志：跟运行数一样做成小徽标，用品牌色与「运行中」的蓝色拉开。
+                    Surface(
+                        shape = CircleShape,
+                        color = MaterialTheme.colorScheme.primary.copy(alpha = 0.10f),
+                        modifier = Modifier.padding(start = 6.dp),
+                    ) {
+                        Icon(
+                            imageVector = Icons.Outlined.PushPin,
+                            contentDescription = "已置顶项目",
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier
+                                .padding(3.dp)
+                                .size(12.dp),
+                        )
+                    }
                 }
             }
             if (group.kind == SessionGroupKind.Project && group.runningCount > 0) {
                 Spacer(Modifier.width(8.dp))
                 Surface(
                     shape = CircleShape,
-                    color = ProferThemeExtras.semantic.success.copy(alpha = 0.12f),
+                    color = ProferThemeExtras.semantic.info.copy(alpha = 0.12f),
                 ) {
                     Row(
                         modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp),
@@ -641,14 +675,14 @@ private fun ProjectHeader(
                         horizontalArrangement = Arrangement.spacedBy(4.dp),
                     ) {
                         ProferStatusDot(
-                            color = ProferThemeExtras.semantic.success,
+                            color = ProferThemeExtras.semantic.info,
                             pulsing = true,
                             size = 5.dp,
                         )
                         Text(
                             text = "${group.runningCount}",
                             style = MaterialTheme.typography.labelSmall,
-                            color = ProferThemeExtras.semantic.success,
+                            color = ProferThemeExtras.semantic.info,
                         )
                     }
                 }
@@ -811,6 +845,58 @@ private fun RelatedChildren(
     }
 }
 
+/**
+ * 会话行状态色：等人（warning）> 运行中（info）> 未读/已完成（success）。
+ * 色相跟桌面一致，不使用品牌陶土色：否则未读行会和「选中行」混淆。
+ */
+@Composable
+private fun sessionStatusAccent(status: SessionStatus): Color? = when (status) {
+    SessionStatus.Blocked -> ProferThemeExtras.semantic.warning
+    SessionStatus.Running -> ProferThemeExtras.semantic.info
+    SessionStatus.Completed -> ProferThemeExtras.semantic.success
+    SessionStatus.Idle -> null
+}
+
+/** 状态的无障碍描述：颜色不能是唯一的信息载体。 */
+private fun sessionStatusLabel(status: SessionStatus): String? = when (status) {
+    SessionStatus.Blocked -> "等待你的确认"
+    SessionStatus.Running -> "运行中"
+    SessionStatus.Completed -> "未读"
+    SessionStatus.Idle -> null
+}
+
+/** 项目内「显示更多 / 收起」行：与二级会话同缩进，保持目录的垂直线。 */
+@Composable
+private fun ProjectMoreRow(
+    hiddenCount: Int,
+    expanded: Boolean,
+    onToggle: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = ProferSpacing.xs)
+            .clip(MaterialTheme.shapes.small)
+            .clickable(onClick = onToggle)
+            .heightIn(min = ProferSizes.minTouchTarget)
+            .padding(start = ProferSpacing.xl, end = ProferSpacing.md),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        Icon(
+            imageVector = if (expanded) Icons.Outlined.ExpandLess else Icons.Outlined.ExpandMore,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.size(ProferSizes.iconSmall),
+        )
+        Text(
+            text = if (expanded) "收起已展开的会话" else "显示更多（$hiddenCount）",
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
+
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun SessionRow(
@@ -836,6 +922,9 @@ private fun SessionRow(
     val longPressFeedback = rememberLongPressFeedback()
     // 大字号下标题会换行，子会话开关必须让到下一行，否则会把标题挤成两截。
     val largeFont = LocalDensity.current.fontScale >= 1.5f
+    // 行首状态条只给根会话行；子会话行用左侧图标上色（与桌面同一分层）。
+    val accent = if (depth == 0) sessionStatusAccent(session.status) else null
+    val statusLabel = sessionStatusLabel(session.status)
     Box {
         Row(
             modifier = Modifier
@@ -850,9 +939,26 @@ private fun SessionRow(
                     },
                 )
                 .background(
-                    if (selected) MaterialTheme.colorScheme.surfaceContainer
-                    else Color.Transparent,
+                    when {
+                        selected -> MaterialTheme.colorScheme.surfaceContainer
+                        // 有色标的会话常显一层中性淡底；色相只留在左侧竖条上。
+                        accent != null -> MaterialTheme.colorScheme.onSurface.copy(alpha = 0.04f)
+                        else -> Color.Transparent
+                    },
                 )
+                // 状态不再用右侧小点：行首一条 3dp 竖条，和桌面侧栏一致。
+                .drawBehind {
+                    if (accent != null) {
+                        drawRoundRect(
+                            color = accent,
+                            size = Size(3.dp.toPx(), size.height),
+                            cornerRadius = CornerRadius(1.5.dp.toPx()),
+                        )
+                    }
+                }
+                .semantics {
+                    if (statusLabel != null) stateDescription = statusLabel
+                }
                 .heightIn(min = ProferSizes.minTouchTarget)
                 .padding(
                     start = ProferSpacing.xl + (if (depth > 0) ProferSpacing.lg else 0.dp),
@@ -867,10 +973,8 @@ private fun SessionRow(
                 Icon(
                     imageVector = if (session.isExploration) Icons.Outlined.CallSplit else Icons.Outlined.AccountTree,
                     contentDescription = session.roleLabel,
-                    tint = when (session.delegationStatus) {
-                        "running" -> ProferThemeExtras.semantic.success
-                        else -> MaterialTheme.colorScheme.onSurfaceVariant
-                    },
+                    tint = sessionStatusAccent(session.status)
+                        ?: MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.size(ProferSizes.iconSmall),
                 )
             }
@@ -886,6 +990,15 @@ private fun SessionRow(
                             imageVector = Icons.Outlined.Schedule,
                             contentDescription = "定时任务会话",
                             tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(ProferSizes.iconSmall),
+                        )
+                    }
+                    // 项目内置顶的会话：行首标记（与桌面 leading pin 同位置）。
+                    if (session.pinned) {
+                        Icon(
+                            imageVector = Icons.Outlined.PushPin,
+                            contentDescription = "项目内置顶",
+                            tint = MaterialTheme.colorScheme.primary,
                             modifier = Modifier.size(ProferSizes.iconSmall),
                         )
                     }
@@ -907,16 +1020,6 @@ private fun SessionRow(
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                             modifier = Modifier.widthIn(max = 84.dp),
-                        )
-                    }
-                    if (session.running || session.unread) {
-                        ProferStatusDot(
-                            color = if (session.running) ProferThemeExtras.semantic.success else MaterialTheme.colorScheme.tertiary,
-                            pulsing = session.running,
-                            size = 6.dp,
-                            modifier = Modifier.semantics {
-                                contentDescription = if (session.running) "运行中" else "未读"
-                            },
                         )
                     }
                     Text(
@@ -946,6 +1049,16 @@ private fun SessionRow(
                                 imageVector = Icons.Outlined.Schedule,
                                 contentDescription = "定时任务会话",
                                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier
+                                    .size(ProferSizes.iconSmall)
+                                    .padding(end = ProferSpacing.xxs),
+                            )
+                        }
+                        if (session.pinned) {
+                            Icon(
+                                imageVector = Icons.Outlined.PushPin,
+                                contentDescription = "项目内置顶",
+                                tint = MaterialTheme.colorScheme.primary,
                                 modifier = Modifier
                                     .size(ProferSizes.iconSmall)
                                     .padding(end = ProferSpacing.xxs),
@@ -981,16 +1094,6 @@ private fun SessionRow(
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
-                        if (session.running || session.unread) {
-                            ProferStatusDot(
-                                color = if (session.running) ProferThemeExtras.semantic.success else MaterialTheme.colorScheme.tertiary,
-                                pulsing = session.running,
-                                size = 6.dp,
-                                modifier = Modifier.semantics {
-                                    contentDescription = if (session.running) "运行中" else "未读"
-                                },
-                            )
-                        }
                         val related = session.relatedSummary
                         if (related != null && onToggleChildren != null) {
                             RelatedSummaryButton(
@@ -1017,7 +1120,7 @@ private fun SessionRow(
             // 子会话归并在母会话行下，位置由母会话决定，不提供置顶入口。
             if (depth == 0 && !session.isSubSession) {
                 SessionMenuItem(
-                    label = if (session.pinned) "取消置顶" else "置顶会话",
+                    label = if (session.pinned) "取消置顶（项目内）" else "置顶（项目内）",
                     icon = Icons.Outlined.PushPin,
                     onClick = { menuOpen = false; onTogglePin() },
                 )

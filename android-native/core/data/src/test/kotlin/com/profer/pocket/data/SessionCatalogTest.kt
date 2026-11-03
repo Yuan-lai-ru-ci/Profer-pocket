@@ -49,7 +49,7 @@ class SessionCatalogTest {
     )
 
     @Test
-    fun `置顶会话跨项目置顶，项目内按更新时间倒序`() {
+    fun `置顶会话留在项目内，排在项目最前`() {
         val groups = SessionCatalog.groups(
             sessions = listOf(
                 session("a", workspaceId = "w1", updatedAt = 10),
@@ -58,11 +58,12 @@ class SessionCatalogTest {
             ),
             workspaces = workspaces,
         )
-        assertEquals(SessionCatalog.PINNED_GROUP_ID, groups.first().id)
-        assertEquals(listOf("c"), groups.first().sessions.map { it.id })
-        val project = groups.first { it.id == "w1" }
-        assertEquals(listOf("b", "a"), project.sessions.map { it.id })
-        assertEquals(SessionGroupKind.Project, project.kind)
+        // 会话置顶不再抽成跨项目分组，只在所属项目内排到最前。
+        assertEquals(listOf("w1", "w2", "w3"), groups.map { it.id })
+        assertEquals(listOf("b", "a"), groups.first { it.id == "w1" }.sessions.map { it.id })
+        val website = groups.first { it.id == "w2" }
+        assertEquals(listOf("c"), website.sessions.map { it.id })
+        assertEquals(SessionGroupKind.Project, website.kind)
     }
 
 
@@ -165,7 +166,7 @@ class SessionCatalogTest {
     }
 
     @Test
-    fun `本地置顶的项目排在最近活动之前，置顶组仍最前`() {
+    fun `本地置顶的项目排在最近活动之前`() {
         val groups = SessionCatalog.groups(
             sessions = listOf(
                 session("old", workspaceId = "w1", updatedAt = 10),
@@ -175,11 +176,11 @@ class SessionCatalogTest {
             workspaces = workspaces,
             pinnedProjectIds = setOf("w1"),
         )
-        // 置顶会话组不受项目置顶影响；w1 虽不活跃，但本地置顶后排在 w2 前面。
-        assertEquals(SessionCatalog.PINNED_GROUP_ID, groups.first().id)
-        assertEquals(listOf("w1", "w2", "w3"), groups.drop(1).map { it.id })
+        // w1 虽不活跃，但项目置顶后排在 w2 前面；置顶会话不另开分组。
+        assertEquals(listOf("w1", "w2", "w3"), groups.map { it.id })
         assertTrue(groups.first { it.id == "w1" }.pinned)
         assertFalse(groups.first { it.id == "w2" }.pinned)
+        assertEquals(listOf("pinned", "new"), groups.first { it.id == "w2" }.sessions.map { it.id })
     }
 
     // ===== 子会话（委派 / 探索分支） =====
@@ -298,7 +299,7 @@ class SessionCatalogTest {
     }
 
     @Test
-    fun `置顶母会话把子会话一起带进置顶组`() {
+    fun `置顶母会话带着子会话排在项目最前`() {
         val groups = SessionCatalog.groups(
             sessions = listOf(
                 session("parent", workspaceId = "w1", pinned = true),
@@ -311,11 +312,9 @@ class SessionCatalogTest {
             ),
             workspaces = workspaces,
         )
-        val pinned = groups.first { it.id == SessionCatalog.PINNED_GROUP_ID }
-        assertEquals(listOf("parent"), pinned.items.map { it.session.id })
-        assertEquals(listOf("child"), pinned.items.single().children.map { it.id })
-        // 项目组里不能再重复一份。
-        assertTrue(groups.first { it.id == "w1" }.items.isEmpty())
+        val project = groups.first { it.id == "w1" }
+        assertEquals(listOf("parent"), project.items.map { it.session.id })
+        assertEquals(listOf("child"), project.items.single().children.map { it.id })
     }
 
     @Test
@@ -330,11 +329,12 @@ class SessionCatalogTest {
                     parentSessionId = "missing-parent",
                     sourceDelegationId = "d1",
                 ),
+                session("plain", workspaceId = "w1", updatedAt = 10),
             ),
             workspaces = workspaces,
         )
-        assertTrue(groups.none { it.id == SessionCatalog.PINNED_GROUP_ID })
-        assertEquals(listOf("child"), groups.first { it.id == "w1" }.items.map { it.session.id })
+        // 子会话不因为 pinned 就插到普通会话前面。
+        assertEquals(listOf("plain", "child"), groups.first { it.id == "w1" }.items.map { it.session.id })
     }
 
     @Test

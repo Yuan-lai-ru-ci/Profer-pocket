@@ -5,16 +5,22 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.os.Build
+import android.os.Bundle
 import android.os.IBinder
+import android.os.VibrationEffect
+import android.os.Vibrator
+import android.os.VibratorManager
 import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
 import com.profer.pocket.model.ConnectionStatus
+import com.profer.pocket.model.NotificationKind
 import com.profer.pocket.model.OfflineCause
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
@@ -27,6 +33,9 @@ class PocketConnectionService : Service() {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private var notificationJob: Job? = null
+
+    /** 完成态的定时收起；新任务开始时取消。 */
+    private var completionJob: Job? = null
 
     override fun onCreate() {
         super.onCreate()
@@ -86,6 +95,10 @@ class PocketConnectionService : Service() {
         val repository = (application as ProferApplication).container.repository
         notificationJob = scope.launch {
             repository.notifications.collect { notification ->
+                // 完成态不受前台限制：切走时用户看不到界面，胶囊是他唯一的反馈。
+                if (notification.kind == NotificationKind.RunCompleted) {
+                    showCompletion(notification.sessionId)
+                }
                 if (AppForeground.isForeground) return@collect
                 if (!PocketNotifications.allowed(notification.kind, repository.settings.value)) return@collect
                 PocketNotifications.notifyMessage(this@PocketConnectionService, notification)
@@ -96,51 +109,145 @@ class PocketConnectionService : Service() {
                 if (status is ConnectionStatus.Offline && status.cause == OfflineCause.Unauthorized) {
                     stopSelf()
                 }
+                if (status !is ConnectionStatus.Connected) {
+                    // 断线后状态未知：胶囊不该继续挂着「执行中」，等重连校准。
+                    completionJob?.cancel()
+                    PocketNotifications.cancelLiveUpdate(this@PocketConnectionService)
+                }
+            }
+        }
+        // 定时校准：WS 增量一旦漏掉某轮终态，本地 running 会卡在 true，胶囊一直「执行中」。
+        // 没有 running 会话时 syncRunningSessions 直接返回，不发请求。
+        scope.launch {
+            while (true) {
+                delay(RUNNING_SYNC_INTERVAL_MS)
+                repository.syncRunningSessions()
             }
         }
         // 对话运行中把状态挂到状态栏：Android 16 是实时活动胶囊，低版本是静音常驻通知。
-        // 只在「会话 / 当前工具」变化时更新，流式正文的每一帧都不触发通知重建。
+        // 只在「会话 / 状态」变化时更新，流式正文的每一帧都不触发通知重建。
+        // 追问优先：等人回答比还在跑更需要被看见。
         scope.launch {
             repository.chats
-                .map { chats ->
-                    chats.values.firstOrNull { it.running }?.let { chat ->
-                        LiveState(
-                            sessionId = chat.sessionId,
-                            title = chat.title.ifBlank { "会话" },
-                            toolName = chat.toolCalls.lastOrNull()?.name,
-                        )
-                    }
-                }
+                .map { selectLiveState(it.values) }
                 .distinctUntilChanged()
-                .collect { running ->
-                    if (running == null) {
-                        PocketNotifications.cancelLiveUpdate(this@PocketConnectionService)
+                .collect { state ->
+                    if (state == null) {
+                        // 完成态还在展示时不要抢着收起；否则直接收起。
+                        if (completionJob?.isActive != true) {
+                            PocketNotifications.cancelLiveUpdate(this@PocketConnectionService)
+                        }
                         return@collect
                     }
+                    // 新任务开始了，完成态让位。
+                    completionJob?.cancel()
+                    val (text, shortText) = liveText(state)
                     PocketNotifications.postLiveUpdate(
                         context = this@PocketConnectionService,
-                        sessionId = running.sessionId,
-                        title = "Profer · ${running.title}",
-                        text = running.toolName?.let { getString(R.string.notification_live_tool, it) }
-                            ?: getString(R.string.notification_live_reply),
-                        shortText = if (running.toolName != null) {
-                            getString(R.string.notification_live_short_tool)
-                        } else {
-                            getString(R.string.notification_live_short_reply)
-                        },
+                        sessionId = state.sessionId,
+                        title = "Profer · ${state.title}",
+                        text = text,
+                        shortText = shortText,
                     )
                 }
         }
     }
 
-    /** 只保留参与通知文案的字段：流式正文变化不该重建通知。 */
-    private data class LiveState(
-        val sessionId: String,
-        val title: String,
-        val toolName: String?,
-    )
+    /**
+     * 任务结束：胶囊改成「已完成 / 有错误」，停 [COMPLETION_HOLD_MS] 再收起。
+     *
+     * 还有别的会话在跑或等人时不显示完成态，避免拿旧结果盖掉正在进行的会话。
+     */
+    private fun showCompletion(sessionId: String) {
+        val repository = (application as ProferApplication).container.repository
+        if (selectLiveState(repository.chats.value.values) != null) return
+        val chat = repository.chats.value[sessionId]
+        val title = chat?.title?.ifBlank { "会话" } ?: "会话"
+        val shortText = when (completionKind(chat?.lastError)) {
+            LiveKind.Failed -> getString(R.string.notification_live_short_failed)
+            else -> getString(R.string.notification_live_short_completed)
+        }
+        completionJob?.cancel()
+        // 完成态的展开卡片：标题写结果，正文带会话名，比只写「已完成」信息量更大。
+        val failed = completionKind(chat?.lastError) == LiveKind.Failed
+        PocketNotifications.postLiveUpdate(
+            context = this,
+            sessionId = sessionId,
+            title = if (failed) "Profer · 任务结束" else "Profer · 任务完成",
+            text = if (failed) "$title 已结束，有错误" else "$title 已完成",
+            shortText = shortText,
+        )
+        completionJob = scope.launch {
+            delay(COMPLETION_HOLD_MS)
+            PocketNotifications.cancelLiveUpdate(this@PocketConnectionService)
+        }
+        vibrateCompletion(failed)
+    }
+
+    /**
+     * 完成时轻震一下。
+     *
+     * 用户正在看屏幕时不震：界面里已经能看到结果，震动只会变成干扰。
+     * 失败用两短震，和正常完成的单次短震区分开。
+     */
+    private fun vibrateCompletion(failed: Boolean) {
+        if (AppForeground.isForeground) return
+        val effect = if (failed) {
+            VibrationEffect.createWaveform(longArrayOf(0, 25, 90, 25), -1)
+        } else {
+            VibrationEffect.createOneShot(25, VibrationEffect.DEFAULT_AMPLITUDE)
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            getSystemService(VibratorManager::class.java)?.defaultVibrator?.vibrate(effect)
+        } else {
+            @Suppress("DEPRECATION")
+            getSystemService(Vibrator::class.java)?.vibrate(effect)
+        }
+    }
+
+    /** 胶囊文案：短文案最多 3 个汉字，正文可以长一些。 */
+    private fun liveText(state: LiveState): Pair<String, String> {
+        val (text, short) = when (val kind = state.kind) {
+            is LiveKind.Working -> {
+                if (kind.toolName != null) {
+                    getString(R.string.notification_live_tool, kind.toolName) to
+                        getString(R.string.notification_live_short_tool)
+                } else {
+                    getString(R.string.notification_live_reply) to
+                        getString(R.string.notification_live_short_reply)
+                }
+            }
+
+            LiveKind.WaitingPermission -> getString(R.string.notification_live_permission) to
+                getString(R.string.notification_live_short_permission)
+
+            LiveKind.WaitingAnswer -> getString(R.string.notification_live_question) to
+                getString(R.string.notification_live_short_question)
+
+            LiveKind.WaitingPlan -> getString(R.string.notification_live_plan) to
+                getString(R.string.notification_live_short_plan)
+
+            LiveKind.Completed -> getString(R.string.notification_live_completed) to
+                getString(R.string.notification_live_short_completed)
+
+            LiveKind.Failed -> getString(R.string.notification_live_failed) to
+                getString(R.string.notification_live_short_failed)
+        }
+        val body = if (state.others > 0) {
+            getString(R.string.notification_live_others, text, state.others)
+        } else {
+            text
+        }
+        return body to short
+    }
 
     companion object {
+        /** 完成态在状态栏停留的时长；太短看不清，太长又像卡住了。 */
+        private const val COMPLETION_HOLD_MS = 10_000L
+
+        /** 活跃状态的校准周期。 */
+        private const val RUNNING_SYNC_INTERVAL_MS = 90_000L
+
         fun start(context: Context) {
             val intent = Intent(context, PocketConnectionService::class.java)
             try {

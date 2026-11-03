@@ -388,6 +388,9 @@ object FrameCodec {
         modelId = session.optStringOrNull("modelId"),
         presetId = session.optStringOrNull("presetId"),
         permissionMode = session.optStringOrNull("permissionMode"),
+        // 思考强度：桌面 buildSessionItem 用 openAIThinkingLevel 表达 Pi 档位，agentEffort 表达强度档。
+        thinkingLevel = session.optStringOrNull("openAIThinkingLevel"),
+        agentEffort = session.optStringOrNull("agentEffort"),
         createdAt = session.optLong("createdAt", 0L),
         updatedAt = session.optLong("updatedAt", 0L),
         revision = session.optInt("revision", 0),
@@ -421,6 +424,20 @@ object FrameCodec {
                 val item = array.optJSONObject(index) ?: continue
                 val summary = parseSessionSummary(item)
                 if (summary.id.isNotBlank()) add(summary)
+            }
+        }
+    }
+
+    /**
+     * `get_agent_runtime_contexts` 返回 `[{sessionId, contextWindow, updatedAt}]`，
+     * 只取 sessionId 用于校准本地 running。
+     */
+    fun parseActiveSessionIds(data: Any?): Set<String> {
+        val array = data as? JSONArray ?: return emptySet()
+        return buildSet {
+            for (index in 0 until array.length()) {
+                val id = array.optJSONObject(index)?.optStringOrNull("sessionId") ?: continue
+                if (id.isNotBlank()) add(id)
             }
         }
     }
@@ -474,6 +491,7 @@ object FrameCodec {
                         id = id,
                         name = item.optString("name", ""),
                         provider = item.optStringOrNull("provider"),
+                        baseUrl = item.optStringOrNull("baseUrl"),
                         enabled = item.optBoolean("enabled", true),
                         models = parseChannelModels(item.optJSONArray("models")),
                     ),
@@ -497,6 +515,26 @@ object FrameCodec {
                 )
             }
         }
+    }
+
+    /**
+     * 模型思考档位能力（`get_pi_reasoning_capability` 的返回值）。
+     *
+     * 服务端可能返回 undefined（该模型没有 reasoning profile、也不在 Pi catalog 里）；
+     * 旧服务端不认识这条命令。两种情况都返回 null，界面回退到强度档。
+     */
+    fun parseReasoningCapability(data: Any?): com.profer.pocket.model.ReasoningCapability? {
+        val json = data as? JSONObject ?: return null
+        val array = json.optJSONArray("levels") ?: return null
+        val levels = buildList {
+            for (index in 0 until array.length()) {
+                val level = array.optString(index, "").trim()
+                if (level.isNotBlank()) add(level)
+            }
+        }
+        if (levels.isEmpty()) return null
+        val defaultLevel = json.optString("defaultLevel", "").takeIf { it in levels } ?: levels.first()
+        return com.profer.pocket.model.ReasoningCapability(levels = levels, defaultLevel = defaultLevel)
     }
 
     fun parsePresetList(data: Any?): List<com.profer.pocket.model.AgentPresetSummary> {

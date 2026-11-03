@@ -4,6 +4,7 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
@@ -55,6 +56,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalClipboardManager
@@ -125,41 +127,59 @@ fun ProferUserMessage(
 }
 
 /**
- * 思考过程：折叠时一行说明，展开后是左侧细竖线的一段安静文字。
+ * 思考过程：折叠态是一行「思考 · 摘要」，展开后是一段安静的正文。
+ * 摘要取正文首行，让人不展开也知道这一步在想什么；不再显示时长，避免和模型档位混淆。
  */
 @Composable
 fun ProferThinkingCard(
-    durationLabel: String,
     body: String,
     expanded: Boolean,
     onToggle: () -> Unit,
     modifier: Modifier = Modifier,
-    /** Agent 用「思考了 12 秒」；Chat 没有时长，传空串只显示标签。 */
-    labelPrefix: String = "思考了",
-    /** 折叠时的两行尾部预览：只在流式思考期间传，用来体现「一直在想」。 */
-    preview: String? = null,
+    /** 折叠行前缀：常态「思考」，流式「思考中」。 */
+    label: String = "思考",
+    /** 折叠行摘要；调用方可以按尾部窗口自己算，留空则取正文首行。 */
+    summary: String? = null,
+    /** 展开后的补充说明（如「思考了 12 秒」）；没有就不占位。 */
+    meta: String? = null,
 ) {
+    // 思考正文是长会话里最长的字符串：折叠摘要只需尾部/首行，
+    // 每次重组都扫一遍全文（trim + 正则替换）会白白拷贝几十 KB。
+    val resolved = remember(summary, body) {
+        summary?.takeIf { it.isNotBlank() }
+            ?: body.lineSequence().firstOrNull { it.isNotBlank() }?.trim().orEmpty()
+    }
     Column(modifier = modifier.fillMaxWidth()) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
                 .heightIn(min = ProferSizes.minTouchTarget)
-                .clip(MaterialTheme.shapes.small)
+                .clip(RoundedCornerShape(10.dp))
+                .background(MaterialTheme.colorScheme.surfaceContainerHigh)
                 .clickable(onClick = onToggle)
-                .padding(vertical = 6.dp),
+                .padding(horizontal = 8.dp, vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            Icon(
-                imageVector = Icons.Outlined.Psychology,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.tertiary,
-                modifier = Modifier.size(16.dp),
-            )
+            Box(
+                modifier = Modifier
+                    .size(22.dp)
+                    .background(MaterialTheme.colorScheme.tertiaryContainer, RoundedCornerShape(7.dp)),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    imageVector = Icons.Outlined.Psychology,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onTertiaryContainer,
+                    modifier = Modifier.size(14.dp),
+                )
+            }
             Text(
-                text = if (labelPrefix.isBlank()) durationLabel else "$labelPrefix $durationLabel",
+                text = if (resolved.isBlank()) label else "$label · $resolved",
                 style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f),
             )
             Icon(
@@ -169,38 +189,26 @@ fun ProferThinkingCard(
                 modifier = Modifier.size(18.dp),
             )
         }
-        if (!expanded && !preview.isNullOrBlank()) {
-            Text(
-                text = preview,
-                style = MaterialTheme.typography.bodySmall.copy(lineHeight = 19.sp),
-                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.75f),
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.padding(start = 22.dp, end = 18.dp, bottom = 8.dp),
-            )
-        }
         AnimatedVisibility(
             visible = expanded,
             enter = fadeIn() + expandVertically(),
             exit = fadeOut() + shrinkVertically(),
         ) {
-            Row(
-                modifier = Modifier
-                    .padding(bottom = 8.dp)
-                    .height(IntrinsicSize.Min),
+            Column(
+                modifier = Modifier.padding(start = 30.dp, end = 8.dp, top = 6.dp, bottom = 8.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
             ) {
-                Box(
-                    modifier = Modifier
-                        .padding(top = 3.dp, bottom = 3.dp, end = 10.dp)
-                        .width(2.dp)
-                        .fillMaxHeight()
-                        .background(MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(1.dp)),
-                )
+                meta?.takeIf { it.isNotBlank() }?.let {
+                    Text(
+                        text = it,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                    )
+                }
                 Text(
                     text = body,
                     style = MaterialTheme.typography.bodySmall.copy(lineHeight = 21.sp),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.weight(1f),
                 )
             }
         }
@@ -210,8 +218,8 @@ fun ProferThinkingCard(
 enum class ToolStatus { Running, Success, Error, Waiting }
 
 /**
- * 工具调用：折叠态一行（图标 + 名称 + 路径 + 状态），展开显示参数/结果。
- * 运行中只让状态转，不整卡重排。
+ * 工具调用：折叠态是一行「图标 + 标题 · 目标 + 状态」，展开后按「参数 / 结果 / 错误」分区。
+ * 行本身不加边框，靠图标底与间距分组；失败单独用语义容器色成块，不和正常输出混在一起。
  */
 @Composable
 fun ProferToolCallCard(
@@ -222,67 +230,128 @@ fun ProferToolCallCard(
     expanded: Boolean,
     onToggle: () -> Unit,
     modifier: Modifier = Modifier,
-    detail: String? = null,
+    /** 入参（调用方已截断成可读 JSON）；空则不显示参数分区。 */
+    input: String? = null,
+    /** 结果摘要；空则不显示结果分区。 */
+    output: String? = null,
+    /** 失败原因；空则不显示错误分区。 */
+    error: String? = null,
 ) {
     val semantic = ProferThemeExtras.semantic
-    Surface(
+    val expandable = input != null || output != null || error != null
+    val chevronRotation by animateFloatAsState(
+        targetValue = if (expanded) 180f else 0f,
+        label = "tool-chevron",
+    )
+    Column(
         modifier = modifier
             .fillMaxWidth()
             .animateContentSize(),
-        shape = MaterialTheme.shapes.small,
-        color = MaterialTheme.colorScheme.surfaceContainerLow,
-        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
     ) {
-        Column {
-            Row(
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(min = ProferSizes.minTouchTarget)
+                .clip(MaterialTheme.shapes.small)
+                // 没有详情可展开时不做可点击：避免点了没反应的死交互。
+                .then(if (expandable) Modifier.clickable(onClick = onToggle) else Modifier)
+                .padding(vertical = 5.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Box(
                 modifier = Modifier
-                    .fillMaxWidth()
-                    // 没有详情可展开时不做可点击：避免点了没反应的死交互。
-                    .then(if (detail != null) Modifier.clickable(onClick = onToggle) else Modifier)
-                    .padding(horizontal = 10.dp, vertical = 9.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    .size(26.dp)
+                    .background(MaterialTheme.colorScheme.surfaceContainerHigh, RoundedCornerShape(8.dp)),
+                contentAlignment = Alignment.Center,
             ) {
-                Box(
-                    modifier = Modifier
-                        .size(28.dp)
-                        .background(MaterialTheme.colorScheme.surfaceContainerHigh, MaterialTheme.shapes.extraSmall),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Icon(
-                        imageVector = icon,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.size(16.dp),
-                    )
-                }
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = title,
-                        style = MaterialTheme.typography.labelLarge,
-                        color = MaterialTheme.colorScheme.onSurface,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                    Text(
-                        text = subtitle,
-                        style = ProferCodeTextStyle.copy(fontSize = 11.5.sp, lineHeight = 15.sp),
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
-                Box(modifier = Modifier.size(20.dp), contentAlignment = Alignment.Center) {
-                    ToolStatusIndicator(status = status, semanticSuccess = semantic.success)
-                }
-            }
-            if (expanded && detail != null) {
-                ProferDivider()
-                ProferCodeBlock(
-                    code = detail,
-                    modifier = Modifier.padding(8.dp),
+                Icon(
+                    imageVector = icon,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(15.dp),
                 )
             }
+            Text(
+                text = if (subtitle.isBlank()) title else "$title · $subtitle",
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.onSurface,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
+            )
+            ToolStatusIndicator(status = status, semanticSuccess = semantic.success)
+            if (expandable) {
+                Icon(
+                    imageVector = Icons.Outlined.ExpandMore,
+                    contentDescription = if (expanded) "收起工具详情" else "展开工具详情",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier
+                        .size(16.dp)
+                        .rotate(chevronRotation),
+                )
+            }
+        }
+        AnimatedVisibility(
+            visible = expanded && expandable,
+            enter = fadeIn() + expandVertically(),
+            exit = fadeOut() + shrinkVertically(),
+        ) {
+            Column(
+                modifier = Modifier.padding(start = 36.dp, bottom = 4.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                input?.takeIf { it.isNotBlank() }?.let {
+                    ToolDetailSection(title = "参数", body = it, tone = ToolDetailTone.Code)
+                }
+                output?.takeIf { it.isNotBlank() }?.let {
+                    ToolDetailSection(title = "结果", body = it, tone = ToolDetailTone.Code)
+                }
+                error?.takeIf { it.isNotBlank() }?.let {
+                    ToolDetailSection(title = "错误", body = it, tone = ToolDetailTone.Error)
+                }
+            }
+        }
+    }
+}
+
+private enum class ToolDetailTone { Code, Error }
+
+/** 工具详情分区：标题在上、正文在下；错误用语义容器色，和正常输出分开读。 */
+@Composable
+private fun ToolDetailSection(title: String, body: String, tone: ToolDetailTone) {
+    val error = tone == ToolDetailTone.Error
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(10.dp),
+        color = if (error) {
+            MaterialTheme.colorScheme.errorContainer
+        } else {
+            MaterialTheme.colorScheme.surfaceContainerLow
+        },
+    ) {
+        Column(
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(3.dp),
+        ) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.labelSmall,
+                color = if (error) {
+                    MaterialTheme.colorScheme.onErrorContainer.copy(alpha = 0.75f)
+                } else {
+                    MaterialTheme.colorScheme.onSurfaceVariant
+                },
+            )
+            Text(
+                text = body,
+                style = ProferCodeTextStyle,
+                color = if (error) {
+                    MaterialTheme.colorScheme.onErrorContainer
+                } else {
+                    MaterialTheme.colorScheme.onSurface
+                },
+            )
         }
     }
 }

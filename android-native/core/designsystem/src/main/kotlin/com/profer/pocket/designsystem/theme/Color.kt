@@ -132,6 +132,8 @@ data class ProferSemanticColors(
     val warning: Color,
     val warningContainer: Color,
     val onWarningContainer: Color,
+    /** 运行中：与桌面的 `--info` 同义，用蓝色把「在干活」和「已结束」分开。 */
+    val info: Color,
     val codeBackground: Color,
     val codeForeground: Color,
     /** 模型 logo 的衬底：深色底上给透明字形一个浅色盘，避免图标消失。 */
@@ -145,6 +147,8 @@ val ProferLightSemantics = ProferSemanticColors(
     warning = Color(0xFF9A6F2C),
     warningContainer = Color(0xFFF4E7CF),
     onWarningContainer = Color(0xFF3F2A08),
+    // 纸面上偏灰的钢蓝：既能跟陶土品牌色拉开，又不至于把暖色底打穿。
+    info = Color(0xFF3A6B8A),
     // 代码块沿用云朵舞者的深暖棕，而不是中性黑：亮暗两套都保持纸感。
     codeBackground = Color(0xFF352B27),
     codeForeground = Color(0xFFEFEAE2),
@@ -158,6 +162,7 @@ val ProferDarkSemantics = ProferSemanticColors(
     warning = Color(0xFFDDB271),
     warningContainer = Color(0xFF352A17),
     onWarningContainer = Color(0xFFF3E1C2),
+    info = Color(0xFF8FB8D4),
     codeBackground = Color(0xFF14110F),
     codeForeground = Color(0xFFE7E2DA),
     modelLogoPlate = Color(0xFFF2EEE6),

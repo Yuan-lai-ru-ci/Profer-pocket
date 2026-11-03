@@ -2,7 +2,15 @@ package com.profer.pocket.sessions
 
 import androidx.compose.runtime.Immutable
 
-enum class SessionGroupKind { Pinned, Project, Unassigned }
+enum class SessionGroupKind { Project, Unassigned }
+
+/**
+ * 会话行左侧状态条的状态，对齐桌面 `SessionIndicatorStatus` 的活动三态。
+ *
+ * 桌面把「等人」放在最高优先级：会话在等权限/回答时 `running` 仍是 true，
+ * 只按运行中显示会把「等你处理」误报成「还在干活」。
+ */
+enum class SessionStatus { Idle, Running, Blocked, Completed }
 
 @Immutable
 data class SessionItem(
@@ -14,7 +22,9 @@ data class SessionItem(
     val pinned: Boolean = false,
     val draft: Boolean = false,
     val workspaceId: String? = null,
-    /** 会话所属项目名；跨项目列表（置顶/未归入/搜索）用它渲染 chip。 */
+    /** 正在等用户确认/回答（权限、提问、计划审批）；只有已加载的会话知道。 */
+    val waiting: Boolean = false,
+    /** 会话所属项目名；跨项目列表（未归入/搜索）用它渲染 chip。 */
     val projectName: String? = null,
     /** 挂在当前行下面的子会话（委派子会话 / 探索分支）；根会话恒为空。 */
     val children: List<SessionItem> = emptyList(),
@@ -29,6 +39,15 @@ data class SessionItem(
     /** 由定时任务创建/复用：行内用钟表标记（与桌面侧栏同口径）。 */
     val sourcedByAutomation: Boolean = false,
 ) {
+    /** 行首状态：等人 > 运行中 > 未读；与桌面 `getSessionTreeStatus` 同序。 */
+    val status: SessionStatus
+        get() = when {
+            waiting -> SessionStatus.Blocked
+            running -> SessionStatus.Running
+            unread -> SessionStatus.Completed
+            else -> SessionStatus.Idle
+        }
+
     /** 本行及其子会话的运行中数量。 */
     val activeCount: Int get() = (if (running) 1 else 0) + children.count { it.running }
 
@@ -98,8 +117,28 @@ data class SessionListState(
 }
 
 object SessionPreviewData {
+    // 项目顺序与 SessionCatalog 的输出一致：置顶项目在最前，其余按最近活动。
     val state = SessionListState(
         projects = listOf(
+            ProjectGroup(
+                id = "p2",
+                name = "website",
+                branchLabel = "main",
+                pinned = true,
+                sessions = listOf(
+                    SessionItem(
+                        id = "s4",
+                        title = "官网定价页文案",
+                        timeLabel = "昨天",
+                        unread = true,
+                    ),
+                    SessionItem(
+                        id = "s5",
+                        title = "移动端截图替换",
+                        timeLabel = "周一",
+                    ),
+                ),
+            ),
             ProjectGroup(
                 id = "p1",
                 name = "profer-main",
@@ -135,31 +174,25 @@ object SessionPreviewData {
                         id = "s2",
                         title = "移动端输入区键盘遮挡",
                         timeLabel = "1 小时前",
+                        // 等权限确认：行首竖条用 warning 色，不是「运行中」。
+                        running = true,
+                        waiting = true,
                     ),
                     SessionItem(
                         id = "s3",
                         title = "整理 Pocket 发布清单",
                         timeLabel = "昨天",
+                        pinned = true,
                     ),
-                ),
-            ),
-            ProjectGroup(
-                id = "p2",
-                name = "website",
-                branchLabel = "main",
-                pinned = true,
-                sessions = listOf(
-                    SessionItem(
-                        id = "s4",
-                        title = "官网定价页文案",
-                        timeLabel = "昨天",
-                        unread = true,
-                    ),
-                    SessionItem(
-                        id = "s5",
-                        title = "移动端截图替换",
-                        timeLabel = "周一",
-                    ),
+                    SessionItem(id = "s7", title = "抽屉状态条改版验收", timeLabel = "昨天"),
+                    SessionItem(id = "s8", title = "会话快照合并丢字段", timeLabel = "昨天"),
+                    SessionItem(id = "s9", title = "通知渠道文案", timeLabel = "周一", unread = true),
+                    SessionItem(id = "s10", title = "平板双栏回归", timeLabel = "周一"),
+                    SessionItem(id = "s11", title = "长列表滚动性能", timeLabel = "上周"),
+                    SessionItem(id = "s12", title = "键盘 insets 重构", timeLabel = "上周"),
+                    SessionItem(id = "s13", title = "深浅色 token 校对", timeLabel = "上周"),
+                    SessionItem(id = "s14", title = "连接页错误文案", timeLabel = "上周"),
+                    SessionItem(id = "s15", title = "图片附件解码", timeLabel = "上周"),
                 ),
             ),
             ProjectGroup(

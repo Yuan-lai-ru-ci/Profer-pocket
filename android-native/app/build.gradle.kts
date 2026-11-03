@@ -55,6 +55,9 @@ android {
         versionCode = pocketVersionCode
         versionName = pocketVersionName
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        // 正式版用发布签名，debug 用默认签名；同 applicationId 会因签名不一致装不上。
+        // 标签名用占位符区分，避免桌面上两个 Profer 图标分不清。
+        manifestPlaceholders["appLabel"] = "@string/app_name"
     }
 
     signingConfigs {
@@ -69,6 +72,12 @@ android {
     }
 
     buildTypes {
+        debug {
+            // 与正式版共存：包名加 .debug 后缀，不覆盖也不冲突。
+            applicationIdSuffix = ".debug"
+            versionNameSuffix = "-debug"
+            manifestPlaceholders["appLabel"] = "Profer Debug"
+        }
         release {
             isMinifyEnabled = false
             if (signingPropertiesFile.exists()) signingConfig = signingConfigs.getByName("release")

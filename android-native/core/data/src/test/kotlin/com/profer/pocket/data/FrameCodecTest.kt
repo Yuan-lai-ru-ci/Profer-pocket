@@ -389,4 +389,68 @@ class FrameCodecTest {
         assertEquals(null, FrameCodec.parseAgentModelSelection(JSONObject("""{"channelId":"","modelId":"m2"}""")))
         assertEquals(null, FrameCodec.parseAgentModelSelection(JSONObject("""{"channelId":"c2"}""")))
     }
+
+    @Test
+    fun `解析活跃运行集合`() {
+        val data = org.json.JSONArray(
+            """[{"sessionId":"s1","contextWindow":200000,"updatedAt":1},{"sessionId":"s2"}]""",
+        )
+        assertEquals(setOf("s1", "s2"), FrameCodec.parseActiveSessionIds(data))
+
+        // 空列表 / 非法数据：返回空集合，调用方据此不做校准。
+        assertEquals(emptySet<String>(), FrameCodec.parseActiveSessionIds(org.json.JSONArray("[]")))
+        assertEquals(emptySet<String>(), FrameCodec.parseActiveSessionIds(null))
+        assertEquals(emptySet<String>(), FrameCodec.parseActiveSessionIds(JSONObject("""{}""")))
+    }
+
+    @Test
+    fun `解析会话思考档位覆盖`() {
+        val summary = FrameCodec.parseSessionSummary(
+            JSONObject(
+                """{"id":"s1","title":"会话","openAIThinkingLevel":"xhigh","agentEffort":null}""",
+            ),
+        )
+        assertEquals("xhigh", summary.thinkingLevel)
+        assertNull(summary.agentEffort)
+
+        // 显式 null（跟随预设）与字段缺失都落到 null，界面上都是「跟随预设」。
+        val cleared = FrameCodec.parseSessionSummary(JSONObject("""{"id":"s1","title":"会话"}"""))
+        assertNull(cleared.thinkingLevel)
+        assertNull(cleared.agentEffort)
+    }
+
+    @Test
+    fun `解析渠道 baseUrl`() {
+        val channels = FrameCodec.parseChannelList(
+            org.json.JSONArray(
+                """[{"id":"c1","name":"主渠道","provider":"deepseek","baseUrl":"https://gateway.example/v1","enabled":true,
+                    "models":[{"id":"m1","name":"DeepSeek"}]}]""",
+            ),
+        )
+        assertEquals("deepseek", channels.single().provider)
+        assertEquals("https://gateway.example/v1", channels.single().baseUrl)
+    }
+
+    @Test
+    fun `解析模型思考档位能力`() {
+        val capability = FrameCodec.parseReasoningCapability(
+            JSONObject(
+                """{"source":"profile","levels":["off","high","max"],"defaultLevel":"high",
+                    "effortMap":{"off":null,"high":"high","max":"max"}}""",
+            ),
+        )
+        assertEquals(listOf("off", "high", "max"), capability?.levels)
+        assertEquals("high", capability?.defaultLevel)
+
+        // 服务端返回 undefined / 空档位：没有能力，界面回退强度档。
+        assertNull(FrameCodec.parseReasoningCapability(null))
+        assertNull(FrameCodec.parseReasoningCapability(JSONObject("""{"levels":[]}""")))
+        assertNull(FrameCodec.parseReasoningCapability(JSONObject("""{}""")))
+
+        // defaultLevel 不在 levels 里时按首档兜底，避免弹层勾选到一个不存在的项。
+        val invalidDefault = FrameCodec.parseReasoningCapability(
+            JSONObject("""{"levels":["off","high"],"defaultLevel":"max"}"""),
+        )
+        assertEquals("off", invalidDefault?.defaultLevel)
+    }
 }

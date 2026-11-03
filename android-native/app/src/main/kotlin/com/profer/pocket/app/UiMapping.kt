@@ -9,7 +9,7 @@ import com.profer.pocket.chat.PermissionRequest
 import com.profer.pocket.chat.ThinkingBlock
 import com.profer.pocket.chat.ToolBlock
 import com.profer.pocket.chat.ToolKind
-import com.profer.pocket.chat.parseRichBlocks
+import com.profer.pocket.chat.cachedRichBlocks
 import com.profer.pocket.data.SessionCatalog
 import com.profer.pocket.connect.ConnectionPhase
 import com.profer.pocket.connect.ConnectionUiState
@@ -72,6 +72,56 @@ object UiMapping {
     private val dayFormat = ThreadLocal.withInitial {
         SimpleDateFormat("M月d日", Locale.getDefault())
     }
+
+    private val clockFormat = ThreadLocal.withInitial {
+        SimpleDateFormat("HH:mm", Locale.getDefault())
+    }
+
+    /**
+     * 消息投影缓存（只保留当前会话）。
+     *
+     * 流式 token 每 60ms 到一次，[chatState] 会把整张消息表重算一遍：每条历史消息都要
+     * 重新分块 Markdown、重拼时间标签。几百条消息 × 每秒十几次 = 持续的垃圾分配，
+     * 滚动和左右侧滑时被 GC 打断。这里按「entry 引用 + 影响投影的上下文」命中，
+     * 一次 token 只重建真正变化的那条（通常是正在流式的最后一条）。
+     */
+    private class MessageProjection(
+        val entry: ChatEntry,
+        val context: ProjectionContext,
+        val message: ChatMessage,
+    )
+
+    /** 影响单条投影结果的外部状态；工具 id 集合只增不改，引用相同即内容相同。 */
+    private class ProjectionContext(
+        val online: Boolean,
+        val running: Boolean,
+        val failedToolIds: Set<String>,
+        val completedToolIds: Set<String>,
+    ) {
+        fun matches(other: ProjectionContext): Boolean =
+            online == other.online &&
+                running == other.running &&
+                failedToolIds === other.failedToolIds &&
+                completedToolIds === other.completedToolIds
+    }
+
+    private val projectionLock = Any()
+    private var projectionSessionId: String? = null
+    private val messageProjections = HashMap<String, MessageProjection>()
+    private val liveEntryIds = HashSet<String>()
+    private var lastProjectedMessages: List<ChatMessage> = emptyList()
+
+    /** Chat 模式消息投影缓存：与 [messageProjections] 同因同解。 */
+    private class ConversationProjection(
+        val source: DomainChatMessage,
+        val message: ConversationMessage,
+    )
+
+    private val conversationLock = Any()
+    private var conversationProjectionId: String? = null
+    private val conversationProjections = HashMap<String, ConversationProjection>()
+    private val liveConversationIds = HashSet<String>()
+    private var lastProjectedConversation: List<ConversationMessage> = emptyList()
 
     fun connectionState(
         status: ConnectionStatus,
@@ -215,6 +265,9 @@ object UiMapping {
         status: ConnectionStatus,
         queuedSends: Int = 0,
         presets: List<com.profer.pocket.model.AgentPresetSummary> = emptyList(),
+        /** 当前模型支持的思考档位；null = 拿不到能力，回退强度档。 */
+        capability: com.profer.pocket.model.ReasoningCapability? = null,
+        capabilityLoading: Boolean = false,
         now: Long = System.currentTimeMillis(),
     ): ChatUiState {
         val online = status is ConnectionStatus.Connected
@@ -236,99 +289,19 @@ object UiMapping {
         val channelId = chat?.channelId ?: summary?.channelId
         val modelId = chat?.modelId ?: summary?.modelId
         val permissionMode = chat?.permissionMode ?: summary?.permissionMode
-        val messages = buildList {
-            chat?.messages?.forEach { entry ->
-                when (entry) {
-                    is ChatEntry.User -> if (!isInternalUserText(entry.text)) {
-                        add(
-                            ChatMessage.User(
-                                id = entry.id,
-                                text = com.profer.pocket.chat.stripAttachedFiles(entry.text),
-                                meta = when (entry.status) {
-                                    com.profer.pocket.model.SendStatus.Sending -> "发送中…"
-                                    com.profer.pocket.model.SendStatus.Failed -> "发送失败"
-                                    com.profer.pocket.model.SendStatus.Sent ->
-                                        "${timeLabel(entry.at)} · ${if (online) "已送达" else "等待连接"}"
-                                },
-                                status = entry.status,
-                                failure = entry.failure,
-                                attachments = com.profer.pocket.chat.parseAttachedFiles(entry.text),
-                            ),
-                        )
-                    }
-
-                    is ChatEntry.Assistant -> add(
-                        ChatMessage.Assistant(
-                            id = entry.id,
-                            // 有思考就渲染折叠卡：运行中显示「思考中…」，结束后回到「思考过程」。
-                            thinking = entry.thinking?.takeIf { it.isNotBlank() }?.let { body ->
-                                ThinkingBlock(
-                                    durationLabel = if (entry.streaming) "思考中…" else "思考过程",
-                                    body = body,
-                                )
-                            },
-                            // 工具卡恢复逐条显示：挂在这条助手消息自己身上，不再汇总成图标条。
-                            tools = entry.toolCalls.map { call -> toolBlock(call, chat) },
-                            blocks = parseRichBlocks(entry.text),
-                            streaming = entry.streaming,
-                            images = entry.images,
-                        ),
-                    )
-
-                    is ChatEntry.Source -> if (!isInternalUserText(entry.text)) {
-                        add(
-                            ChatMessage.Source(
-                                id = entry.id,
-                                authorLabel = entry.authorLabel,
-                                // 只展示可读来源；找不到来源会话时说明不可访问，不回显内部 ID。
-                                sourceLabel = when (entry.sourceType) {
-                                    "session" -> sessions.firstOrNull { it.id == entry.sourceId }
-                                        ?.title?.takeIf { it.isNotBlank() }
-                                        ?.let { "来自会话「$it」" }
-                                        ?: "来源会话不可访问"
-
-                                    "automation" -> "来自定时任务"
-                                    "task" -> "来自上级任务"
-                                    "request" -> "来自外部请求"
-                                    "message" -> "关联到来源消息"
-                                    else -> null
-                                },
-                                text = entry.text,
-                                scheduled = entry.scheduled,
-                                timeLabel = timeLabel(entry.at),
-                            ),
-                        )
-                    }
-
-                    is ChatEntry.Notice -> add(
-                        ChatMessage.Notice(
-                            id = entry.id,
-                            text = entry.text,
-                            tone = when (entry.tone) {
-                                DomainNoticeTone.Info -> NoticeTone.Info
-                                DomainNoticeTone.Success -> NoticeTone.Success
-                                DomainNoticeTone.Warning -> NoticeTone.Warning
-                            },
-                        ),
-                    )
-                }
-            }
-            val question = chat?.pendingInteraction as? PendingInteraction.Question
-            if (question != null) {
-                val first = question.questions.firstOrNull()?.question
-                add(
-                    ChatMessage.Notice(
-                        id = "question-${question.id}",
-                        text = if (first.isNullOrBlank()) {
-                            "Agent 在等待你的回答（请在电脑端回答）"
-                        } else {
-                            "Agent 在等待你的回答：$first"
-                        },
-                        tone = NoticeTone.Info,
-                    ),
-                )
-            }
-        }
+        // 思考强度：档位来自会话覆盖，默认档来自预设 effort；能力由电脑端按模型算。
+        val reasoning = com.profer.pocket.model.ReasoningResolver.resolve(
+            capability = capability,
+            sessionLevel = summary?.thinkingLevel,
+            sessionEffort = summary?.agentEffort,
+            presetEffort = presets.firstOrNull { it.id == summary?.presetId }?.effort,
+        )
+        val messages = projectedMessages(
+            sessionId = sessionId,
+            chat = chat,
+            sessions = sessions,
+            online = online,
+        )
         return ChatUiState(
             title = title,
             project = workspaceName ?: "Profer",
@@ -341,6 +314,13 @@ object UiMapping {
             permissionMode = permissionMode,
             presetId = summary?.presetId,
             presetLabel = presets.firstOrNull { it.id == summary?.presetId }?.displayName ?: "默认",
+            thinkingLabel = reasoning.label,
+            thinkingSourceLabel = reasoning.sourceLabel,
+            thinkingOptions = reasoning.options,
+            thinkingSelectedValue = reasoning.selectedValue,
+            thinkingUsesCapability = reasoning.usesCapability,
+            // 只有「还不知道档位」才算加载中：已知能力时后台刷新不该把选项禁用掉。
+            thinkingLoading = capabilityLoading && capability == null,
             contextUsage = chat?.contextUsage,
             contextWindow = chat?.contextWindow,
             messages = messages,
@@ -356,7 +336,166 @@ object UiMapping {
         )
     }
 
-    /** 单条工具调用 → 卡片模型：图标分类与状态，入参只透传了文件路径，不伪造命令/结果。 */
+    /**
+     * 整张消息表的投影：命中缓存的历史消息直接复用上一次的 [ChatMessage]，
+     * 只有内容变化的那条重新分块/格式化。表本身没变时连 List 实例都复用，
+     * 让 StateFlow 的 equals 去重和 `remember(messages)` 的派生状态都不必重跑。
+     */
+    private fun projectedMessages(
+        sessionId: String?,
+        chat: SessionChat?,
+        sessions: List<SessionSummary>,
+        online: Boolean,
+    ): List<ChatMessage> {
+        val entries = chat?.messages.orEmpty()
+        val context = ProjectionContext(
+            online = online,
+            running = chat?.running == true,
+            failedToolIds = chat?.failedToolIds.orEmpty(),
+            completedToolIds = chat?.completedToolIds.orEmpty(),
+        )
+        synchronized(projectionLock) {
+            if (projectionSessionId != sessionId) {
+                messageProjections.clear()
+                lastProjectedMessages = emptyList()
+                projectionSessionId = sessionId
+            }
+            val out = ArrayList<ChatMessage>(entries.size + 1)
+            liveEntryIds.clear()
+            entries.forEach { entry ->
+                liveEntryIds.add(entry.id)
+                // 来源卡要按会话标题现算，条数很少，不进缓存。
+                if (entry is ChatEntry.Source) {
+                    projectEntry(entry, chat, sessions, online)?.let(out::add)
+                    return@forEach
+                }
+                val cached = messageProjections[entry.id]
+                if (cached != null && cached.entry === entry && cached.context.matches(context)) {
+                    out.add(cached.message)
+                    return@forEach
+                }
+                val message = projectEntry(entry, chat, sessions, online)
+                if (message == null) {
+                    messageProjections.remove(entry.id)
+                } else {
+                    messageProjections[entry.id] = MessageProjection(entry, context, message)
+                    out.add(message)
+                }
+            }
+            // 重发/截断后旧 id 不会再出现：缓存只保留当前表里的，不跟着长会话只增不减。
+            if (messageProjections.size > out.size) {
+                messageProjections.keys.retainAll(liveEntryIds)
+            }
+            (chat?.pendingInteraction as? PendingInteraction.Question)?.let { question ->
+                out.add(questionNotice(question))
+            }
+            val previous = lastProjectedMessages
+            val unchanged = previous.size == out.size && out.indices.all { out[it] === previous[it] }
+            val result = if (unchanged) previous else out
+            lastProjectedMessages = result
+            return result
+        }
+    }
+
+    /** 单条 entry → UI 模型；内部注入的用户文本不上屏（与桌面同口径）。 */
+    private fun projectEntry(
+        entry: ChatEntry,
+        chat: SessionChat?,
+        sessions: List<SessionSummary>,
+        online: Boolean,
+    ): ChatMessage? = when (entry) {
+        is ChatEntry.User -> if (isInternalUserText(entry.text)) {
+            null
+        } else {
+            ChatMessage.User(
+                id = entry.id,
+                text = com.profer.pocket.chat.stripAttachedFiles(entry.text),
+                meta = when (entry.status) {
+                    com.profer.pocket.model.SendStatus.Sending -> "发送中…"
+                    com.profer.pocket.model.SendStatus.Failed -> "发送失败"
+                    com.profer.pocket.model.SendStatus.Sent ->
+                        "${timeLabel(entry.at)} · ${if (online) "已送达" else "等待连接"}"
+                },
+                status = entry.status,
+                failure = entry.failure,
+                attachments = com.profer.pocket.chat.parseAttachedFiles(entry.text),
+            )
+        }
+
+        is ChatEntry.Assistant -> ChatMessage.Assistant(
+            id = entry.id,
+            // 有思考就渲染折叠卡：运行中显示「思考中…」，结束后回到「思考过程」。
+            thinking = entry.thinking?.takeIf { it.isNotBlank() }?.let { body ->
+                ThinkingBlock(
+                    durationLabel = if (entry.streaming) "思考中…" else "思考过程",
+                    body = body,
+                )
+            },
+            // 工具卡恢复逐条显示：挂在这条助手消息自己身上，不再汇总成图标条。
+            tools = if (chat == null) {
+                emptyList()
+            } else {
+                entry.toolCalls.map { call -> toolBlock(call, chat) }
+            },
+            blocks = cachedRichBlocks(entry.text),
+            streaming = entry.streaming,
+            images = entry.images,
+        )
+
+        is ChatEntry.Source -> if (isInternalUserText(entry.text)) {
+            null
+        } else {
+            ChatMessage.Source(
+                id = entry.id,
+                authorLabel = entry.authorLabel,
+                // 只展示可读来源；找不到来源会话时说明不可访问，不回显内部 ID。
+                sourceLabel = when (entry.sourceType) {
+                    "session" -> sessions.firstOrNull { it.id == entry.sourceId }
+                        ?.title?.takeIf { it.isNotBlank() }
+                        ?.let { "来自会话「$it」" }
+                        ?: "来源会话不可访问"
+
+                    "automation" -> "来自定时任务"
+                    "task" -> "来自上级任务"
+                    "request" -> "来自外部请求"
+                    "message" -> "关联到来源消息"
+                    else -> null
+                },
+                text = entry.text,
+                scheduled = entry.scheduled,
+                timeLabel = timeLabel(entry.at),
+            )
+        }
+
+        is ChatEntry.Notice -> ChatMessage.Notice(
+            id = entry.id,
+            text = entry.text,
+            tone = when (entry.tone) {
+                DomainNoticeTone.Info -> NoticeTone.Info
+                DomainNoticeTone.Success -> NoticeTone.Success
+                DomainNoticeTone.Warning -> NoticeTone.Warning
+            },
+        )
+    }
+
+    private fun questionNotice(question: PendingInteraction.Question): ChatMessage.Notice {
+        val first = question.questions.firstOrNull()?.question
+        return ChatMessage.Notice(
+            id = "question-${question.id}",
+            text = if (first.isNullOrBlank()) {
+                "Agent 在等待你的回答（请在电脑端回答）"
+            } else {
+                "Agent 在等待你的回答：$first"
+            },
+            tone = NoticeTone.Info,
+        )
+    }
+
+    /**
+     * 单条工具调用 → 卡片模型：图标分类与状态。
+     * 投影目前只透传 file_path，input/output/error 恒为 null，卡片因此不可展开；
+     * 字段契约见 docs/tool-detail-projection-2026-11-02.md。
+     */
     private fun toolBlock(
         call: com.profer.pocket.model.ToolCall,
         chat: SessionChat,
@@ -411,6 +550,7 @@ object UiMapping {
         query: String,
         online: Boolean,
         runningSessionIds: Set<String> = emptySet(),
+        waitingSessionIds: Set<String> = emptySet(),
         deviceLabel: String? = null,
         endpoint: String? = null,
         refreshing: Boolean = false,
@@ -432,7 +572,6 @@ object UiMapping {
                     name = group.name,
                     branchLabel = null,
                     kind = when (group.kind) {
-                        com.profer.pocket.data.SessionGroupKind.Pinned -> SessionGroupKind.Pinned
                         com.profer.pocket.data.SessionGroupKind.Project -> SessionGroupKind.Project
                         com.profer.pocket.data.SessionGroupKind.Unassigned -> SessionGroupKind.Unassigned
                     },
@@ -446,6 +585,7 @@ object UiMapping {
                             running = item.session.isActive ||
                                 item.session.id in runningSessionIds ||
                                 item.session.isDelegationRunning,
+                            waiting = item.session.id in waitingSessionIds,
                             now = now,
                             projectName = item.session.workspaceId?.let(projectNames::get),
                         ).copy(
@@ -456,6 +596,7 @@ object UiMapping {
                                     running = child.isActive ||
                                         child.id in runningSessionIds ||
                                         child.isDelegationRunning,
+                                    waiting = child.id in waitingSessionIds,
                                     now = now,
                                     projectName = child.workspaceId?.let(projectNames::get),
                                 )
@@ -573,23 +714,7 @@ object UiMapping {
         title = conversation?.displayTitle.orEmpty(),
         channelId = conversation?.channelId,
         modelId = conversation?.modelId,
-        messages = messages.map { message ->
-            if (message.isUser) {
-                ConversationMessage.User(
-                    id = message.id,
-                    text = message.content,
-                    meta = timeLabel(message.createdAt),
-                )
-            } else {
-                ConversationMessage.Assistant(
-                    id = message.id,
-                    text = message.content,
-                    reasoning = message.reasoning,
-                    error = message.error,
-                    stopped = message.stopped,
-                )
-            }
-        },
+        messages = projectedConversationMessages(conversation?.id, messages),
         streamText = stream?.text.orEmpty(),
         streamReasoning = stream?.reasoning.orEmpty(),
         streaming = stream?.running == true,
@@ -598,13 +723,66 @@ object UiMapping {
         offlineLabel = offlineLabel(status, queuedSends),
     )
 
+    /**
+     * Chat 模式消息投影：与 [projectedMessages] 同因同解。
+     * 每次 token 都重建全部气泡（含每条时间标签的 SimpleDateFormat）会持续制造垃圾。
+     */
+    private fun projectedConversationMessages(
+        conversationId: String?,
+        messages: List<DomainChatMessage>,
+    ): List<ConversationMessage> {
+        synchronized(conversationLock) {
+            if (conversationProjectionId != conversationId) {
+                conversationProjections.clear()
+                lastProjectedConversation = emptyList()
+                conversationProjectionId = conversationId
+            }
+            val out = ArrayList<ConversationMessage>(messages.size)
+            liveConversationIds.clear()
+            messages.forEach { message ->
+                liveConversationIds.add(message.id)
+                val cached = conversationProjections[message.id]
+                if (cached != null && cached.source === message) {
+                    out.add(cached.message)
+                    return@forEach
+                }
+                val projected = if (message.isUser) {
+                    ConversationMessage.User(
+                        id = message.id,
+                        text = message.content,
+                        meta = timeLabel(message.createdAt),
+                    )
+                } else {
+                    ConversationMessage.Assistant(
+                        id = message.id,
+                        text = message.content,
+                        reasoning = message.reasoning,
+                        error = message.error,
+                        stopped = message.stopped,
+                    )
+                }
+                conversationProjections[message.id] = ConversationProjection(message, projected)
+                out.add(projected)
+            }
+            if (conversationProjections.size > out.size) {
+                conversationProjections.keys.retainAll(liveConversationIds)
+            }
+            val previous = lastProjectedConversation
+            val unchanged = previous.size == out.size && out.indices.all { out[it] === previous[it] }
+            val result = if (unchanged) previous else out
+            lastProjectedConversation = result
+            return result
+        }
+    }
+
     private fun timeLabel(timestamp: Long): String =
-        if (timestamp <= 0) "" else SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(timestamp))
+        if (timestamp <= 0) "" else clockFormat.get()!!.format(Date(timestamp))
 
     private fun sessionItem(
         session: SessionSummary,
         currentSessionId: String?,
         running: Boolean,
+        waiting: Boolean,
         now: Long,
         projectName: String?,
     ): SessionItem {
@@ -612,7 +790,12 @@ object UiMapping {
         val key = SessionItemKey(session, currentSessionId, minute, projectName)
         val cached = synchronized(sessionCacheLock) { sessionItemCache[key] }
         if (cached != null) {
-            return if (cached.running == running) cached else cached.copy(running = running)
+            // 运行态/等人态不缓存在 key 里（每 60ms 变一次），命中后直接覆写。
+            return if (cached.running == running && cached.waiting == waiting) {
+                cached
+            } else {
+                cached.copy(running = running, waiting = waiting)
+            }
         }
         val draftTitle = session.title.takeIf { it.isNotBlank() && it != "新 Agent 会话" }
         val item = SessionItem(
@@ -623,7 +806,8 @@ object UiMapping {
             },
             timeLabel = if (session.isDraft) "草稿" else relativeTime(session.updatedAt, now),
             running = running,
-            // 当前正打开的会话不显示未读点：用户已经看过了。
+            waiting = waiting,
+            // 当前正打开的会话不显示未读状态：用户已经看过了。
             unread = session.isUnread && session.id != currentSessionId,
             pinned = session.isPinned,
             draft = session.isDraft,

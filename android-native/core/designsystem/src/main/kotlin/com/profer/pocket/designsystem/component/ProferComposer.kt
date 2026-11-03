@@ -29,6 +29,7 @@ import androidx.compose.material.icons.outlined.Bolt
 import androidx.compose.material.icons.outlined.Build
 import androidx.compose.material.icons.outlined.ExpandMore
 import androidx.compose.material.icons.outlined.Image
+import androidx.compose.material.icons.outlined.Psychology
 import androidx.compose.material.icons.outlined.Stop
 import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material.icons.outlined.WorkOutline
@@ -115,6 +116,9 @@ fun ProferComposer(
     showSelectors: Boolean = true,
     /** 是否显示权限/档位选择器；Chat 只切换模型时传 false。 */
     showModeSelector: Boolean = true,
+    /** 思考强度当前档位（如「高」）；null 表示不显示这个入口（Chat 模式）。 */
+    thinkingLabel: String? = null,
+    onThinkingClick: (() -> Unit)? = null,
 ) {
     // 深色判断跟着主题走，不用 isSystemInDarkTheme：设置里可以手动指定主题。
     val dark = MaterialTheme.colorScheme.surface.luminance() < 0.5f
@@ -150,6 +154,8 @@ fun ProferComposer(
             onModeClick = onModeClick,
             showSelectors = showSelectors,
             showModeSelector = showModeSelector,
+            thinkingLabel = thinkingLabel,
+            onThinkingClick = onThinkingClick,
         )
     }
 }
@@ -177,6 +183,8 @@ private fun ComposerField(
     onModeClick: () -> Unit,
     showSelectors: Boolean,
     showModeSelector: Boolean,
+    thinkingLabel: String?,
+    onThinkingClick: (() -> Unit)?,
 ) {
     val canSend = value.isNotBlank()
     val active = streaming || canSend
@@ -213,6 +221,8 @@ private fun ComposerField(
                 onModeClick = onModeClick,
                 showSelectors = showSelectors,
                 showModeSelector = showModeSelector,
+                thinkingLabel = thinkingLabel,
+                onThinkingClick = onThinkingClick,
                 onAttach = onAttach,
                 onToolsClick = onToolsClick,
                 toolsActive = toolsActive,
@@ -293,6 +303,8 @@ private fun ComposerMenuButton(
     onModeClick: () -> Unit,
     showSelectors: Boolean,
     showModeSelector: Boolean,
+    thinkingLabel: String?,
+    onThinkingClick: (() -> Unit)?,
     onAttach: (() -> Unit)?,
     onToolsClick: (() -> Unit)?,
     toolsActive: Boolean,
@@ -315,6 +327,8 @@ private fun ComposerMenuButton(
                 onModeClick = { open = false; onModeClick() },
                 showSelectors = showSelectors,
                 showModeSelector = showModeSelector,
+                thinkingLabel = thinkingLabel,
+                onThinkingClick = onThinkingClick?.let { click -> { open = false; click() } },
                 onAttach = onAttach?.let { attach -> { open = false; attach() } },
                 onToolsClick = onToolsClick?.let { tools -> { open = false; tools() } },
                 toolsActive = toolsActive,
@@ -342,6 +356,8 @@ private fun ComposerOptionsSheet(
     onModeClick: () -> Unit,
     showSelectors: Boolean,
     showModeSelector: Boolean,
+    thinkingLabel: String?,
+    onThinkingClick: (() -> Unit)?,
     onAttach: (() -> Unit)?,
     onToolsClick: (() -> Unit)?,
     toolsActive: Boolean,
@@ -400,6 +416,16 @@ private fun ComposerOptionsSheet(
                         }
                         if (showModeSelector) {
                             ComposerSheetRow(Icons.Outlined.Tune, "权限", modeLabel, onModeClick, divider = true)
+                        }
+                        // 思考强度：档位由电脑端按模型能力算，手机只负责切换。
+                        if (thinkingLabel != null && onThinkingClick != null) {
+                            ComposerSheetRow(
+                                Icons.Outlined.Psychology,
+                                "思考强度",
+                                thinkingLabel,
+                                onThinkingClick,
+                                divider = true,
+                            )
                         }
                     }
                 }

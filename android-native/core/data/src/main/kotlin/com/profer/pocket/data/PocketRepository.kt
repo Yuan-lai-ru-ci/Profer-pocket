@@ -127,6 +127,15 @@ class PocketRepository(
     /** 预设按工作区隔离；记录当前缓存对应的 slug，避免跨项目串用。 */
     private var presetsWorkspaceSlug: String? = null
 
+    /**
+     * 思考档位能力缓存：key = provider|modelId|baseUrl。
+     *
+     * 能力只随「渠道 + 模型」变化，跟会话无关；每次打开弹层都回电脑端算一遍没有意义。
+     * 值允许为 null（该模型没有档位能力），也要缓存住，否则每开一次会话都要多一次往返。
+     */
+    private val reasoningCapabilityCache = mutableMapOf<String, com.profer.pocket.model.ReasoningCapability?>()
+    private val reasoningCapabilityLock = Any()
+
     private val _chatTools = MutableStateFlow<List<ChatToolSummary>>(emptyList())
     val chatTools: StateFlow<List<ChatToolSummary>> = _chatTools.asStateFlow()
 
@@ -157,6 +166,9 @@ class PocketRepository(
     private val _devices = MutableStateFlow(DeviceRegistry.Snapshot())
     val devices: StateFlow<DeviceRegistry.Snapshot> = _devices.asStateFlow()
 
+    /** 连续校准失败次数：WS 假在线时用来判定「状态未知」。 */
+    private var syncFailures = 0
+
     /** 注册表损坏 / 凭据不可用：UI 提示重新扫码，不静默清空。 */
     private val _registryError = MutableStateFlow<String?>(null)
     val registryError: StateFlow<String?> = _registryError.asStateFlow()
@@ -184,6 +196,16 @@ class PocketRepository(
     private val loadingSessions = mutableSetOf<String>()
     private val lastCompletionNotifyAt = mutableMapOf<String, Long>()
     private var snapshotJob: Job? = null
+
+    /**
+     * 最近水合过的会话（LRU，最前 = 最久没用）。
+     * 每个打开过的会话都把整份历史留在 [_chats] 里且永不释放，逗过十几个长会话后
+     * 堆里全是历史消息，滚动/侧滑时会被 GC 打断。这里只保留最近几条，其余按需重新水合。
+     */
+    private val recentSessionIds = LinkedHashSet<String>()
+
+    /** 用户当前打开的会话（非 force 水合的那个），回收时永远保留。 */
+    private var activeSessionId: String? = null
 
     /** 已删除会话的 revision 墓碑：迟到的 projection 不能把会话复活。 */
     private val deletedSessionRevisions = mutableMapOf<String, Int>()
@@ -469,12 +491,28 @@ class PocketRepository(
     // ===== 会话 =====
 
     private suspend fun onConnectionStatus(previous: ConnectionStatus?, current: ConnectionStatus) {
-        if (current !is ConnectionStatus.Connected) return
+        if (current !is ConnectionStatus.Connected) {
+            // 断线后无法确认任务是否还在跑：把 running 收起来，避免胶囊一直「执行中」。
+            // 重连时下面的水合会用桌面端 active 重新校准回来。
+            clearStaleRunning()
+            return
+        }
         if (previous is ConnectionStatus.Connected) return
         refreshCatalog()
         _chats.value.values
             .filter { it.loaded || it.running }
             .forEach { openSession(it.sessionId, force = true) }
+    }
+
+    /** 连接不可用时清掉残留的运行/等待状态；只改内存，不动历史消息。 */
+    private suspend fun clearStaleRunning() {
+        stateMutex.withLock {
+            val stale = _chats.value.filterValues { it.running || it.pendingInteraction != null }
+            if (stale.isEmpty()) return@withLock
+            _chats.value = _chats.value + stale.mapValues { (_, chat) ->
+                chat.copy(running = false, pendingInteraction = null)
+            }
+        }
     }
 
     private suspend fun onResumeResult(result: InboundFrame.AgentEventsResumed) {
@@ -504,7 +542,48 @@ class PocketRepository(
     fun refreshCatalogIfOnline(minIntervalMs: Long = CATALOG_REFRESH_MIN_INTERVAL_MS) {
         if (connection.status.value !is ConnectionStatus.Connected) return
         if (clock() - lastCatalogRefreshAt < minIntervalMs) return
-        scope.launch { refreshCatalog() }
+        scope.launch {
+            refreshCatalog()
+            // 回前台顺手校准：后台被冻结/事件丢失时，running 会卡在 true。
+            syncRunningSessions()
+        }
+    }
+
+    /**
+     * 用桌面端的权威状态校准本地 running。
+     *
+     * WS 增量更新一旦漏掉某一轮的终态（断线、后台冻结、假在线），本地 running 会永远停在 true，
+     * 状态栏胶囊就一直显示「执行中」。这里先查一次活跃运行集合，只对「本地说在跑、桌面说没在跑」
+     * 的会话逐个拉 session_detail 确认：不能直接把「不在集合」当成结束——没有 contextWindow
+     * 的活跃 run 不会进这个列表。
+     */
+    suspend fun syncRunningSessions(): Boolean {
+        if (connection.status.value !is ConnectionStatus.Connected) return false
+        val running = _chats.value.values.filter { it.running }.map { it.sessionId }
+        if (running.isEmpty()) {
+            syncFailures = 0
+            return true
+        }
+        val result = requestOrNull("get_agent_runtime_contexts") {
+            put("sessionIds", JSONArray(running))
+        }
+        if (result == null) {
+            // 请求失败：连接可能已假在线（WS 半开），连续两次就按「状态未知」收起。
+            syncFailures += 1
+            if (syncFailures >= 2) {
+                clearStaleRunning()
+                syncFailures = 0
+            }
+            return false
+        }
+        syncFailures = 0
+        val active = FrameCodec.parseActiveSessionIds(result.data)
+        android.util.Log.i(
+            "ProferSync",
+            "running=${running.size} active=${active.size} stale=${running.count { it !in active }}",
+        )
+        running.filterNot { it in active }.forEach { openSession(it, force = true) }
+        return true
     }
 
     suspend fun refreshSessions(): Boolean {
@@ -616,10 +695,13 @@ class PocketRepository(
      */
     suspend fun openSession(sessionId: String, force: Boolean = false) {
         if (sessionId.isBlank()) return
+        if (!force) activeSessionId = sessionId
         val current = _chats.value[sessionId]
         if (!force && current?.loaded == true) {
             // 已加载的会话再次被打开也算读过：不能因为跳过水合而漏掉未读清除。
             markSessionReadIfUnread(sessionId)
+            // 重新打开要刷新 LRU 顺序，否则刚切回来的会话可能被当成最旧的回收。
+            stateMutex.withLock { rememberOpenedLocked(sessionId) }
             return
         }
         synchronized(loadingSessions) {
@@ -671,6 +753,7 @@ class PocketRepository(
                     next = next.copy(pendingInteraction = pending)
                 }
                 _chats.value = _chats.value + (sessionId to next)
+                rememberOpenedLocked(sessionId)
                 if (meta != null) applySignalLocked(SessionSignal.Upsert(meta))
                 scheduleSnapshotSaveLocked()
             }
@@ -802,6 +885,7 @@ class PocketRepository(
                 maxOf(deletedSessionRevisions[sessionId] ?: 0, revision)
             _sessions.value = _sessions.value.filterNot { it.id == sessionId }
             _chats.value = _chats.value - sessionId
+            recentSessionIds.remove(sessionId)
             scheduleSnapshotSaveLocked()
         }
     }
@@ -870,6 +954,61 @@ class PocketRepository(
         fallback = { it.copy(permissionMode = mode) },
     ) {
         put("mode", mode)
+    }
+
+    /**
+     * 切换会话思考档位（Pi 内核）。[level] 为 null 表示恢复「跟随预设」。
+     *
+     * 服务端要求 Agent 不在运行中；被拒时异常会带回具体原因，界面直接展示。
+     */
+    suspend fun updateSessionThinkingLevel(
+        sessionId: String,
+        level: String?,
+    ): Result<SessionSummary> = sessionCommand(
+        type = "update_session_thinking_level",
+        sessionId = sessionId,
+        fallback = { it.copy(thinkingLevel = level) },
+    ) {
+        put("level", level ?: JSONObject.NULL)
+    }
+
+    /** 切换会话推理强度（Claude 内核）。[effort] 为 null 表示恢复「跟随预设」。 */
+    suspend fun updateSessionAgentEffort(
+        sessionId: String,
+        effort: String?,
+    ): Result<SessionSummary> = sessionCommand(
+        type = "update_session_agent_effort",
+        sessionId = sessionId,
+        fallback = { it.copy(agentEffort = effort) },
+    ) {
+        put("effort", effort ?: JSONObject.NULL)
+    }
+
+    /**
+     * 拉取模型思考档位能力；拿不到（无能力 / 旧服务端 / 离线）返回 null。
+     *
+     * 结果按「渠道 + 模型」缓存，失败不缓存，下次打开弹层会重试。
+     */
+    suspend fun reasoningCapability(
+        provider: String,
+        modelId: String,
+        baseUrl: String? = null,
+    ): com.profer.pocket.model.ReasoningCapability? {
+        val key = "$provider|$modelId|${baseUrl.orEmpty()}"
+        synchronized(reasoningCapabilityLock) {
+            if (reasoningCapabilityCache.containsKey(key)) return reasoningCapabilityCache[key]
+        }
+        val result = requestOrNull("get_pi_reasoning_capability") {
+            put("provider", provider)
+            put("modelId", modelId)
+            if (!baseUrl.isNullOrBlank()) put("baseUrl", baseUrl)
+        } ?: return null
+        if (!result.ok) return null
+        val parsed = FrameCodec.parseReasoningCapability(result.data)
+        synchronized(reasoningCapabilityLock) {
+            reasoningCapabilityCache[key] = parsed
+        }
+        return parsed
     }
 
     /** 打开/切回会话时的已读收口：只有本地确实未读才发命令，避免每次切换都多一条指令。 */
@@ -1209,8 +1348,35 @@ class PocketRepository(
         }
     }
 
-    private fun applySignalLocked(signal: SessionSignal) {
-        when (signal) {
+    /**
+     * 记录最近打开的会话，并把窗口之外的正文释放掉。调用方必须持有 `stateMutex`。
+     * 被释放的会话 `loaded` 不再为 true，下次打开会重新水合。
+     */
+    private fun rememberOpenedLocked(sessionId: String) {
+        recentSessionIds.remove(sessionId)
+        recentSessionIds.add(sessionId)
+        trimLoadedChatsLocked()
+    }
+
+    private fun trimLoadedChatsLocked() {
+        if (recentSessionIds.size <= MAX_LOADED_SESSIONS) return
+        // 还有待发消息的会话不能丢：丢了重连后无法把乐观气泡补回历史。
+        val queued = synchronized(outgoingSessionIds) { outgoingSessionIds.values.toSet() }
+        val victims = sessionsToEvict(
+            recentSessionIds = recentSessionIds.toList(),
+            chats = _chats.value,
+            queuedSessionIds = queued,
+            maxLoaded = MAX_LOADED_SESSIONS,
+            pinnedSessionId = activeSessionId,
+        )
+        if (victims.isEmpty()) return
+        recentSessionIds.removeAll(victims.toSet())
+        var next = _chats.value
+        victims.forEach { next = next - it }
+        _chats.value = next
+    }
+
+    private fun applySignalLocked(signal: SessionSignal) {        when (signal) {
             is SessionSignal.Upsert -> {
                 upsertSessionLocked(signal.summary)
                 updateChatMetaLocked(signal.summary)
@@ -1225,6 +1391,7 @@ class PocketRepository(
                 )
                 _sessions.value = _sessions.value.filterNot { it.id == signal.sessionId }
                 _chats.value = _chats.value - signal.sessionId
+                recentSessionIds.remove(signal.sessionId)
                 scheduleSnapshotSaveLocked()
             }
 
@@ -1263,6 +1430,7 @@ class PocketRepository(
             )
             _sessions.value = _sessions.value.filterNot { it.id == summary.id }
             _chats.value = _chats.value - summary.id
+            recentSessionIds.remove(summary.id)
             scheduleSnapshotSaveLocked()
             return
         }
@@ -1796,5 +1964,39 @@ class PocketRepository(
     private companion object {
         const val COMPLETION_DEDUP_WINDOW_MS = 3_000L
         const val CATALOG_REFRESH_MIN_INTERVAL_MS = 15_000L
+
+        /** 内存里最多保留几条会话正文（按最近打开排序）；再打开时重新水合。 */
+        const val MAX_LOADED_SESSIONS = 5
     }
+}
+
+/**
+ * 会话正文回收策略（纯函数，便于单测）。
+ *
+ * [recentSessionIds] 按最近打开排序（最前最旧）；从最旧的往后挑，直到只剩 [maxLoaded] 条。
+ * 在跑、等人、后台还有任务、还有待发消息的会话跳过：它们丢了会丢状态或重复水合。
+ */
+internal fun sessionsToEvict(
+    recentSessionIds: List<String>,
+    chats: Map<String, SessionChat>,
+    queuedSessionIds: Set<String>,
+    maxLoaded: Int,
+    pinnedSessionId: String? = null,
+): List<String> {
+    if (recentSessionIds.size <= maxLoaded) return emptyList()
+    val victims = mutableListOf<String>()
+    // 只看「溢出窗口」的那一段：最新的几条永远不动，宁可窗口暂时超一点。
+    for (id in recentSessionIds.dropLast(maxLoaded)) {
+        if (id == pinnedSessionId) continue
+        val chat = chats[id]
+        // 目录里有、内存里没有的 id 直接从 LRU 里清掉。
+        if (chat == null) {
+            victims += id
+            continue
+        }
+        if (chat.running || chat.pendingInteraction != null || chat.backgroundWaiting) continue
+        if (id in queuedSessionIds) continue
+        victims += id
+    }
+    return victims
 }

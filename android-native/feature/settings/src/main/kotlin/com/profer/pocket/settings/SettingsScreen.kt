@@ -49,6 +49,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.LifecycleResumeEffect
 import com.profer.pocket.designsystem.adaptive.rememberProferWindowSize
 import com.profer.pocket.designsystem.component.ProferBackdrop
 import com.profer.pocket.designsystem.component.ProferDivider
@@ -85,12 +86,20 @@ private data class SettingsParams(
     val internalUpdateLabel: String?,
     val notificationsEnabled: Boolean,
     val onNotificationsChange: (Boolean) -> Unit,
+    /** 系统是否允许本应用发布提升通知；null 表示系统不支持（API < 36）。 */
+    val liveUpdateStatus: Boolean?,
+    /** 本机对这个功能的叫法（流体云 / 超级岛 / 原子岛…），只用于文案。 */
+    val liveUpdateName: String,
+    val onOpenLiveUpdateSettings: () -> Unit,
     val permissionAlertsEnabled: Boolean,
     val onPermissionAlertsChange: (Boolean) -> Unit,
     val autoReconnect: Boolean,
     val onAutoReconnectChange: (Boolean) -> Unit,
     val backgroundConnection: Boolean,
     val onBackgroundConnectionChange: (Boolean) -> Unit,
+    /** 是否已在系统电池白名单里；false 时后台会被冻结。 */
+    val batteryUnrestricted: Boolean,
+    val onOpenBatterySettings: () -> Unit,
     val connected: Boolean,
     val deviceLabel: String,
     val onOpenConnection: () -> Unit,
@@ -126,6 +135,15 @@ fun SettingsScreen(
 ) {
     var versionTapCount by remember { mutableIntStateOf(0) }
     val context = LocalContext.current
+    // 从系统设置返回时要重新读：用户可能刚打开「实时活动」开关。
+    var liveUpdateStatus by remember { mutableStateOf(LiveUpdateEntry.canPostPromoted(context)) }
+    val liveUpdateName = remember(context) { LiveUpdateEntry.capability(context).displayName }
+    var batteryUnrestricted by remember { mutableStateOf(BatteryOptimizationEntry.isUnrestricted(context)) }
+    LifecycleResumeEffect(Unit) {
+        liveUpdateStatus = LiveUpdateEntry.canPostPromoted(context)
+        batteryUnrestricted = BatteryOptimizationEntry.isUnrestricted(context)
+        onPauseOrDispose { }
+    }
     val versionLabel = remember(context) {
         runCatching {
             val info = context.packageManager.getPackageInfo(context.packageName, 0)
@@ -147,12 +165,17 @@ fun SettingsScreen(
         internalUpdateLabel = internalUpdateLabel,
         notificationsEnabled = notificationsEnabled,
         onNotificationsChange = onNotificationsChange,
+        liveUpdateStatus = liveUpdateStatus,
+        liveUpdateName = liveUpdateName,
+        onOpenLiveUpdateSettings = { LiveUpdateEntry.openSettings(context) },
         permissionAlertsEnabled = permissionAlertsEnabled,
         onPermissionAlertsChange = onPermissionAlertsChange,
         autoReconnect = autoReconnect,
         onAutoReconnectChange = onAutoReconnectChange,
         backgroundConnection = backgroundConnection,
         onBackgroundConnectionChange = onBackgroundConnectionChange,
+        batteryUnrestricted = batteryUnrestricted,
+        onOpenBatterySettings = { BatteryOptimizationEntry.openSettings(context) },
         connected = connected,
         deviceLabel = deviceLabel,
         onOpenConnection = onOpenConnection,
@@ -401,6 +424,18 @@ private fun SettingsSectionCard(section: SettingsSection, params: SettingsParams
                 checked = params.permissionAlertsEnabled,
                 onCheckedChange = params.onPermissionAlertsChange,
             )
+            if (params.liveUpdateStatus != null) {
+                ProferDivider(insetStart = ProferSpacing.lg)
+                SettingsActionRow(
+                    title = "状态栏实时活动",
+                    subtitle = if (params.liveUpdateStatus) {
+                        "${params.liveUpdateName} · 已开启"
+                    } else {
+                        "开启后对话进度显示在${params.liveUpdateName}"
+                    },
+                    onClick = params.onOpenLiveUpdateSettings,
+                )
+            }
         }
 
         SettingsSection.Connection -> SettingsCard {
@@ -414,6 +449,16 @@ private fun SettingsSectionCard(section: SettingsSection, params: SettingsParams
                 title = "后台保持连接",
                 checked = params.backgroundConnection,
                 onCheckedChange = params.onBackgroundConnectionChange,
+            )
+            ProferDivider(insetStart = ProferSpacing.lg)
+            SettingsActionRow(
+                title = "后台运行白名单",
+                subtitle = if (params.batteryUnrestricted) {
+                    "已允许后台运行"
+                } else {
+                    "系统会冻结后台进程，状态栏可能停在「执行中」"
+                },
+                onClick = params.onOpenBatterySettings,
             )
             ProferDivider(insetStart = ProferSpacing.lg)
             SettingsActionRow(

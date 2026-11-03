@@ -1,6 +1,8 @@
 package com.profer.pocket.app
 
 import android.app.Application
+import android.util.LruCache
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.profer.pocket.chat.ChatUiState
@@ -27,20 +29,27 @@ import com.profer.pocket.sessions.SessionItem
 import com.profer.pocket.sessions.SessionListState
 import com.profer.pocket.settings.ThemePreference
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.sample
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+
+/** 流式增量的合并窗口：约 30Hz，低于一帧的重组收益抵不上感知损失。 */
+private const val STREAM_SAMPLE_INTERVAL_MS = 32L
 
 class PocketViewModel(application: Application) : AndroidViewModel(application) {
 
@@ -49,6 +58,20 @@ class PocketViewModel(application: Application) : AndroidViewModel(application) 
 
     private val _selectedSessionId = MutableStateFlow<String?>(null)
     val selectedSessionId: StateFlow<String?> = _selectedSessionId.asStateFlow()
+
+    /**
+     * 当前会话模型的思考档位能力。
+     *
+     * [key] = 渠道|模型：能力只随这两者变化，跟会话无关；带上 key 才能判定
+     * 「这份能力属于当前入口」——切会话/换模型后旧结果直接失效，不用等新请求回来。
+     */
+    private data class ReasoningState(
+        val key: String? = null,
+        val capability: com.profer.pocket.model.ReasoningCapability? = null,
+        val loading: Boolean = false,
+    )
+
+    private val _reasoning = MutableStateFlow(ReasoningState())
 
     /** 上次打开的会话是否已从本地读回；读回前不要用「目录第一条」抢先覆盖。 */
     private val _selectionRestored = MutableStateFlow(false)
@@ -106,7 +129,9 @@ class PocketViewModel(application: Application) : AndroidViewModel(application) 
     )
 
     private val chatInputs = combine(
-        repository.chats,
+        // 流式输出时 delta 每秒可达几十次，每次都要重跑整表映射（含 markdown 解析）。
+        // 压到 ~30Hz：读文本时察觉不到差别，但重组与解析次数直接减半。
+        repository.chats.sample(STREAM_SAMPLE_INTERVAL_MS),
         repository.sessions,
         repository.workspaces,
         repository.connectionStatus,
@@ -120,17 +145,26 @@ class PocketViewModel(application: Application) : AndroidViewModel(application) 
         _selectedSessionId,
         _selectionRestored,
         repository.presets,
-    ) { inputs, selected, restored, presets ->
+        _reasoning,
+    ) { inputs, selected, restored, presets, reasoning ->
         // 恢复完成前不要用「目录第一条」冒充当前会话，避免启动时闪一下别的会话。
         val id = if (restored) selected ?: inputs.sessions.firstOrNull()?.id else null
+        val chat = inputs.chats[id]
+        val summary = inputs.sessions.firstOrNull { it.id == id }
+        // 能力跟着「渠道 + 模型」走：切换会话/模型后旧结果必须失效，
+        // 否则会把上一个模型的档位贴到当前入口上。
+        val key = reasoningKey(chat?.channelId ?: summary?.channelId, chat?.modelId ?: summary?.modelId)
+        val effective = reasoning.takeIf { it.key != null && it.key == key }
         UiMapping.chatState(
             sessionId = id,
-            chat = inputs.chats[id],
+            chat = chat,
             sessions = inputs.sessions,
             workspaces = inputs.workspaces,
             status = inputs.status,
             queuedSends = inputs.pendingSends,
             presets = presets,
+            capability = effective?.capability,
+            capabilityLoading = effective?.loading == true,
         )
     }
         // 消息 Markdown 分块与整表映射都不该占用主线程：流式时主线程只负责重组。
@@ -155,6 +189,7 @@ class PocketViewModel(application: Application) : AndroidViewModel(application) 
         val workspaces: List<WorkspaceSummary>,
         val status: ConnectionStatus,
         val runningIds: Set<String>,
+        val waitingIds: Set<String>,
     )
 
     /**
@@ -168,17 +203,30 @@ class PocketViewModel(application: Application) : AndroidViewModel(application) 
         .distinctUntilChanged()
         .stateIn(viewModelScope, SharingStarted.Eagerly, emptySet())
 
+    /** 正在等用户确认/回答的会话：抽屉行首状态条据此显示「等人」而不是「运行中」。 */
+    private val waitingSessionIds = repository.chats
+        .map { chats ->
+            chats.values.asSequence()
+                .filter { it.pendingInteraction != null }
+                .map { it.sessionId }
+                .toSet()
+        }
+        .distinctUntilChanged()
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptySet())
+
     private val catalogInputs = combine(
         repository.sessions,
         repository.workspaces,
         repository.connectionStatus,
         runningSessionIds,
-    ) { sessions, workspaces, status, runningIds ->
+        waitingSessionIds,
+    ) { sessions, workspaces, status, runningIds, waitingIds ->
         CatalogInputs(
             sessions = sessions,
             workspaces = workspaces,
             status = status,
             runningIds = runningIds,
+            waitingIds = waitingIds,
         )
     }
 
@@ -233,10 +281,26 @@ class PocketViewModel(application: Application) : AndroidViewModel(application) 
     private val _message = MutableStateFlow<String?>(null)
     val message: StateFlow<String?> = _message.asStateFlow()
 
-    val sessionListState: StateFlow<SessionListState> = combine(
+    /**
+     * 搜索防抖：每敲一个字都全量重映射 300+ 条会话没必要，等用户停手再算。
+     * 只影响「分组/过滤」的时机，不影响输入框里的实时文本（见 [sessionListState]）。
+     */
+    @OptIn(FlowPreview::class)
+    private val sessionQueryDebounced = _sessionQuery
+        .debounce(SESSION_SEARCH_DEBOUNCE_MS)
+        .distinctUntilChanged()
+
+    /**
+     * 抽屉目录映射：过滤、分组、行模型都在后台算。
+     *
+     * 之前整条流水线留在主线程，是因为 [SessionListState.query] 同时是搜索框的 value，
+     * 异步回写会让输入框拿到上一帧的旧文本（BasicTextField 会保留光标位置套用旧文本→光标错位）。
+     * 现在拆开：映射跑 Default，主线程只在 [sessionListState] 里把实时文本盖上去。
+     */
+    private val sessionListSnapshot: Flow<SessionListState> = combine(
         catalogInputs,
         _selectedSessionId,
-        _sessionQuery,
+        sessionQueryDebounced,
         _refreshing,
         _pinnedProjectIds,
     ) { inputs, selected, query, refreshing, pinnedProjectIds ->
@@ -247,19 +311,26 @@ class PocketViewModel(application: Application) : AndroidViewModel(application) 
             query = query,
             online = inputs.status is ConnectionStatus.Connected,
             runningSessionIds = inputs.runningIds,
+            waitingSessionIds = inputs.waitingIds,
             endpoint = (inputs.status as? ConnectionStatus.Connected)?.endpoint,
             refreshing = refreshing,
             pinnedProjectIds = pinnedProjectIds,
         )
     }
-        // 不切后台线程：这份状态里带着抽屉搜索框的实时文本，异步回主线程会让输入框
-        // 拿到上一帧的旧文本（BasicTextField 会保留光标位置套用旧文本 → 光标错位）。
-        // 会话目录映射本身只是过滤/分组，量级远小于对话消息，留在主线程更安全。
-        .stateIn(
-            viewModelScope,
-            SharingStarted.Eagerly,
-            SessionListState(projects = emptyList(), connected = false),
-        )
+        .flowOn(Dispatchers.Default)
+
+    val sessionListState: StateFlow<SessionListState> = combine(
+        sessionListSnapshot,
+        _sessionQuery,
+    ) { snapshot, liveQuery ->
+        // 映射结果滞后是正常的（搜索有防抖），但输入框的文本必须实时：
+        // 这里在主线程只做一次 copy，不碰任何分组/过滤。
+        if (snapshot.query == liveQuery) snapshot else snapshot.copy(query = liveQuery)
+    }.stateIn(
+        viewModelScope,
+        SharingStarted.Eagerly,
+        SessionListState(projects = emptyList(), connected = false),
+    )
 
     /** 完整项目目录：不受抽屉搜索过滤影响，供新建/移动会话选择。 */
     val projectOptions: StateFlow<List<ProjectOption>> = combine(
@@ -421,6 +492,8 @@ class PocketViewModel(application: Application) : AndroidViewModel(application) 
             repository.openSession(sessionId)
             // 预设是工作区级配置：切会话时按新会话所属项目重拉。
             repository.refreshPresets(workspaceSlugFor(sessionId))
+            // 思考强度入口要显示新会话所属模型的档位。
+            refreshReasoningCapability()
         }
     }
 
@@ -628,13 +701,70 @@ class PocketViewModel(application: Application) : AndroidViewModel(application) 
 
     fun selectModel(channelId: String, modelId: String) {
         val id = currentSessionId() ?: return
-        runOperation { repository.updateSessionModel(id, channelId, modelId) }
+        // 档位能力跟模型走：等会话真的写到新模型后再算，否则拿到的还是旧模型的档位。
+        runOperation(onSuccess = { refreshReasoningCapability() }) {
+            repository.updateSessionModel(id, channelId, modelId)
+        }
     }
 
     fun selectPermissionMode(mode: String) {
         val id = currentSessionId() ?: return
         runOperation { repository.updatePermissionMode(id, mode) }
     }
+
+    /**
+     * 切换思考强度；[value] 为 null 表示恢复「跟随预设」。
+     *
+     * 写哪个字段由当前分支决定：有模型能力走 openAIThinkingLevel（Pi 档位），
+     * 否则走 agentEffort（Claude 内核强度档）。
+     */
+    fun selectThinking(value: String?) {
+        val id = currentSessionId() ?: return
+        val usesCapability = chatUiState.value.thinkingUsesCapability
+        runOperation {
+            if (usesCapability) {
+                repository.updateSessionThinkingLevel(id, value)
+            } else {
+                repository.updateSessionAgentEffort(id, value)
+            }
+        }
+    }
+
+    /**
+     * 拉取当前会话模型的思考档位能力。
+     *
+     * 打开会话、换模型、打开思考强度弹层时各补一次；结果在仓库里按渠道+模型缓存。
+     * 拿不到 provider 时不发请求：界面直接回退强度档，比发一条注定失败的指令诚实。
+     */
+    fun refreshReasoningCapability() {
+        val id = currentSessionId() ?: return
+        val session = repository.sessions.value.firstOrNull { it.id == id } ?: return
+        val chat = repository.chats.value[id]
+        val channelId = chat?.channelId ?: session.channelId
+        val modelId = chat?.modelId ?: session.modelId
+        val key = reasoningKey(channelId, modelId) ?: return
+        val channel = repository.channels.value.firstOrNull { it.id == channelId }
+        val provider = channel?.provider
+        if (provider.isNullOrBlank()) {
+            _reasoning.value = ReasoningState(key = key, capability = null, loading = false)
+            return
+        }
+        viewModelScope.launch {
+            _reasoning.value = ReasoningState(
+                key = key,
+                capability = _reasoning.value.takeIf { it.key == key }?.capability,
+                loading = true,
+            )
+            val capability = repository.reasoningCapability(provider, modelId.orEmpty(), channel.baseUrl)
+            // 期间切了会话/模型：丢弃这次结果，不能把别人的档位贴到当前入口。
+            if (_reasoning.value.key == key) {
+                _reasoning.value = ReasoningState(key = key, capability = capability, loading = false)
+            }
+        }
+    }
+
+    private fun reasoningKey(channelId: String?, modelId: String?): String? =
+        if (!channelId.isNullOrBlank() && !modelId.isNullOrBlank()) "$channelId|$modelId" else null
 
     fun selectPreset(presetId: String) {
         val id = currentSessionId() ?: return
@@ -671,6 +801,8 @@ class PocketViewModel(application: Application) : AndroidViewModel(application) 
                 presetSessionId?.let { id ->
                     repository.refreshPresets(workspaceSlugFor(id))
                 }
+                // 渠道列表刚拉回来，provider/baseUrl 才可知：这时才能算思考档位。
+                refreshReasoningCapability()
             } finally {
                 _refreshing.value = false
             }
@@ -798,24 +930,29 @@ class PocketViewModel(application: Application) : AndroidViewModel(application) 
     /**
      * 消息内图片缩略图：只拉一次，按路径缓存。
      * 字节不在 WS 帧里，由 `read_file_as_data_url` 按需取，桌面端二次校验会话授权范围。
+     *
+     * 用字节上限的 LruCache 而不是「条数满 24 就清空」：长会话里一张相机原图解码后
+     * 就有几十 MB，按条数算会把堆顶满；LruCache 同时保证并发读写下不会破坏 HashMap。
      */
-    private val messageImageCache = mutableMapOf<String, androidx.compose.ui.graphics.ImageBitmap>()
+    private val messageImageCache = object : LruCache<String, android.graphics.Bitmap>(messageImageCacheBytes()) {
+        override fun sizeOf(key: String, value: android.graphics.Bitmap): Int = value.allocationByteCount
+    }
 
     suspend fun loadMessageImage(
         sessionId: String,
         path: String,
     ): androidx.compose.ui.graphics.ImageBitmap? {
-        messageImageCache[path]?.let { return it }
+        messageImageCache.get(path)?.let { return it.asImageBitmap() }
         val preview = repository
             .readFilePreview(sessionId, path, path.substringAfterLast('/'))
             .getOrNull()
             ?: return null
         val dataUrl = preview.dataUrl ?: return null
-        val bitmap = withContext(Dispatchers.Default) { decodeImageDataUrl(dataUrl) } ?: return null
-        // 简单上限：会话图片不多，超过就整体清空，避免长期占用内存。
-        if (messageImageCache.size >= MAX_CACHED_MESSAGE_IMAGES) messageImageCache.clear()
-        messageImageCache[path] = bitmap
-        return bitmap
+        val bitmap = withContext(Dispatchers.Default) {
+            decodeImageBitmap(dataUrl, MESSAGE_IMAGE_MAX_DIMENSION)
+        } ?: return null
+        messageImageCache.put(path, bitmap)
+        return bitmap.asImageBitmap()
     }
 
     /**
@@ -1099,5 +1236,11 @@ class PocketViewModel(application: Application) : AndroidViewModel(application) 
     }
 }
 
-/** 消息图片缓存上限：图片不多，超过就整体清空。 */
-private const val MAX_CACHED_MESSAGE_IMAGES = 24
+/** 抽屉搜索防抖窗口（ms）。 */
+private const val SESSION_SEARCH_DEBOUNCE_MS = 150L
+
+/** 消息图片缓存上限：按堆的 1/8 取，最多 32MB（≈3 张降采样后的大图）。 */
+private fun messageImageCacheBytes(): Int {
+    val heapEighth = Runtime.getRuntime().maxMemory() / 8
+    return heapEighth.coerceAtMost(32L * 1024 * 1024).toInt()
+}

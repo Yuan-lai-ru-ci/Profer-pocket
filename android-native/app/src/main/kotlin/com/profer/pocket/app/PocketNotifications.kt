@@ -10,10 +10,13 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
+import android.os.Bundle
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
+import com.profer.pocket.model.LiveUpdateCapabilities
+import com.profer.pocket.model.LiveUpdateCapability
 import com.profer.pocket.model.NotificationKind
 import com.profer.pocket.model.PocketNotification
 import com.profer.pocket.model.PocketSettings
@@ -33,7 +36,29 @@ object PocketNotifications {
     const val EXTRA_SESSION_ID = "profer_pocket_session_id"
     const val EXTRA_KIND = "profer_pocket_notification_kind"
 
+    /** 胶囊最长存活时间：进程被系统冻结后协程不再执行，只能靠系统计时兜底。 */
+    private const val LIVE_TIMEOUT_MS = 15 * 60 * 1000L
+
+    /** 品牌陶土色（core:designsystem 的 Clay）；胶囊图标与进度条的强调色。 */
+    private const val BRAND_COLOR = 0xFF846558.toInt()
+
     private const val MESSAGE_ID_BASE = 2001
+
+    /**
+     * `Notification.EXTRA_REQUEST_PROMOTED_ONGOING` 的字符串值。
+     *
+     * 该常量在 compileSdk 35 与 android-36.0 的 android.jar 里都还没有（36.1 才进公开 API），
+     * 但 Android 16 的 Live Update 规范要求用它主动声明「请求提升」；
+     * ColorOS 的流体云按同一份规范判定，缺这个键就不会提升成状态栏胶囊。
+     */
+    private const val EXTRA_REQUEST_PROMOTED_ONGOING = "android.requestPromotedOngoing"
+
+    /** `Notification.FLAG_PROMOTED_ONGOING` 的值（0x40000）；compileSdk 35 里没有该常量。 */
+    private const val FLAG_PROMOTED_ONGOING = 0x40000
+
+    /** 系统设置页 action：ColorOS / AOSP 实际存在这个；官方文档写的 ACTION_MANAGE_APP_PROMOTED_NOTIFICATIONS 反而不存在。 */
+    private const val ACTION_PROMOTION_SETTINGS = "android.settings.APP_NOTIFICATION_PROMOTION_SETTINGS"
+    private const val EXTRA_APP_PACKAGE = "android.provider.extra.APP_PACKAGE"
 
     fun ensureChannels(context: Context) {
         val manager = context.getSystemService(NotificationManager::class.java) ?: return
@@ -117,9 +142,34 @@ object PocketNotifications {
                 LIVE_ID,
                 buildLiveUpdate(context, title, text, shortText, contentIntent),
             )
+            logPromotionState(context)
         } catch (_: SecurityException) {
             // 权限在检查与发送之间被撤销：静默失败。
         }
+    }
+
+    /**
+     * 打出提升结果，供真机排查流体云不显示的原因。
+     *
+     * `canPostPromotedNotifications()` 与 `FLAG_PROMOTED_ONGOING` 在 compileSdk 35 下不可直接引用，
+     * 只能反射；两者都失败就只记录一条降级日志。
+     */
+    private fun logPromotionState(context: Context) {
+        if (Build.VERSION.SDK_INT < 36) return
+        val manager = context.getSystemService(NotificationManager::class.java)
+        val canPost = runCatching {
+            manager?.javaClass?.getMethod("canPostPromotedNotifications")?.invoke(manager) as? Boolean
+        }.getOrNull()
+        val promoted = runCatching {
+            manager?.activeNotifications
+                ?.firstOrNull { it.id == LIVE_ID }
+                ?.let { (it.notification.flags and FLAG_PROMOTED_ONGOING) != 0 }
+        }.getOrNull()
+        Log.i(
+            "ProferLive",
+            "canPostPromotedNotifications=$canPost promoted=$promoted sdk=${Build.VERSION.SDK_INT} " +
+                "surface=${capability(context).surface} needSwitch=${capability(context).requiresUserSwitch}",
+        )
     }
 
     fun cancelLiveUpdate(context: Context) {
@@ -128,6 +178,39 @@ object PocketNotifications {
         } catch (_: SecurityException) {
             // 同上。
         }
+    }
+
+    /** 本机的实时活动能力：系统版本 + 厂商形态 + 是否需要用户去开开关。 */
+    fun capability(context: Context): LiveUpdateCapability =
+        LiveUpdateCapabilities.resolve(
+            sdkInt = Build.VERSION.SDK_INT,
+            manufacturer = Build.MANUFACTURER,
+            canPostPromoted = canPostPromoted(context),
+        )
+
+    /**
+     * 系统是否允许本应用发布提升通知（流体云 / 实时活动）。
+     *
+     * API < 36 返回 null（这台机器没这个能力）；反射失败也返回 null，不当成「未开启」去骚扰用户。
+     */
+    fun canPostPromoted(context: Context): Boolean? {
+        if (Build.VERSION.SDK_INT < 36) return null
+        val manager = context.getSystemService(NotificationManager::class.java) ?: return null
+        return runCatching {
+            manager.javaClass.getMethod("canPostPromotedNotifications").invoke(manager) as? Boolean
+        }.getOrNull()
+    }
+
+    /** 打开系统的「流体云显示实时活动」开关页；系统没有该页面时返回 false。 */
+    fun openPromotionSettings(context: Context): Boolean {
+        if (Build.VERSION.SDK_INT < 36) return false
+        val intent = Intent(ACTION_PROMOTION_SETTINGS)
+            .putExtra(EXTRA_APP_PACKAGE, context.packageName)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        return runCatching {
+            context.startActivity(intent)
+            true
+        }.getOrDefault(false)
     }
 
     private fun buildLiveUpdate(
@@ -148,6 +231,13 @@ object PocketNotifications {
                 // Live Update 要求通知是可提升的样式（BigText/Progress/Call/Metric 之一）。
                 .setStyle(Notification.BigTextStyle().bigText(text))
                 .setContentIntent(contentIntent)
+                .setColor(BRAND_COLOR)
+                // 进程被 ColorOS 冻结时协程不跑，定时校准失效；靠系统计时避免胶囊永久卡住。
+                // 每次状态变化都会重新 post，计时随之重置。
+                .setTimeoutAfter(LIVE_TIMEOUT_MS)
+                // 主动请求提升：Android 16 规范与 ColorOS 流体云都按这个 extra 判定，
+                // 只声明 POST_PROMOTED_NOTIFICATIONS 不会自动提升。
+                .addExtras(Bundle().apply { putBoolean(EXTRA_REQUEST_PROMOTED_ONGOING, true) })
             // API 36 的签名是 setShortCriticalText(String)；系统据此把 ongoing 通知
             // 提升成状态栏胶囊（Live Update），不需要额外的 request 调用。
             runCatching {
@@ -167,6 +257,8 @@ object PocketNotifications {
             .setCategory(NotificationCompat.CATEGORY_PROGRESS)
             .setStyle(NotificationCompat.BigTextStyle().bigText(text))
             .setContentIntent(contentIntent)
+            .setColor(BRAND_COLOR)
+            .setTimeoutAfter(LIVE_TIMEOUT_MS)
             .build()
     }
 

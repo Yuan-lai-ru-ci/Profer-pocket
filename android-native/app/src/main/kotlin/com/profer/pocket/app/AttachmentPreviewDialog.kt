@@ -1,7 +1,6 @@
 package com.profer.pocket.app
 
-import android.graphics.BitmapFactory
-import android.util.Base64
+import android.graphics.Bitmap
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -21,6 +20,8 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -30,6 +31,8 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import com.profer.pocket.model.AgentAttachment
 import com.profer.pocket.model.RemoteFilePreview
 
@@ -78,24 +81,38 @@ fun AttachmentPreviewDialog(
                     )
 
                     preview?.isImage == true && imageDataUrl != null -> {
-                        val bitmap = remember(imageDataUrl) {
-                            val encoded = imageDataUrl.substringAfter("base64,", "")
-                            runCatching {
-                                val bytes = Base64.decode(encoded, Base64.DEFAULT)
-                                BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
-                            }.getOrNull()
+                        // 原图解码（相机照片可达 48MB）不能放在主线程的组合里：
+                        // 否则打开预览会直接冻住几百毫秒，并按屏高降采样后再上屏。
+                        // 初始 null = 还在解码，不能当成失败。
+                        val decodeResult by produceState<Result<Bitmap?>?>(
+                            initialValue = null,
+                            imageDataUrl,
+                        ) {
+                            value = withContext(Dispatchers.Default) {
+                                runCatching {
+                                    decodeImageBitmap(imageDataUrl, ATTACHMENT_PREVIEW_MAX_DIMENSION)
+                                }
+                            }
                         }
-                        if (bitmap != null) {
-                            Image(
-                                bitmap = bitmap.asImageBitmap(),
+                        val result = decodeResult
+                        val decoded = result?.getOrNull()
+                        when {
+                            result == null -> CircularProgressIndicator(
+                                modifier = Modifier
+                                    .align(Alignment.CenterHorizontally)
+                                    .padding(vertical = 24.dp),
+                            )
+
+                            decoded != null -> Image(
+                                bitmap = decoded.asImageBitmap(),
                                 contentDescription = file.filename,
                                 contentScale = ContentScale.Fit,
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .heightIn(max = 460.dp),
                             )
-                        } else {
-                            Text(
+
+                            else -> Text(
                                 text = "图片解码失败",
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,

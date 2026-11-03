@@ -24,7 +24,10 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.State
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -38,6 +41,8 @@ import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import com.profer.pocket.designsystem.component.ProferCodeBlock
 import com.profer.pocket.designsystem.theme.ProferSpacing
+import java.util.concurrent.ConcurrentHashMap
+import kotlin.math.roundToInt
 
 /**
  * 助手正文排版：标题、段落、列表、引用、代码、表格各自成块。
@@ -53,7 +58,8 @@ fun ProferRichText(
     modifier: Modifier = Modifier,
 ) {
     // 自由选词：整段正文交给系统选择，可跨段落复制。
-    SelectionContainer { RichBlocks(blocks = parseRichBlocks(text), modifier = modifier) }
+    val blocks = remember(text) { cachedRichBlocks(text) }
+    SelectionContainer { RichBlocks(blocks = blocks, modifier = modifier) }
 }
 
 @Composable
@@ -71,9 +77,9 @@ private fun RichBlocks(
     modifier: Modifier = Modifier,
     showCursor: Boolean = false,
 ) {
-    val cursorAlpha = if (showCursor) {
+    val cursorAlpha: State<Float>? = if (showCursor) {
         val transition = rememberInfiniteTransition(label = "rich-cursor")
-        val animated by transition.animateFloat(
+        val raw = transition.animateFloat(
             initialValue = 0.2f,
             targetValue = 1f,
             animationSpec = infiniteRepeatable(
@@ -82,9 +88,12 @@ private fun RichBlocks(
             ),
             label = "rich-cursor-alpha",
         )
-        animated
+        // 这里只建立派生值、不读取 raw：读取点下沉到光标所在的 Text，
+        // 否则整条消息会跟着 720ms 的呼吸动画每帧重组。
+        // 量化到 1/10 档，视觉上仍是呼吸感，重组次数从每帧降到每档一次。
+        remember { derivedStateOf { (raw.value * 10f).roundToInt() / 10f } }
     } else {
-        1f
+        null
     }
     val codeBackground = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.055f)
 
@@ -109,22 +118,11 @@ private fun RichBlocks(
 
                 is ContentBlock.Paragraph -> {
                     val isLast = index == effectiveBlocks.lastIndex
-                    if (isLast && showCursor) {
-                        val content = buildAnnotatedString {
-                            append(inlineMarkdown(block.text, codeBackground))
-                            if (block.text.isNotEmpty()) append(" ")
-                            withStyle(
-                                SpanStyle(
-                                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = cursorAlpha),
-                                ),
-                            ) {
-                                append("▏")
-                            }
-                        }
-                        Text(
-                            text = content,
-                            style = MaterialTheme.typography.bodyLarge,
-                            color = MaterialTheme.colorScheme.onSurface,
+                    if (isLast && cursorAlpha != null) {
+                        StreamingCursorParagraph(
+                            text = block.text,
+                            codeBackground = codeBackground,
+                            cursorAlpha = cursorAlpha,
                         )
                     } else {
                         RichInlineText(
@@ -221,6 +219,31 @@ private fun RichBlocks(
 }
 
 @Composable
+private fun StreamingCursorParagraph(
+    text: String,
+    codeBackground: Color,
+    cursorAlpha: State<Float>,
+) {
+    // 动画值在这里才被读取：呼吸重组只落在这一行文本上，不牵动整条消息。
+    val alpha = cursorAlpha.value
+    val cursorColor = MaterialTheme.colorScheme.onSurface
+    val content = remember(text, codeBackground, alpha, cursorColor) {
+        buildAnnotatedString {
+            append(inlineMarkdown(text, codeBackground))
+            if (text.isNotEmpty()) append(" ")
+            withStyle(SpanStyle(color = cursorColor.copy(alpha = alpha))) {
+                append("▏")
+            }
+        }
+    }
+    Text(
+        text = content,
+        style = MaterialTheme.typography.bodyLarge,
+        color = cursorColor,
+    )
+}
+
+@Composable
 private fun BoxBullet() {
     Text(
         text = "•",
@@ -284,8 +307,11 @@ internal fun RichInlineText(
     codeBackground: Color,
     modifier: Modifier = Modifier,
 ) {
+    // 长会话里可见消息会因流式 token / 输入框高度反复重组：
+    // 每次都重建 AnnotatedString 会重新分句、重新排版，滚动时直接掉帧。
+    val annotated = remember(raw, codeBackground) { inlineMarkdown(raw, codeBackground) }
     Text(
-        text = inlineMarkdown(raw, codeBackground),
+        text = annotated,
         style = style,
         color = color,
         modifier = modifier,
@@ -330,6 +356,26 @@ private fun splitTableRow(line: String): List<String> {
 
 private fun isSeparatorRow(cells: List<String>): Boolean =
     cells.isNotEmpty() && cells.all { TABLE_SEPARATOR.matches(it.trim()) }
+
+/**
+ * 解析结果缓存。
+ *
+ * 流式输出时每个 delta 都会重跑整表映射（ChatEntry → ChatMessage），历史消息的正文并没有变。
+ * 每次都把整段 markdown 重新正则扫一遍、重建块列表，只会白烧 CPU 并制造 GC 压力，
+ * 而流式时主线程还要同时重组列表，堆分配一多就顶到帧预算。
+ * 解析是纯函数（只依赖正文，与主题无关），所以直接按正文缓存。
+ */
+private val richBlocksCache = ConcurrentHashMap<String, List<ContentBlock>>()
+private const val RICH_BLOCKS_CACHE_LIMIT = 512
+
+fun cachedRichBlocks(raw: String): List<ContentBlock> {
+    richBlocksCache[raw]?.let { return it }
+    val parsed = parseRichBlocks(raw)
+    // 长会话 + 多条流式回复很容易越过上限；整表清空比维护 LRU 简单，代价只是一次重解析。
+    if (richBlocksCache.size >= RICH_BLOCKS_CACHE_LIMIT) richBlocksCache.clear()
+    richBlocksCache[raw] = parsed
+    return parsed
+}
 
 /** Markdown 文本 → 块。解析范围有意保持窄，但覆盖模型实际高频用法。 */
 fun parseRichBlocks(raw: String): List<ContentBlock> {

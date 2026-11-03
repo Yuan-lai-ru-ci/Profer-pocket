@@ -13,6 +13,17 @@ object ChatPreviewData {
         project = "profer-main · main",
         modelLabel = "Opus 4.6",
         modeLabel = "执行",
+        presetLabel = "研发统筹",
+        // 思考强度：档位集合按真实模型能力组织（DeepSeek 只有 关闭/高/最高）。
+        thinkingLabel = "高",
+        thinkingSourceLabel = "跟随预设「高」",
+        thinkingOptions = listOf(
+            com.profer.pocket.model.ReasoningOption(null, "跟随预设", "高"),
+            com.profer.pocket.model.ReasoningOption("off", "关闭", "不产出思考"),
+            com.profer.pocket.model.ReasoningOption("high", "高"),
+            com.profer.pocket.model.ReasoningOption("max", "最高"),
+        ),
+        thinkingUsesCapability = true,
         streaming = true,
         offline = false,
         pendingPermission = PermissionRequest(
@@ -50,14 +61,17 @@ object ChatPreviewData {
                         title = "读取 ws-client.ts",
                         subtitle = "src/renderer/pocket/ws-client.ts",
                         status = ToolStatus.Success,
-                        detail = "private handleClose() {\n  this.cursor = this.lastMessage?.id\n  this.scheduleReconnect()\n}",
+                        input = "{\n  \"file_path\": \"src/renderer/pocket/ws-client.ts\",\n  \"offset\": 40,\n  \"limit\": 60\n}",
+                        output = "…\nprivate handleClose() {\n  this.cursor = this.lastMessage?.id\n  this.scheduleReconnect()\n}",
                     ),
                     ToolBlock(
                         id = "t2",
                         kind = ToolKind.Search,
-                        title = "搜索 resumeCursor",
-                        subtitle = "3 处匹配 · 2 个文件",
+                        title = "搜索内容",
+                        subtitle = "resumeCursor",
                         status = ToolStatus.Success,
+                        input = "{\n  \"pattern\": \"resumeCursor\",\n  \"path\": \"src/renderer/pocket\"\n}",
+                        output = "3 处匹配 · 2 个文件",
                     ),
                     ToolBlock(
                         id = "t3",
@@ -65,7 +79,18 @@ object ChatPreviewData {
                         title = "运行 ws-client 测试",
                         subtitle = "bun test ws-client.test.ts",
                         status = ToolStatus.Success,
-                        detail = "12 pass, 0 fail\nRan 12 tests across 1 file. [1.20s]",
+                        input = "{\n  \"command\": \"bun test ws-client.test.ts\",\n  \"timeout\": 60000\n}",
+                        output = "12 pass, 0 fail\nRan 12 tests across 1 file. [1.20s]",
+                    ),
+                    // 失败样本：错误单独成块，用于验证「失败不只看图标」的展开态。
+                    ToolBlock(
+                        id = "t5",
+                        kind = ToolKind.Other,
+                        title = "打开微信",
+                        subtitle = "微信",
+                        status = ToolStatus.Error,
+                        input = "{\n  \"app\": \"微信\"\n}",
+                        error = "Error: 没有读取这个屏幕的内容。\n屏幕 s1 · DSH Go\n这是 DSH 自己的界面，不读取也不操作。",
                     ),
                 ),
                 blocks = listOf(
@@ -101,7 +126,7 @@ object ChatPreviewData {
                         title = "改写重连分支",
                         subtitle = "ws-client.ts · +18 −4",
                         status = ToolStatus.Running,
-                        detail = "await client.resume({ sessionId, cursor: lastAckedMessageId })",
+                        input = "{\n  \"file_path\": \"ws-client.ts\",\n  \"old_string\": \"this.cursor = this.lastMessage?.id\"\n}",
                     ),
                 ),
                 blocks = listOf(

@@ -79,6 +79,23 @@ class SessionSummaryMergeTest {
     }
 
     @Test
+    fun `思考档位跟随服务端清空为跟随预设`() {
+        val known = session(revision = 3).copy(thinkingLevel = "max", agentEffort = "high")
+        // 电脑端点了「跟随预设」：服务端会显式下发 null，本地必须跟着清空。
+        val merged = known.merge(known.copy(revision = 4, thinkingLevel = null, agentEffort = null))
+        assertNull(merged.thinkingLevel)
+        assertNull(merged.agentEffort)
+    }
+
+    @Test
+    fun `思考档位以服务端新值为准`() {
+        val known = session(revision = 3).copy(thinkingLevel = "high")
+        val merged = known.merge(known.copy(revision = 4, thinkingLevel = "xhigh", agentEffort = "max"))
+        assertEquals("xhigh", merged.thinkingLevel)
+        assertEquals("max", merged.agentEffort)
+    }
+
+    @Test
     fun `单侧字段不算委派子会话`() {
         val half = session(parentSessionId = "p1")
         assertEquals(false, half.isDelegatedChild)

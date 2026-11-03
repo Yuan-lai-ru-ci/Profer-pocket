@@ -137,6 +137,27 @@ class DebugCommandReceiver : BroadcastReceiver() {
                         deleted.exceptionOrNull()?.let { result.put("error", it.message.orEmpty()) }
                     }
 
+                    "running" -> {
+                        // 列出本地认为在跑/在等人的会话：胶囊卡住时用它定位是哪个会话。
+                        val list = repo.chats.value.values.filter {
+                            it.running || it.pendingInteraction != null
+                        }
+                        result.put("ok", true).put("count", list.size)
+                        result.put(
+                            "sessions",
+                            org.json.JSONArray(
+                                list.map { chat ->
+                                    JSONObject()
+                                        .put("sessionId", chat.sessionId)
+                                        .put("title", chat.title)
+                                        .put("running", chat.running)
+                                        .put("pending", chat.pendingInteraction != null)
+                                        .put("lastAt", chat.messages.lastOrNull()?.at ?: 0L)
+                                },
+                            ),
+                        )
+                    }
+
                     "permission" -> {
                         val sessionId = intent.getStringExtra("session_id").orEmpty()
                         val decision = intent.getStringExtra("decision").orEmpty()

@@ -49,6 +49,8 @@ import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.DriveFileRenameOutline
 import androidx.compose.material.icons.outlined.Edit
+import androidx.compose.material.icons.outlined.ExpandLess
+import androidx.compose.material.icons.outlined.ExpandMore
 import androidx.compose.material.icons.outlined.Menu
 import androidx.compose.material.icons.outlined.MoreVert
 import androidx.compose.material.icons.outlined.PushPin
@@ -155,6 +157,10 @@ fun ChatScreen(
     presets: List<com.profer.pocket.model.AgentPresetSummary> = emptyList(),
     onSelectPreset: (String) -> Unit = {},
     onRefreshPresets: () -> Unit = {},
+    /** 切换思考强度：null = 恢复「跟随预设」。 */
+    onSelectThinking: (String?) -> Unit = {},
+    /** 打开思考强度弹层时补拉一次模型档位能力。 */
+    onRefreshThinking: () -> Unit = {},
     /** 修改重发：回退到这条用户消息之前并重发新内容。 */
     onRewriteMessage: (String, String) -> Unit = { _, _ -> },
     /** 模型产出的图片：点开看大图，由宿主打开预览。 */
@@ -210,10 +216,11 @@ fun ChatScreen(
     var modelSheetOpen by remember { mutableStateOf(false) }
     var modeSheetOpen by remember { mutableStateOf(false) }
     var presetSheetOpen by remember { mutableStateOf(false) }
+    var thinkingSheetOpen by remember { mutableStateOf(false) }
     var contextSheetOpen by remember { mutableStateOf(false) }
-    // 修改重发：同一时刻只编辑一条；文本单独存，取消时丢弃。
+    // 修改重发：同一时刻只编辑一条。输入文本由编辑气泡自己持有——
+    // 之前把 editingText 提到这里并传给每一条 MessageRow，打一个字整屏可见项全部重组。
     var editingMessageId by remember { mutableStateOf<String?>(null) }
-    var editingText by remember { mutableStateOf("") }
 
     // 新消息分隔：只在本机阅读位置之后插入；没有更早位置或已在末尾时不显示。
     val dividerIndex = remember(state.messages, lastReadMessageId) {
@@ -278,8 +285,11 @@ fun ChatScreen(
     // 新消息只在用户接近底部时跟随；用户上滑阅读时不抢滚动。
     // 草稿变长（输入框增高）或键盘顶起时，同样把列表重新锚到底部。
     // 工具卡挂在助手消息里，新工具到达时消息数不一定变，所以把工具总数也当作跟随信号。
-    val toolCardCount = state.messages.sumOf { message ->
-        if (message is ChatMessage.Assistant) message.tools.size else 0
+    // 只在消息表变化时重算：输入框每敲一个字都会重组这一页，不能每次都扫整张表。
+    val toolCardCount = remember(state.messages) {
+        state.messages.sumOf { message ->
+            if (message is ChatMessage.Assistant) message.tools.size else 0
+        }
     }
     LaunchedEffect(state.messages.size, toolCardCount, state.streaming, draftLines, imeVisible) {
         val lastIndex = state.messages.lastIndex
@@ -416,6 +426,11 @@ fun ChatScreen(
                             presetSheetOpen = true
                             onRefreshPresets()
                         },
+                        thinkingLabel = state.thinkingLabel.takeIf { it.isNotBlank() },
+                        onThinkingClick = {
+                            thinkingSheetOpen = true
+                            onRefreshThinking()
+                        },
                         onAttach = onAttach,
                         focusRequester = composerFocus,
                         placeholder = if (state.offline) "离线 · 消息会在重连后发送" else "给 Profer 发消息…",
@@ -466,26 +481,29 @@ fun ChatScreen(
                         ),
                         verticalArrangement = Arrangement.spacedBy(ProferSpacing.xl),
                     ) {
-                        itemsIndexed(state.messages, key = { _, item -> item.id }) { index, message ->
+                        itemsIndexed(
+                            items = state.messages,
+                            key = { _, item -> item.id },
+                            // 同一类型复用组合槽位：长会话滚动时新进屏的项少一次类型判断与重建。
+                            contentType = { _, item -> item::class },
+                        ) { index, message ->
                             if (dividerIndex != null && index == dividerIndex + 1) {
                                 NewMessagesDivider()
                             }
                             MessageRow(
                                 message = message,
                                 editing = editingMessageId == message.id,
-                                editingText = editingText,
-                                onEditingTextChange = { editingText = it },
+                                initialEditingText = (message as? ChatMessage.User)?.text.orEmpty(),
                                 onStartEdit = {
                                     if (message is ChatMessage.User) {
                                         editingMessageId = message.id
-                                        editingText = message.text
                                     }
                                 },
                                 onCancelEdit = { editingMessageId = null },
-                                onSubmitEdit = {
+                                onSubmitEdit = { text ->
                                     val target = editingMessageId
                                     editingMessageId = null
-                                    if (target != null) onRewriteMessage(target, editingText)
+                                    if (target != null) onRewriteMessage(target, text)
                                 },
                                 onCopy = { text ->
                                     clipboard.setText(AnnotatedString(text))
@@ -657,6 +675,20 @@ fun ChatScreen(
             onDismiss = { presetSheetOpen = false },
         )
     }
+    if (thinkingSheetOpen) {
+        ThinkingPickerSheet(
+            options = state.thinkingOptions,
+            selectedValue = state.thinkingSelectedValue,
+            sourceLabel = state.thinkingSourceLabel,
+            loading = state.thinkingLoading,
+            streaming = state.streaming,
+            onSelect = { value ->
+                thinkingSheetOpen = false
+                onSelectThinking(value)
+            },
+            onDismiss = { thinkingSheetOpen = false },
+        )
+    }
     if (modeSheetOpen) {
         PermissionModeDialog(
             currentMode = state.permissionMode,
@@ -721,11 +753,11 @@ private fun MessageRow(
     /** 整轮是否仍在执行：流式期间不显示任何消息操作。 */
     sessionStreaming: Boolean = false,
     editing: Boolean = false,
-    editingText: String = "",
-    onEditingTextChange: (String) -> Unit = {},
+    /** 进入编辑时的初始文本；之后的每次按键只留在气泡内部，不再广播给整个列表。 */
+    initialEditingText: String = "",
     onStartEdit: () -> Unit = {},
     onCancelEdit: () -> Unit = {},
-    onSubmitEdit: () -> Unit = {},
+    onSubmitEdit: (String) -> Unit = {},
 ) {
     when (message) {
         is ChatMessage.Notice -> ProferNotice(
@@ -744,8 +776,7 @@ private fun MessageRow(
 
         is ChatMessage.User -> if (editing) {
             UserEditBubble(
-                text = editingText,
-                onTextChange = onEditingTextChange,
+                initialText = initialEditingText,
                 onCancel = onCancelEdit,
                 onSubmit = onSubmitEdit,
             )
@@ -829,11 +860,12 @@ private fun MessageRow(
 /** 修改重发：原地编辑用户消息，视觉复用气泡（圆角/底色/排版不变）。 */
 @Composable
 private fun UserEditBubble(
-    text: String,
-    onTextChange: (String) -> Unit,
+    initialText: String,
     onCancel: () -> Unit,
-    onSubmit: () -> Unit,
+    onSubmit: (String) -> Unit,
 ) {
+    // 输入状态留在这个气泡里：打字只会重组它自己。
+    var text by remember(initialText) { mutableStateOf(initialText) }
     Column(
         modifier = Modifier.fillMaxWidth(),
         horizontalAlignment = Alignment.End,
@@ -850,7 +882,7 @@ private fun UserEditBubble(
         ) {
             BasicTextField(
                 value = text,
-                onValueChange = onTextChange,
+                onValueChange = { text = it },
                 textStyle = MaterialTheme.typography.bodyLarge.copy(
                     color = MaterialTheme.colorScheme.onSurface,
                 ),
@@ -866,7 +898,7 @@ private fun UserEditBubble(
             horizontalArrangement = Arrangement.spacedBy(2.dp),
         ) {
             TextButton(onClick = onCancel) { Text("取消") }
-            TextButton(onClick = onSubmit) { Text("发送") }
+            TextButton(onClick = { onSubmit(text) }) { Text("发送") }
         }
     }
 }
@@ -914,13 +946,6 @@ private fun ChatMessage.Assistant.plainText(): String = buildString {
     }
 }.trim()
 
-/** 折叠态只展示思考尾部一段：两行以内，避免长思考把消息区顶开。 */
-private fun ThinkingBlock.preview(maxChars: Int = 160): String {
-    val text = body.trim()
-    if (text.length <= maxChars) return text
-    return "…" + text.takeLast(maxChars)
-}
-
 @Composable
 private fun AssistantMessage(
     message: ChatMessage.Assistant,
@@ -932,6 +957,8 @@ private fun AssistantMessage(
     // 不把整段思考铺开、也不抢正文的阅读位置。
     val thinkingLive = message.streaming && message.blocks.isEmpty()
     var thinkingExpanded by rememberSaveable(message.id) { mutableStateOf(false) }
+    // 工具卡展开态跟消息走：切换会话再回来保持用户的选择。
+    var toolsExpanded by rememberSaveable(message.id) { mutableStateOf(false) }
 
     Column(
         modifier = modifier
@@ -942,13 +969,15 @@ private fun AssistantMessage(
     ) {
         message.thinking?.let { thinking ->
             ProferThinkingCard(
-                durationLabel = if (thinkingLive) "思考中…" else "思考过程",
                 body = thinking.body,
                 expanded = thinkingExpanded,
                 onToggle = { thinkingExpanded = !thinkingExpanded },
-                labelPrefix = "",
-                // 折叠时只留两行尾部预览；展开后由 body 接管，避免重复。
-                preview = if (thinkingLive) thinking.preview() else null,
+                label = if (thinkingLive) "思考中" else "思考",
+                // 折叠行只放一句摘要：流式取尾部窗口，结束后取首行。
+                // 思考正文可能有几十 KB，不能每次重组都重新 trim/正则扫一遍。
+                summary = remember(thinking.body, thinkingLive) {
+                    if (thinkingLive) thinkingTail(thinking.body) else thinkingHeadline(thinking.body)
+                },
             )
         }
 
@@ -965,8 +994,23 @@ private fun AssistantMessage(
         }
 
         // 工具卡放在正文下面：先读结论，再看为了得到结论做了什么。
-        message.tools.forEach { tool ->
-            ToolCallCard(tool)
+        // 一轮执行可能产生几十次工具调用。它们全都挂在同一条消息里，LazyColumn 只能整条组合，
+        // 所以「全铺开」等于进屏就把整轮执行史组合一遍——滚动和流式都会跟着卡。
+        // 默认只留最近几条，其余折成一行，需要时再展开。
+        val tools = message.tools
+        if (tools.isNotEmpty()) {
+            val collapsed = tools.size > ToolCardPreviewCount
+            val shown = if (toolsExpanded || !collapsed) tools else tools.takeLast(ToolCardPreviewCount)
+            shown.forEach { tool ->
+                ToolCallCard(tool)
+            }
+            if (collapsed) {
+                ToolCardsToggle(
+                    hiddenCount = tools.size - ToolCardPreviewCount,
+                    expanded = toolsExpanded,
+                    onToggle = { toolsExpanded = !toolsExpanded },
+                )
+            }
         }
     }
 }
@@ -1049,7 +1093,41 @@ private fun MessageImageCard(
     }
 }
 
+/** 默认铺开的工具卡条数：再多就折起来，避免一条消息进屏就组合几十张卡片。 */
+private const val ToolCardPreviewCount = 3
+
 /** 单条工具调用：图标由工具类型决定，状态由 tool_result 驱动。 */
+
+@Composable
+private fun ToolCardsToggle(
+    hiddenCount: Int,
+    expanded: Boolean,
+    onToggle: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(min = ProferSizes.minTouchTarget)
+            .clip(RoundedCornerShape(10.dp))
+            .clickable(onClick = onToggle)
+            .padding(horizontal = 8.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        Icon(
+            imageVector = if (expanded) Icons.Outlined.ExpandLess else Icons.Outlined.ExpandMore,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.size(16.dp),
+        )
+        Text(
+            text = if (expanded) "收起工具调用" else "还有 $hiddenCount 个工具调用",
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
+
 @Composable
 private fun ToolCallCard(tool: ToolBlock) {
     var expanded by rememberSaveable(tool.id) { mutableStateOf(false) }
@@ -1060,7 +1138,9 @@ private fun ToolCallCard(tool: ToolBlock) {
         status = tool.status,
         expanded = expanded,
         onToggle = { expanded = !expanded },
-        detail = tool.detail,
+        input = tool.input,
+        output = tool.output,
+        error = tool.error,
     )
 }
 
@@ -1113,7 +1193,7 @@ private fun SourceCard(message: ChatMessage.Source) {
             }
             if (message.text.isNotBlank()) {
                 ProferRichText(
-                    blocks = parseRichBlocks(message.text),
+                    blocks = cachedRichBlocks(message.text),
                     showCursor = false,
                 )
             }

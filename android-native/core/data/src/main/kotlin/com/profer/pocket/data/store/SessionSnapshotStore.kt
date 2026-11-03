@@ -70,6 +70,9 @@ class AndroidSessionSnapshotStore(context: Context) : SessionSnapshotStore {
                         put("modelId", session.modelId ?: JSONObject.NULL)
                         put("presetId", session.presetId ?: JSONObject.NULL)
                         put("permissionMode", session.permissionMode ?: JSONObject.NULL)
+                        // 思考强度：离线冷启动也要回显电脑端选过的档位，不能只看默认值。
+                        put("openAIThinkingLevel", session.thinkingLevel ?: JSONObject.NULL)
+                        put("agentEffort", session.agentEffort ?: JSONObject.NULL)
                         put("createdAt", session.createdAt)
                         put("updatedAt", session.updatedAt)
                         put("revision", session.revision)
@@ -133,6 +136,8 @@ class AndroidSessionSnapshotStore(context: Context) : SessionSnapshotStore {
                         modelId = item.optStringOrNull("modelId"),
                         presetId = item.optStringOrNull("presetId"),
                         permissionMode = item.optStringOrNull("permissionMode"),
+                        thinkingLevel = item.optStringOrNull("openAIThinkingLevel"),
+                        agentEffort = item.optStringOrNull("agentEffort"),
                         createdAt = item.optLong("createdAt", 0L),
                         updatedAt = item.optLong("updatedAt", 0L),
                         revision = item.optInt("revision", 0),

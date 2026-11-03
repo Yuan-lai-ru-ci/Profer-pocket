@@ -5,7 +5,8 @@
 > 项目内草稿会话、新建项目、重命名/置顶/标记未读/移动项目/删除都走桌面 `remote-service` 的真实命令，
 > 并消费 `session_projection` 保持与电脑端同帧一致。归档会话不向移动端下发：归档是电脑端的整理动作，
 > 手机不背负一份永远用不到的归档目录。
-> 移动端不搬运工具入参与结果，工具调用只保留次数统计。
+> 工具卡显示工具名、目标与状态；入参、结果与错误文本待桌面投影下发，字段契约见
+> [`docs/tool-detail-projection-2026-11-02.md`](./docs/tool-detail-projection-2026-11-02.md)。
 > 落点：`Profer-pocket/android-native/`；旧 Capacitor 壳 `pocket-app/` 保留为回退与协议来源。
 > 并行开发分支与交接说明见 [`HANDOFF.md`](./HANDOFF.md)。
 > 版本号规则与打包检查见 [`VERSIONING.md`](./VERSIONING.md)，改版本前先读。
@@ -86,9 +87,13 @@
 - **模型选择**：按渠道分卡片，组头带渠道图标与模型数；模型行缩进并带品牌图标；当前项整行浅底 + 勾选，
   当前渠道置顶。图标沿用桌面 `assets/models`，深色使用对应的 `_dark` 版本。
 - **层级**：抽屉是一级项目列表（chevron + 项目名 + 会话数 + 运行数 + 新建），点项目展开二级会话；
-  默认只展开当前会话所在项目与置顶组，其余收起；搜索时自动展开所有匹配项目。
+  首屏只展开当前会话所在项目，其余收起；项目内先铺预览（置顶/运行中/等人/未读/当前会话常显，
+  其余补足到 5 条），超出的收进「显示更多（N）」；搜索时自动展开所有匹配项目并全部铺开。
 - **项目顺序**：按最近活动倒序——取项目内非草稿、非归档会话的最大 `updatedAt`，空项目回退项目自身 `updatedAt`；
-  置顶组始终最前，「未归入项目」始终最后。桌面侧栏的「默认/最近/名称」排序是桌面本地偏好，不下发移动端。
+  手机端置顶的项目始终最前（标题旁带图钉徽标），「未归入项目」始终最后。桌面侧栏的「默认/最近/名称」排序是桌面本地偏好，不下发移动端。
+- **会话状态（2026-11-02）**：不再用行尾小点，改成行首 3dp 竖条 + 行底淡色：
+  等人确认（warning 琥珀）> 运行中（info 蓝）> 未读/已完成（success 绿），与桌面 `SessionIndicatorStatus` 同序；
+  子会话行不加竖条，左侧分支图标按同一状态上色，状态同时写进无障碍 `stateDescription`。
 - **会话行**：标题与短时间纵向排布，行高随字号增长；标题相对项目名缩进，保留子会话开关和长按操作。
 - **子会话（2026-10-29）**：委派子会话（`parentSessionId + sourceDelegationId`）与探索分支
   （`explorationParentSessionId + explorationSourceMessageId`）挂在母会话下，不再作为项目里的平铺行。
@@ -108,11 +113,11 @@
 - **回合文件汇总**：本轮 `Edit / Write / MultiEdit / NotebookEdit` 触及的文件聚合成一排 chip，
   放在回复末尾（对应桌面 `TurnFileChangesSummary`）；失败工具的文件自动剔除，新用户回合清空。
   服务端 `sdk_message` 投影只透传 tool_use 的 `file_path`，不下发完整工具入参。
-- **项目名 chip**：置顶组、未归入项目、搜索结果这些跨项目列表，会话行在标题后显示项目名胶囊
+- **项目名 chip**：未归入项目、搜索结果这些跨项目列表，会话行在标题后显示项目名胶囊
   （与 web 版 `workspace-badge` 一致）；项目组内不重复显示。
 - **会话切换**：切换时打开对应会话，按 `session_detail + get_sdk_messages` 水合历史；草稿按会话保存在内存。
 - **发送**：乐观气泡立即上屏，`send_message` 带 `clientMessageId` 发出；断线时入队，重连后原样重放。运行中的「停止」调用 `stop_agent`。
-- **流式**：增量 token 在数据层以 60ms 窗口合并后推送，避免每个 token 触发一次重组；工具调用只显示「工具调用 N 次 + 分类次数」。
+- **流式**：增量 token 在数据层以 60ms 窗口合并后推送，避免每个 token 触发一次重组；工具调用按条渲染为卡片（名称 · 目标 · 状态）。
 - **长按消息**：触觉反馈 + 菜单（复制 / 用户消息可重新发送），结果用主题化 Snackbar 提示。
 - **设置开关**：主题、通知、权限提醒、自动重连、后台连接均持久化；关闭自动重连后断线直接进入 Offline。
 - **连接页**：地址与 Token 分开输入；也支持把 `token` 放在地址 query 里，保存时会抽出 Token、地址中不保留凭据。
@@ -211,8 +216,18 @@ android-native/
 ### 流式合并与工具统计
 
 - 助手 `_partial` 是累计全文：数据层每个会话只保留最后一条，60ms 窗口后统一推送。
-- 工具调用按 `tool_use.id` 去重后聚合为 `ToolTally(total, byName)`；每个用户回合重新计数，
-  UI 只显示「工具调用 N 次 / Read ×2 · Bash ×1」，不搬运入参与结果。
+- 工具调用按 `tool_use.id` 去重后聚合为 `ToolTally(total, byName)`，用于回合摘要与抽屉；
+  逐条工具卡读助手消息自己的调用列表，展示「名称 · 目标 · 状态」，入参与错误文本等投影下发后再接。
+
+### 长会话内存与滚动
+
+- **消息投影缓存**：`UiMapping.chatState` / `conversationUiState` 以「entry 引用 + 在线/运行/工具状态」命中缓存，
+  流式 token 只重建变化的那条；表没变时连 `List` 实例都复用，`StateFlow` 去重与 `remember(messages)` 都不白跑。
+- **会话正文只留最近 5 条**（`MAX_LOADED_SESSIONS`）：在跑 / 等人 / 后台有任务 / 有待发消息 / 当前打开的会话不回收，
+  其余下次打开重新水合。
+- **图片**：解码前按 1440px 降采样，缓存换成字节上限的 `LruCache`（`min(堆/8, 32MB)`）；
+  附件大图预览也在后台线程解码（上限 2048px）。
+- 细节、基准数字与真机采样方法见 `docs/memory-scroll-2026-11-03.md`。
 
 ### 本地存储与凭据
 
@@ -290,10 +305,11 @@ export JAVA_HOME=/opt/homebrew/opt/openjdk@21/libexec/openjdk.jdk/Contents/Home
 # 数据层单测（协议、归约、退避/心跳、流合并）
 ./gradlew :core:data:testDebugUnitTest
 
-# Debug 包
+# Debug 包：包名带 .debug 后缀（com.profer.pocket.debug），可与正式版共存，
+# 两者签名不同，同包名会装不上。
 ./gradlew :app:assembleDebug
 adb install -r app/build/outputs/apk/debug/app-debug.apk
-adb shell am start -n com.profer.pocket.native/com.profer.pocket.app.MainActivity
+adb shell am start -n com.profer.pocket.debug/com.profer.pocket.app.MainActivity
 adb exec-out screencap -p > screenshots/xxx.png
 
 # Release 包：当前未配置签名，产物是 unsigned（fail-closed，不可直接安装）
