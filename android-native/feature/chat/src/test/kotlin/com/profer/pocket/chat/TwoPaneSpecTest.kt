@@ -58,4 +58,19 @@ class TwoPaneSpecTest {
         val spec = resolveTwoPaneSpec(window(1280f), null)
         assertEquals(360.dp, spec.listWidth)
     }
+
+    @Test fun collapsed_list_column_takes_no_width() {
+        // 收起后必须一个像素都不占：残留的 1dp 分隔线在宽屏上就是一条悬浮竖线。
+        val spec = resolveTwoPaneSpec(window(800f), null)
+        assertEquals(0.dp, resolveTwoPaneListColumn(spec, collapsed = true))
+    }
+
+    @Test fun expanded_list_column_includes_divider_and_hinge() {
+        val hinge = ProferHinge(vertical = true, isSeparating = true, size = 16.dp, start = 336.dp)
+        val spec = resolveTwoPaneSpec(window(740f), hinge)
+        assertEquals(
+            spec.listWidth + com.profer.pocket.designsystem.theme.ProferSizes.hairline + spec.hingeGap,
+            resolveTwoPaneListColumn(spec, collapsed = false),
+        )
+    }
 }

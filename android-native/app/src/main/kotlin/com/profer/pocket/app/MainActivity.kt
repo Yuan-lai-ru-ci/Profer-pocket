@@ -251,6 +251,10 @@ fun ProferApp(viewModel: PocketViewModel) {
             viewModel.consumeNavigation()
         }
 
+        // 双栏列表栏姿态提到 NavHost 外面：Agent / Chat 两个模式共用一份，
+        // 切换模式或进出设置页回来时不会自己弹回来。
+        var listPaneCollapsed by rememberSaveable { mutableStateOf(false) }
+
         NavHost(navController = navController, startDestination = "chat") {
             composable("chat") {
                 val drawerState = rememberPocketDrawerState()
@@ -334,6 +338,8 @@ fun ProferApp(viewModel: PocketViewModel) {
                         drawerState = drawerState,
                         chatTools = chatTools,
                         onToggleTool = viewModel::toggleChatTool,
+                        listPaneCollapsed = listPaneCollapsed,
+                        onToggleListPane = { listPaneCollapsed = !listPaneCollapsed },
                     )
                 } else {
                     ChatScreen(
@@ -399,6 +405,8 @@ fun ProferApp(viewModel: PocketViewModel) {
                             chatState.sessionId?.let { dialog = SessionDialog.Delete(it, chatState.title) }
                         },
                         drawerState = drawerState,
+                        listPaneCollapsed = listPaneCollapsed,
+                        onToggleListPane = { listPaneCollapsed = !listPaneCollapsed },
                     )
                 }
             }

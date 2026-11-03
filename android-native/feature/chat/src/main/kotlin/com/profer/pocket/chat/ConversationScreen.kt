@@ -28,6 +28,8 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.outlined.MenuOpen
+import androidx.compose.material.icons.automirrored.outlined.ViewSidebar
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.ArrowDownward
 import androidx.compose.material.icons.outlined.ContentCopy
@@ -98,6 +100,9 @@ fun ConversationScreen(
     onRetryConnection: () -> Unit = {},
     onOpenConnection: () -> Unit = onRetryConnection,
     drawerState: PocketDrawerState = rememberPocketDrawerState(),
+    /** 双栏列表栏是否收起：与 Agent 对话共用同一姿态（由首页持有）。 */
+    listPaneCollapsed: Boolean = false,
+    onToggleListPane: () -> Unit = {},
     chatTools: List<com.profer.pocket.model.ChatToolSummary> = emptyList(),
     onToggleTool: (String, Boolean) -> Unit = { _, _ -> },
 ) {
@@ -178,9 +183,10 @@ fun ConversationScreen(
     PocketDrawerLayout(
         modifier = modifier,
         drawerState = drawerState,
+        listPaneCollapsed = listPaneCollapsed,
         drawerContent = {
-            // 双栏时列表常驻，必须组合；单栏仍在打开后才挂载。
-            if (drawerState.isOpen || rememberProferWindowSize().isTwoPane) {
+            // 双栏时列表常驻，必须组合；单栏仍在打开后才挂载。列表栏收起后同样不必留着这棵树。
+            if (drawerState.isOpen || (rememberProferWindowSize().isTwoPane && !listPaneCollapsed)) {
                 drawerContent { drawerState.close() }
             }
         },
@@ -211,11 +217,19 @@ fun ConversationScreen(
                 )
             },
             topBar = {
+                // 双栏下这个键不再开抽屉，而是收起/展开常驻列表栏；单栏保持原语义。
+                val twoPane = rememberProferWindowSize().isTwoPane
                 ConversationTopBar(
                     title = state.title.ifBlank { "Chat" },
-                    onOpenDrawer = { drawerState.open() },
+                    onOpenDrawer = {
+                        if (twoPane) {
+                            onToggleListPane()
+                        } else {
+                            drawerState.open()
+                        }
+                    },
                     onNewConversation = onNewConversation,
-                    showDrawerButton = !rememberProferWindowSize().isTwoPane,
+                    listPaneCollapsed = listPaneCollapsed,
                 )
             },
             bottomBar = {
@@ -381,16 +395,25 @@ private fun ConversationTopBar(
     title: String,
     onOpenDrawer: () -> Unit,
     onNewConversation: () -> Unit,
-    showDrawerButton: Boolean = true,
+    /** 双栏列表栏已收起：左侧键从「收起」变成「展开」。单栏恒为 false。 */
+    listPaneCollapsed: Boolean = false,
 ) {
+    val twoPane = rememberProferWindowSize().isTwoPane
     ProferHeaderRow {
-        if (showDrawerButton) {
-            ProferIconAction(
-                icon = Icons.Outlined.Menu,
-                contentDescription = "打开对话列表",
-                onClick = onOpenDrawer,
-            )
-        }
+        ProferIconAction(
+            // 与 Agent 对话同构：双栏用面板图标（收起/展开），单栏用汉堡键（抽屉）。
+            icon = when {
+                !twoPane -> Icons.Outlined.Menu
+                listPaneCollapsed -> Icons.AutoMirrored.Outlined.ViewSidebar
+                else -> Icons.AutoMirrored.Outlined.MenuOpen
+            },
+            contentDescription = when {
+                !twoPane -> "打开对话列表"
+                listPaneCollapsed -> "展开对话列表"
+                else -> "收起对话列表"
+            },
+            onClick = onOpenDrawer,
+        )
         // 与 Agent 对话同构：标题进浮起胶囊，字号与内边距走同一套 token。
         // 外层占满中间，胶囊按内容收窄，右侧新建键仍贴边。
         Box(modifier = Modifier.weight(1f)) {

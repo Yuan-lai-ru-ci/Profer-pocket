@@ -12,6 +12,7 @@ import android.provider.Settings
 import androidx.compose.animation.core.AnimationSpec
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.animate
+import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
@@ -48,6 +49,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.util.VelocityTracker
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import com.profer.pocket.designsystem.adaptive.LocalProferWindowSize
@@ -410,6 +412,11 @@ private const val DrawerHapticAmplitude = 110
 fun PocketDrawerLayout(
     drawerState: PocketDrawerState,
     modifier: Modifier = Modifier,
+    /**
+     * 双栏时列表栏是否收起。单栏（手机）忽略：那边列表本来就是抽屉，没有「常驻侧栏」可收。
+     * 状态由宿主持有，Agent / Chat 切换时不重置。
+     */
+    listPaneCollapsed: Boolean = false,
     drawerContent: @Composable () -> Unit,
     content: @Composable () -> Unit,
 ) {
@@ -431,6 +438,7 @@ fun PocketDrawerLayout(
                     window = window,
                     hinge = hinge,
                     drawerState = drawerState,
+                    listCollapsed = listPaneCollapsed,
                     drawerContent = drawerContent,
                     content = content,
                     modifier = Modifier.fillMaxSize(),
@@ -529,12 +537,15 @@ fun PocketDrawerLayout(
 
 /**
  * 双栏：左侧列表常驻，右侧内容。垂直铰链时把分栏线对到铰链左侧，内容不跨折痕。
+ *
+ * 列表栏可收起（[listCollapsed]）：收起后内容区占满整宽，平板竖屏看长文/代码时不被目录挤行。
  */
 @Composable
 private fun TwoPaneLayout(
     window: ProferWindowSize,
     hinge: ProferHinge?,
     drawerState: PocketDrawerState,
+    listCollapsed: Boolean,
     drawerContent: @Composable () -> Unit,
     content: @Composable () -> Unit,
     modifier: Modifier = Modifier,
@@ -545,26 +556,56 @@ private fun TwoPaneLayout(
     }
 
     val spec = resolveTwoPaneSpec(window, hinge)
+    // 宽度而不是平移：内容区要真的变宽（正文行宽、表格列数都跟着变），只推出去一块空白没有意义。
+    val columnWidth by animateDpAsState(
+        targetValue = resolveTwoPaneListColumn(spec, listCollapsed),
+        animationSpec = tween(durationMillis = ListPaneToggleMs, easing = FastOutSlowInEasing),
+        label = "twoPaneListColumn",
+    )
 
     Row(
         modifier = modifier
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.surfaceContainerLow),
     ) {
-        Box(Modifier.width(spec.listWidth).fillMaxHeight()) { drawerContent() }
-        // 一条 hairline 分开目录与内容：双栏靠色阶已经能分，但列表行滚动时会贴到正文上。
+        // 整栏（列表 + 分隔线 + 铰链留白）一起被裁掉：内层按固定宽度排版，
+        // 动画期间会话列表不重新换行，看起来是「滑出去」而不是「被挤扁」。
         Box(
             Modifier
-                .width(ProferSizes.hairline)
+                .width(columnWidth)
                 .fillMaxHeight()
-                .background(MaterialTheme.colorScheme.outlineVariant),
-        )
-        if (spec.hingeGap > 0.dp) {
-            Spacer(Modifier.width(spec.hingeGap))
+                .clipToBounds(),
+        ) {
+            // 完全收起后不再组合几百条会话行：宽度为 0 时没有可见内容，没必要留着测量。
+            if (columnWidth > 0.dp) {
+                Row(Modifier.fillMaxHeight()) {
+                    Box(Modifier.width(spec.listWidth).fillMaxHeight()) { drawerContent() }
+                    // 一条 hairline 分开目录与内容：双栏靠色阶已经能分，但列表行滚动时会贴到正文上。
+                    Box(
+                        Modifier
+                            .width(ProferSizes.hairline)
+                            .fillMaxHeight()
+                            .background(MaterialTheme.colorScheme.outlineVariant),
+                    )
+                    if (spec.hingeGap > 0.dp) {
+                        Spacer(Modifier.width(spec.hingeGap))
+                    }
+                }
+            }
         }
         Box(Modifier.weight(1f).fillMaxHeight()) { content() }
     }
 }
+
+/** 列表栏收起/展开的动画时长：和抽屉回弹同一量级，快得不像「转场」，慢得看得清去向。 */
+private const val ListPaneToggleMs = 240
+
+/**
+ * 列表栏占用的总宽度（列表 + 分隔线 + 铰链留白）。收起时为 0。
+ * 纯函数，便于单测：三个分量都必须随栏一起消失，否则收起后左侧会残留一条 1dp 竖线或 16dp 空白。
+ */
+internal fun resolveTwoPaneListColumn(spec: TwoPaneSpec, collapsed: Boolean): Dp =
+    if (collapsed) 0.dp else spec.listWidth + ProferSizes.hairline + spec.hingeGap
 
 /** 双栏几何：列表宽度与铰链留白。纯函数，便于单测折叠屏的各种铰链位置。 */
 internal data class TwoPaneSpec(val listWidth: androidx.compose.ui.unit.Dp, val hingeGap: androidx.compose.ui.unit.Dp)

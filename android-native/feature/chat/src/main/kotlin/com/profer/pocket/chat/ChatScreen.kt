@@ -36,6 +36,8 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.outlined.MenuOpen
+import androidx.compose.material.icons.automirrored.outlined.ViewSidebar
 import androidx.compose.material.icons.outlined.ArrowDownward
 import androidx.compose.material.icons.outlined.Build
 import androidx.compose.material.icons.outlined.Check
@@ -189,6 +191,9 @@ fun ChatScreen(
     onDeleteSession: () -> Unit = {},
     /** 抽屉状态由首页持有：Agent / Chat 切换时抽屉不跟着关。 */
     drawerState: PocketDrawerState = rememberPocketDrawerState(),
+    /** 双栏列表栏是否收起：由首页持有，Agent / Chat 切换时保持同一姿态。 */
+    listPaneCollapsed: Boolean = false,
+    onToggleListPane: () -> Unit = {},
 ) {
     val scope = rememberCoroutineScope()
     val listState = rememberLazyListState()
@@ -324,11 +329,13 @@ fun ChatScreen(
     PocketDrawerLayout(
         modifier = modifier,
         drawerState = drawerState,
+        listPaneCollapsed = listPaneCollapsed,
         drawerContent = {
             // 关闭状态下不组合几百条会话目录：否则冷启动会把整张抽屉树
             // （项目分组 + 会话行 + 弹层宿主）一起组合/测量，主线程首帧被拖到十几秒。
             // 双栏时列表常驻，必须组合；这里在 PocketDrawerLayout 的 Provider 内部读取窗口尺寸。
-            if (drawerState.isOpen || rememberProferWindowSize().isTwoPane) {
+            // 列表栏收起后宽度为 0，同样不必留着这棵树。
+            if (drawerState.isOpen || (rememberProferWindowSize().isTwoPane && !listPaneCollapsed)) {
                 drawerContent { drawerState.close() }
             }
         },
@@ -359,6 +366,9 @@ fun ChatScreen(
                 )
             },
             topBar = {
+                // 双栏时顶栏左侧键变成「收起/展开列表栏」：列表不再是一个需要滑出来的抽屉，
+                // 而是一个可以暂时让位的常驻区。单栏仍然是打开抽屉。
+                val twoPane = rememberProferWindowSize().isTwoPane
                 ChatTopBar(
                     title = state.title,
                     subSessionLabel = state.subSessionLabel,
@@ -368,11 +378,14 @@ fun ChatScreen(
                     onContextClick = { contextSheetOpen = true },
                     hasSession = state.sessionId != null,
                     pinned = state.pinned,
-                    // 双栏下列表常驻，菜单键没有意义。
-                    showDrawerButton = !rememberProferWindowSize().isTwoPane,
+                    listPaneCollapsed = listPaneCollapsed,
                     onOpenDrawer = {
-                        keyboard?.hide()
-                        drawerState.open()
+                        if (twoPane) {
+                            onToggleListPane()
+                        } else {
+                            keyboard?.hide()
+                            drawerState.open()
+                        }
                     },
                     onOpenSettings = onOpenSettings,
                     onRenameSession = onRenameSession,
@@ -1238,19 +1251,28 @@ private fun ChatTopBar(
     /** 子会话面包屑；普通会话为 null。 */
     subSessionLabel: String? = null,
     onOpenParent: () -> Unit = {},
-    /** 双栏下列表常驻，不再显示打开抽屉的菜单键。 */
-    showDrawerButton: Boolean = true,
+    /** 双栏列表栏已收起：左侧键从「收起」变成「展开」。单栏恒为 false。 */
+    listPaneCollapsed: Boolean = false,
 ) {
     var menuOpen by remember { mutableStateOf(false) }
+    val twoPane = rememberProferWindowSize().isTwoPane
 
     ProferHeaderRow {
-        if (showDrawerButton) {
-            ProferIconAction(
-                icon = Icons.Outlined.Menu,
-                contentDescription = "打开会话列表",
-                onClick = onOpenDrawer,
-            )
-        }
+        ProferIconAction(
+            // 双栏用「面板」语义的图标：MenuOpen 是「把列表收起来」，ViewSidebar 是「把列表叫回来」；
+            // 单栏仍然是汉堡键（抽屉）。
+            icon = when {
+                !twoPane -> Icons.Outlined.Menu
+                listPaneCollapsed -> Icons.AutoMirrored.Outlined.ViewSidebar
+                else -> Icons.AutoMirrored.Outlined.MenuOpen
+            },
+            contentDescription = when {
+                !twoPane -> "打开会话列表"
+                listPaneCollapsed -> "展开会话列表"
+                else -> "收起会话列表"
+            },
+            onClick = onOpenDrawer,
+        )
         // 顶栏只留会话标题：项目名与连接点属于副信息，不再占第二行。
         // 子会话例外：它必须能看出「挂在哪个母会话下面」，并能一键回去。
         // 中间整块占满，胶囊自己按内容收窄：宽屏下标题不会被拉成一条长条，
