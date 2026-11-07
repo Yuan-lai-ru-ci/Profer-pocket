@@ -5,7 +5,8 @@
 > 项目内草稿会话、新建项目、重命名/置顶/标记未读/移动项目/删除都走桌面 `remote-service` 的真实命令，
 > 并消费 `session_projection` 保持与电脑端同帧一致。归档会话不向移动端下发：归档是电脑端的整理动作，
 > 手机不背负一份永远用不到的归档目录。
-> 工具卡显示工具名、目标与状态；入参、结果与错误文本待桌面投影下发，字段契约见
+> 回合结束后，思考与工具调用和桌面一样折成一行「执行过程：N 次工具调用，M 段思考」，
+> 展开后才是逐条工具卡（显示工具名、目标与状态）；入参、结果与错误文本待桌面投影下发，字段契约见
 > [`docs/tool-detail-projection-2026-11-02.md`](./docs/tool-detail-projection-2026-11-02.md)。
 > 落点：`Profer-pocket/android-native/`；旧 Capacitor 壳 `pocket-app/` 保留为回退与协议来源。
 > 并行开发分支与交接说明见 [`HANDOFF.md`](./HANDOFF.md)。
@@ -174,7 +175,7 @@ android-native/
 | 客户端 → 服务端 | `create_session` / `ensure_project_draft_session` / `create_workspace` | 全局新建、项目草稿复用、新建项目 |
 | 客户端 → 服务端 | `list_conversations` / `get_conversation_messages` / `create_conversation` / `update_conversation_model` | Chat 列表、历史、新建、切换对话模型 |
 | 客户端 → 服务端 | `chat_send_message` / `chat_stop_generation` / `delete_conversation` | Chat 发送、停止、删除 |
-| 服务端 → 客户端 | `chat_event` | Chat 流式事件：`chat:stream:chunk / reasoning / complete / error` |
+| 服务端 → 客户端 | `chat_event` | Chat 流式事件：`chat:stream:chunk / reasoning / tool-activity / complete / error` |
 
 ### 会话元数据字段
 
@@ -189,7 +190,8 @@ android-native/
 - 创建类命令返回完整会话 item（同时保留 `sessionId / title / draft` 兼容旧客户端），移动端无需为新会话再拉全量列表。
 
 移动端已接入 Chat（非 Agent）的**列表 / 打开 / 发送 / 流式 / 停止 / 新建 / 删除**；
-附件上传、文件预览与扫码配对仍未实现。Chat 消息只渲染正文与推理；新对话以当前 Agent 模型为初始值，
+附件上传、文件预览与扫码配对仍未实现。Chat 消息渲染正文、折叠的推理与逐条工具活动（与桌面同序：
+工具行 → 思考 → 正文，工具行点开看参数/结果）；新对话以当前 Agent 模型为初始值，
 每段对话绑定自己的 channel/model，输入区左侧的模型胶囊可随时切换并写回电脑端（生成中禁用）。
 对话页沿用 Agent 页的阅读细节：贴底时跟随新消息、上滑阅读不抢滚动、右下角「回到最新」带未读数、
 消息可复制、点击空白收起键盘；断线时顶部出现离线条并可重连。
@@ -218,6 +220,8 @@ android-native/
 - 助手 `_partial` 是累计全文：数据层每个会话只保留最后一条，60ms 窗口后统一推送。
 - 工具调用按 `tool_use.id` 去重后聚合为 `ToolTally(total, byName)`，用于回合摘要与抽屉；
   逐条工具卡读助手消息自己的调用列表，展示「名称 · 目标 · 状态」，入参与错误文本等投影下发后再接。
+- 思考与工具调用同属一轮执行过程：流式中展开，回合结束后自动收起为一行「执行过程」，
+  用户手动展开/收起后不再自动切换（见 `docs/process-group-2026-11-04.md`）。
 
 ### 长会话内存与滚动
 
