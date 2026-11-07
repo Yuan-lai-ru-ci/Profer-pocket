@@ -83,6 +83,26 @@ android {
             if (signingPropertiesFile.exists()) signingConfig = signingConfigs.getByName("release")
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }
+        /**
+         * 体验包：与正式版同一套优化（R8 + 资源裁剪），但用 debug 签名并加 `.internal` 后缀。
+         *
+         * 用途是「在真机上按正式版的表现验收」：正式包没有签名配置时打不出可安装的 APK，
+         * 而 debug 包不优化（无内联、Compose 组合期检查、全量 Log），帧率和内存都不代表线上。
+         * 独立 applicationId 让它与正式版、debug 版同时安装，同机对比同一路径的掉帧。
+         */
+        create("internal") {
+            initWith(getByName("release"))
+            applicationIdSuffix = ".internal"
+            manifestPlaceholders["appLabel"] = "Profer Test"
+            isMinifyEnabled = true
+            isShrinkResources = true
+            signingConfig = signingConfigs.getByName("debug")
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro",
+            )
+            matchingFallbacks += listOf("release")
+        }
     }
 
     compileOptions {
@@ -109,6 +129,17 @@ kotlin {
     compilerOptions {
         jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
     }
+}
+
+/**
+ * 体验包必须使用测试基线版本号（如 `0.1.26-internal.1`）。
+ *
+ * 同一个 versionName 只能对应一个 APK：正式包 `0.1.25` 已经发布，体验包若沿用会破坏版本追溯。
+ * 这条检查只在真正构建 internal 任务时触发，不影响 debug / release / 单测。
+ */
+val requestedInternal = gradle.startParameter.taskNames.any { it.contains("Internal") }
+check(!requestedInternal || pocketVersionName.contains('-')) {
+    "体验包必须传测试版本号，例如 -PpocketVersionName=0.1.26-internal.1（当前为 $pocketVersionName）"
 }
 
 dependencies {
