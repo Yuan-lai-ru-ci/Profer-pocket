@@ -51,6 +51,7 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
+import com.profer.pocket.designsystem.adaptive.rememberProferWindowSize
 import com.profer.pocket.designsystem.component.ProferEmptyState
 import com.profer.pocket.designsystem.component.proferSelectedSurface
 import com.profer.pocket.designsystem.component.rememberLongPressFeedback
@@ -165,6 +166,8 @@ fun DrawerModeButton(
     chatSelected: Boolean,
     onToggle: () -> Unit,
     modifier: Modifier = Modifier,
+    /** 窄侧栏（约 200–260dp）：去掉箭头图标、收内边距，只留文字，一行才放得下三颗按钮。 */
+    compact: Boolean = false,
 ) {
     val label = if (chatSelected) "Chat" else "Agent"
     Box(
@@ -183,16 +186,18 @@ fun DrawerModeButton(
             modifier = Modifier.height(ProferSizes.actionVisual),
         ) {
             Row(
-                modifier = Modifier.padding(horizontal = ProferSpacing.md),
+                modifier = Modifier.padding(horizontal = if (compact) ProferSpacing.sm else ProferSpacing.md),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(ProferSpacing.xs),
             ) {
-                Icon(
-                    imageVector = Icons.Outlined.SwapHoriz,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.size(14.dp),
-                )
+                if (!compact) {
+                    Icon(
+                        imageVector = Icons.Outlined.SwapHoriz,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(14.dp),
+                    )
+                }
                 Text(
                     text = label,
                     style = MaterialTheme.typography.labelMedium,
@@ -215,6 +220,7 @@ fun ConversationBody(
     modifier: Modifier = Modifier,
     onDelete: (ConversationItem) -> Unit = {},
 ) {
+    val shortScreen = rememberProferWindowSize().isShort
     PullToRefreshBox(
         isRefreshing = state.refreshing,
         onRefresh = onRefresh,
@@ -248,7 +254,7 @@ fun ConversationBody(
                         onPrimary = if (state.query.isBlank()) onNewConversation else null,
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(top = ProferSpacing.xxl),
+                            .padding(top = if (shortScreen) 0.dp else ProferSpacing.xxl),
                     )
                 }
             }

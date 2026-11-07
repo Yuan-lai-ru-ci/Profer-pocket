@@ -41,7 +41,9 @@ fun ProferAdaptiveSheet(
     containerColor: Color = MaterialTheme.colorScheme.surfaceContainerLow,
     content: @Composable ColumnScope.() -> Unit,
 ) {
-    if (rememberProferWindowSize().isTwoPane) {
+    val window = rememberProferWindowSize()
+    // 横屏短屏（360dp 高）也走居中弹窗：底部弹层只能分到一条窄带，选项要来回滚。
+    if (window.isTwoPane || (window.isShort && window.isLandscape)) {
         val screenHeight = LocalConfiguration.current.screenHeightDp.dp
         Dialog(
             onDismissRequest = onDismissRequest,
@@ -49,7 +51,8 @@ fun ProferAdaptiveSheet(
         ) {
             Surface(
                 modifier = modifier
-                    .widthIn(min = 420.dp, max = maxWidth)
+                    // 窄横屏（例如 480dp 半折叠）不能硬撑 420dp 下限，至少给两侧各留 16dp。
+                    .widthIn(min = minOf(420.dp, window.width - 32.dp), max = maxWidth)
                     .heightIn(max = screenHeight * 0.86f),
                 shape = MaterialTheme.shapes.extraLarge,
                 color = containerColor,

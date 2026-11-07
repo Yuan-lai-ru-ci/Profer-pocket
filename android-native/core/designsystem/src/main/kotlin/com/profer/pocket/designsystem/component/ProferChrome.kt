@@ -15,14 +15,24 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.graphics.luminance
 import com.profer.pocket.designsystem.theme.ProferSizes
 import com.profer.pocket.designsystem.theme.ProferSpacing
+
+/**
+ * 顶栏紧凑档的最小触控尺寸。默认 48dp（红线）；手机横屏的顶栏用 40dp——
+ * 状态栏 + 48dp 顶栏已经吃掉 360dp 高的 20%，用户要求再往上收，只能动这一档。
+ * 只包在顶栏里，不影响正文里的任何按钮。
+ */
+val LocalProferMinTouchTarget = compositionLocalOf { ProferSizes.minTouchTarget }
 
 /** 画布、内容面、浮动操作面三层；材质不依赖实时模糊，低端设备同样可读。 */
 @Composable
@@ -47,18 +57,28 @@ fun ProferBackdrop(
 @Composable
 fun ProferHeaderRow(
     modifier: Modifier = Modifier,
+    /** 短屏（手机横屏、分屏）：上下留白从 8 收到 4，标题不再用浮层胶囊。 */
+    compact: Boolean = false,
     content: @Composable RowScope.() -> Unit,
 ) {
-    Row(
-        modifier = modifier
-            .fillMaxWidth()
-            .statusBarsPadding()
-            .padding(horizontal = ProferSpacing.sm, vertical = ProferSpacing.sm)
-            .heightIn(min = ProferSizes.minTouchTarget),
-        horizontalArrangement = Arrangement.spacedBy(ProferSpacing.xs),
-        verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
-        content = content,
-    )
+    val row = @Composable { modifier: Modifier ->
+        Row(
+            modifier = modifier
+                .fillMaxWidth()
+                .statusBarsPadding()
+                .padding(horizontal = if (compact) ProferSpacing.xs else ProferSpacing.sm)
+                .padding(vertical = if (compact) 0.dp else ProferSpacing.sm)
+                .heightIn(min = if (compact) 40.dp else ProferSizes.minTouchTarget),
+            horizontalArrangement = Arrangement.spacedBy(ProferSpacing.xs),
+            verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+            content = content,
+        )
+    }
+    if (compact) {
+        CompositionLocalProvider(LocalProferMinTouchTarget provides 40.dp) { row(modifier) }
+    } else {
+        row(modifier)
+    }
 }
 
 /**

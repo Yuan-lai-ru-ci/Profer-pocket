@@ -16,6 +16,8 @@ import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Box
@@ -26,9 +28,13 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
@@ -52,12 +58,17 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
+import com.profer.pocket.designsystem.adaptive.LocalProferSidebarHandlesInsets
 import com.profer.pocket.designsystem.adaptive.LocalProferWindowSize
 import com.profer.pocket.designsystem.adaptive.ProferHinge
+import com.profer.pocket.designsystem.adaptive.ProferPaneGap
 import com.profer.pocket.designsystem.adaptive.ProferWindowSize
 import com.profer.pocket.designsystem.adaptive.rememberProferHinge
+import com.profer.pocket.designsystem.adaptive.landscapeDrawerWidth
 import com.profer.pocket.designsystem.adaptive.windowWidthClass
 import com.profer.pocket.designsystem.theme.ProferSizes
+import com.profer.pocket.designsystem.theme.ProferSpacing
+import androidx.compose.foundation.BorderStroke
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -457,8 +468,15 @@ fun PocketDrawerLayout(
                     .background(MaterialTheme.colorScheme.surfaceContainerLow),
             ) {
             val density = LocalDensity.current
-            val drawerWidth = window.width - (DrawerEdge + DrawerGap)
-            val pushDistance = window.width - DrawerEdge
+            // 横屏单栏走「桌面式侧栏」：一列定宽浮在内容上，内容不推走。
+            // 竖屏仍是整屏推卡——那是移动端的层级表达，横屏下推卡会把 640dp 的内容推成一条空白。
+            val overlaySidebar = window.isLandscape
+            val drawerWidth = if (overlaySidebar) {
+                landscapeDrawerWidth(window.width)
+            } else {
+                window.width - (DrawerEdge + DrawerGap)
+            }
+            val pushDistance = if (overlaySidebar) 0.dp else window.width - DrawerEdge
             val drawerWidthPx = with(density) { drawerWidth.toPx() }
             val pushPx = with(density) { pushDistance.toPx() }
             // 横向半折叠：整块内容停到铰链下方，不让正文压在折痕上。
@@ -466,49 +484,76 @@ fun PocketDrawerLayout(
                 ?.takeIf { !it.vertical && it.isSeparating }
                 ?.let { it.start + it.size }
                 ?: 0.dp
-            // 抽屉在内容下层：关闭时整体移到屏幕左侧之外。
-            Box(
-                modifier = Modifier
-                    .width(drawerWidth)
-                    .fillMaxHeight()
-                    .offset { IntOffset((drawerWidthPx * (drawerState.progress - 1f)).roundToInt(), 0) }
-                    .padding(top = hingeTopPadding)
-                    // 跟着拉开进度淡入：只拉几十像素就松手时，列表不会「闪一下」。
-                    .graphicsLayer { alpha = drawerContentAlpha(drawerState.progress) }
-                    // 抽屉底色比内容卡片深：卡片缩小时四周的留白才看得出层次。
-                    .background(MaterialTheme.colorScheme.surfaceContainerLow),
-            ) {
-                drawerContent()
-            }
 
-            // 内容层：关闭时全屏；抽屉打开时缩成一张悬浮卡片（上下留白），推向右只留 DrawerEdge 宽的圆角边缘。
-            // 圆角只在整个 dp 变化时换实例，不在每帧新建 shape（见 DrawerCardShapes）。
-            val cornerHolder = remember(drawerState) { intArrayOf(-1) }
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .offset { IntOffset((pushPx * drawerState.progress).roundToInt(), 0) }
-                    .padding(top = hingeTopPadding)
-                    .graphicsLayer {
-                        val progress = drawerState.progress
-                        // 收起态全屏；抽屉打开时内容区缩成一张悬浮卡片（上下留白）。
-                        val scale = 1f - 0.03f * progress
-                        scaleX = scale
-                        scaleY = scale
-                        // 以左边缘为锚点：卡片左边缘不因缩放右移，和抽屉之间只留 DrawerGap。
-                        transformOrigin = TransformOrigin(0f, 0.5f)
-                        // 半径量化到整 dp：同一实例复用，图层轮廓不再逐帧重建。
-                        val radius = (DrawerCorner.value * progress).roundToInt()
-                            .coerceIn(0, DrawerCornerSteps)
-                        if (cornerHolder[0] != radius) {
-                            cornerHolder[0] = radius
-                            shape = DrawerCardShapes[radius]
+            if (overlaySidebar) {
+                // 内容不动，侧栏盖在上面：和桌面版拉开侧栏的关系一致。
+                Box(Modifier.fillMaxSize().padding(top = hingeTopPadding)) { content() }
+                if (drawerState.progress > 0f) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(Color.Black.copy(alpha = 0.16f * drawerState.progress))
+                            // 遮罩只负责关闭，不要水波纹：整屏闪一下在深色下非常明显。
+                            .clickable(
+                                interactionSource = remember { MutableInteractionSource() },
+                                indication = null,
+                            ) { drawerState.close() },
+                    )
+                }
+                Surface(
+                    modifier = Modifier
+                        .width(drawerWidth)
+                        .fillMaxHeight()
+                        .padding(top = hingeTopPadding)
+                        .offset { IntOffset((drawerWidthPx * (drawerState.progress - 1f)).roundToInt(), 0) }
+                        // 跟着拉开进度淡入：只拉几十像素就松手时，列表不会「闪一下」。
+                        .graphicsLayer { alpha = drawerContentAlpha(drawerState.progress) },
+                    shape = RoundedCornerShape(topEnd = 20.dp, bottomEnd = 20.dp),
+                    color = MaterialTheme.colorScheme.surfaceContainerLow,
+                    // 浅色下靠投影与内容分开；深色由色阶分层，不叠阴影。
+                    shadowElevation = if (MaterialTheme.colorScheme.background.luminance() < 0.5f) 0.dp else 8.dp,
+                ) {
+                    drawerContent()
+                }
+            } else {
+                // 抽屉在内容下层：关闭时整体移到屏幕左侧之外。
+                Box(
+                    modifier = Modifier
+                        .width(drawerWidth)
+                        .fillMaxHeight()
+                        .offset { IntOffset((drawerWidthPx * (drawerState.progress - 1f)).roundToInt(), 0) }
+                        .padding(top = hingeTopPadding)
+                        // 跟着拉开进度淡入：只拉几十像素就松手时，列表不会「闪一下」。
+                        .graphicsLayer { alpha = drawerContentAlpha(drawerState.progress) }
+                        // 抽屉底色比内容卡片深：卡片缩小时四周的留白才看得出层次。
+                        .background(MaterialTheme.colorScheme.surfaceContainerLow),
+                ) {
+                    drawerContent()
+                }
+
+                // 内容层：关闭时全屏；抽屉打开时缩成一张悬浮卡片（上下留白），推向右只留 DrawerEdge 宽的圆角边缘。
+                // 圆角只在整个 dp 变化时换实例，不在每帧新建 shape（见 DrawerCardShapes）。
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .offset { IntOffset((pushPx * drawerState.progress).roundToInt(), 0) }
+                        .padding(top = hingeTopPadding)
+                        .graphicsLayer {
+                            val progress = drawerState.progress
+                            // 收起态全屏；抽屉打开时内容区缩成一张悬浮卡片（上下留白）。
+                            val scale = 1f - 0.03f * progress
+                            scaleX = scale
+                            scaleY = scale
+                            // 以左边缘为锚点：卡片左边缘不因缩放右移，和抽屉之间只留 DrawerGap。
+                            transformOrigin = TransformOrigin(0f, 0.5f)
+                            // 主界面保持固定圆角，关闭抽屉时由全屏底色遮住边角。
+                            shape = DrawerCardShapes[DrawerCornerSteps]
+                            clip = true
                         }
-                        clip = true
-                    }
-                    .background(MaterialTheme.colorScheme.surfaceContainerLow),
-            ) {
-                content()
+                        .background(MaterialTheme.colorScheme.surfaceContainerLow),
+                ) {
+                    content()
+                }
             }
 
             // 返回手势：API 34+ 走预测性返回，抽屉跟着手指退；更低版本保留普通 BackHandler。
@@ -556,6 +601,8 @@ private fun TwoPaneLayout(
     }
 
     val spec = resolveTwoPaneSpec(window, hinge)
+    // 侧栏卡片与屏幕边的距离：短屏用 4dp 把高度让给正文，平板用 8dp 露出圆角。
+    val inset = if (window.isShort) ProferSpacing.xs else ProferPaneGap
     // 宽度而不是平移：内容区要真的变宽（正文行宽、表格列数都跟着变），只推出去一块空白没有意义。
     val columnWidth by animateDpAsState(
         targetValue = resolveTwoPaneListColumn(spec, listCollapsed),
@@ -563,37 +610,52 @@ private fun TwoPaneLayout(
         label = "twoPaneListColumn",
     )
 
+    // 对话界面铺满整屏，侧栏是一张浮在里面的圆角小卡（桌面 AppShell 的关系）。
+    // 不再把两栏各自包成一张卡：那样窗口边缘+两栏之间有四五条同宽的缝，看着像三块板。
     Row(
         modifier = modifier
             .fillMaxSize()
-            .background(MaterialTheme.colorScheme.surfaceContainerLow),
+            .background(MaterialTheme.colorScheme.background),
     ) {
-        // 整栏（列表 + 分隔线 + 铰链留白）一起被裁掉：内层按固定宽度排版，
-        // 动画期间会话列表不重新换行，看起来是「滑出去」而不是「被挤扁」。
+        // 整栏（列表卡 + 铰链留白 + 栏缝）一起被裁掉：内层按固定宽度排版，
+        // 动画期间会话列表不重新换行，看起来是「滑出去」而不是被挤扁。
         Box(
             Modifier
                 .width(columnWidth)
                 .fillMaxHeight()
-                .clipToBounds(),
+                .clipToBounds()
+                // 侧栏卡从状态栏下沿开始：顶部按钮与对话顶栏的标题落在同一条基线上。
+                .statusBarsPadding(),
         ) {
             // 完全收起后不再组合几百条会话行：宽度为 0 时没有可见内容，没必要留着测量。
             if (columnWidth > 0.dp) {
-                Row(Modifier.fillMaxHeight()) {
-                    Box(Modifier.width(spec.listWidth).fillMaxHeight()) { drawerContent() }
-                    // 一条 hairline 分开目录与内容：双栏靠色阶已经能分，但列表行滚动时会贴到正文上。
-                    Box(
-                        Modifier
-                            .width(ProferSizes.hairline)
-                            .fillMaxHeight()
-                            .background(MaterialTheme.colorScheme.outlineVariant),
-                    )
+                CompositionLocalProvider(LocalProferSidebarHandlesInsets provides true) {
+                Row(
+                    Modifier
+                        .fillMaxHeight()
+                        .padding(start = inset, top = inset, bottom = inset),
+                ) {
+                    // 侧栏用最亮一级 + 一条极淡描边从对话面上浮起来（深色下方向相反，同梯分层）。
+                    Surface(
+                        modifier = Modifier.width(spec.listWidth).fillMaxHeight(),
+                        // 横屏/平板上这张浮卡是画面里唯一的大圆角，16dp 太收敛，用 20dp 才立得住。
+                        shape = MaterialTheme.shapes.large,
+                        color = MaterialTheme.colorScheme.surfaceContainerLowest,
+                        border = BorderStroke(
+                            ProferSizes.hairline,
+                            MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f),
+                        ),
+                    ) { drawerContent() }
                     if (spec.hingeGap > 0.dp) {
                         Spacer(Modifier.width(spec.hingeGap))
                     }
+                    Spacer(Modifier.width(ProferPaneGap))
+                }
                 }
             }
         }
-        Box(Modifier.weight(1f).fillMaxHeight()) { content() }
+        // 对话面直接铺在窗口上，不再包一层 Surface：它本身就是「界面」，不是一张卡。
+        Box(modifier = Modifier.weight(1f).fillMaxHeight()) { content() }
     }
 }
 
@@ -601,11 +663,11 @@ private fun TwoPaneLayout(
 private const val ListPaneToggleMs = 240
 
 /**
- * 列表栏占用的总宽度（列表 + 分隔线 + 铰链留白）。收起时为 0。
- * 纯函数，便于单测：三个分量都必须随栏一起消失，否则收起后左侧会残留一条 1dp 竖线或 16dp 空白。
+ * 列表栏占用的总宽度（列表卡片 + 铰链留白 + 栏缝）。收起时为 0。
+ * 纯函数，便于单测：每个分量都必须随栏一起消失，否则收起后左侧会残留一条缝或空白。
  */
 internal fun resolveTwoPaneListColumn(spec: TwoPaneSpec, collapsed: Boolean): Dp =
-    if (collapsed) 0.dp else spec.listWidth + ProferSizes.hairline + spec.hingeGap
+    if (collapsed) 0.dp else spec.listWidth + spec.hingeGap + ProferPaneGap
 
 /** 双栏几何：列表宽度与铰链留白。纯函数，便于单测折叠屏的各种铰链位置。 */
 internal data class TwoPaneSpec(val listWidth: androidx.compose.ui.unit.Dp, val hingeGap: androidx.compose.ui.unit.Dp)

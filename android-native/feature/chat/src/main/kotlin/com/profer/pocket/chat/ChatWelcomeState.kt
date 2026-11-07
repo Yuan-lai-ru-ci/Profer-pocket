@@ -21,6 +21,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.dp
+import com.profer.pocket.designsystem.adaptive.rememberProferWindowSize
 import com.profer.pocket.designsystem.component.ProferMark
 import com.profer.pocket.designsystem.component.proferFloatingSurface
 import com.profer.pocket.designsystem.theme.ProferSizes
@@ -37,20 +39,38 @@ internal fun ChatWelcomeState(
     hasDraftTarget: Boolean = true,
     onStartConversation: () -> Unit = {},
 ) {
+    // 手机横屏只有 360dp 高，按竖屏的 32dp 上下留白 + 24dp 组间距，内容会超出可视区，
+    // 滚到中间时按钮正好被输入条挡住。短屏换成紧凑档，一屏内放得下完整内容。
+    val window = rememberProferWindowSize()
+    val shortScreen = window.isShort
+    // 建议卡：短屏一律铺成一行，两行会把第二排压到输入条下面（真机 781dp 横屏复现）。
+    // 双栏时对话列只有 420–500dp，卡片更窄，字号降一档并强制单行，否则「排查一个问题」换行、
+    // 四张卡高低不齐。竖屏仍是 2×2。
+    val suggestionColumns = if (shortScreen) 4 else 2
+    val tightSuggestions = shortScreen && window.isTwoPane
     Box(
         modifier = modifier.fillMaxSize().verticalScroll(rememberScrollState()),
         contentAlignment = Alignment.Center,
     ) {
         Column(
             modifier = Modifier.widthIn(max = ProferSizes.contentMaxWidth)
-                .padding(horizontal = ProferSpacing.xl, vertical = ProferSpacing.xxl),
+                .padding(
+                    horizontal = ProferSpacing.xl,
+                    vertical = if (shortScreen) ProferSpacing.md else ProferSpacing.xxl,
+                ),
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(ProferSpacing.md),
+            verticalArrangement = Arrangement.spacedBy(
+                if (shortScreen) ProferSpacing.sm else ProferSpacing.md,
+            ),
         ) {
-            ProferMark(modifier = Modifier.size(ProferSizes.actionVisual))
+            ProferMark(modifier = Modifier.size(if (shortScreen) 32.dp else ProferSizes.actionVisual))
             Text(
                 text = if (offline) "让 Profer 与你同行" else "有什么想一起完成？",
-                style = MaterialTheme.typography.headlineSmall,
+                style = if (shortScreen) {
+                    MaterialTheme.typography.titleLarge
+                } else {
+                    MaterialTheme.typography.headlineSmall
+                },
                 color = MaterialTheme.colorScheme.onSurface,
                 textAlign = TextAlign.Center,
             )
@@ -58,7 +78,11 @@ internal fun ChatWelcomeState(
                 text = if (offline) "连接电脑后，在手机上继续对话与任务。" else if (agent) {
                     "说说目标，剩下的我们一起推进。"
                 } else "一个问题，一个灵感，都可以从这里开始。",
-                style = MaterialTheme.typography.bodyMedium,
+                style = if (shortScreen) {
+                    MaterialTheme.typography.bodySmall
+                } else {
+                    MaterialTheme.typography.bodyMedium
+                },
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = TextAlign.Center,
             )
@@ -82,10 +106,10 @@ internal fun ChatWelcomeState(
                     "整理思路" to "我们先一起梳理这件事的目标与实现思路",
                 )
                 Column(
-                    modifier = Modifier.padding(top = ProferSpacing.md),
+                    modifier = Modifier.padding(top = if (shortScreen) 0.dp else ProferSpacing.md),
                     verticalArrangement = Arrangement.spacedBy(ProferSpacing.sm),
                 ) {
-                    suggestions.chunked(2).forEach { row ->
+                    suggestions.chunked(suggestionColumns).forEach { row ->
                         Row(horizontalArrangement = Arrangement.spacedBy(ProferSpacing.sm)) {
                             row.forEach { (label, prompt) ->
                                 Surface(
@@ -95,8 +119,20 @@ internal fun ChatWelcomeState(
                                     color = proferFloatingSurface(),
                                     border = BorderStroke(ProferSizes.hairline, MaterialTheme.colorScheme.outlineVariant),
                                 ) {
-                                    Box(Modifier.padding(ProferSpacing.md), contentAlignment = Alignment.Center) {
-                                        Text(label, style = MaterialTheme.typography.labelLarge, textAlign = TextAlign.Center)
+                                    Box(
+                                        Modifier.padding(if (shortScreen) ProferSpacing.sm else ProferSpacing.md),
+                                        contentAlignment = Alignment.Center,
+                                    ) {
+                                        Text(
+                                            label,
+                                            style = if (tightSuggestions) {
+                                                MaterialTheme.typography.labelMedium
+                                            } else {
+                                                MaterialTheme.typography.labelLarge
+                                            },
+                                            maxLines = 1,
+                                            textAlign = TextAlign.Center,
+                                        )
                                     }
                                 }
                             }

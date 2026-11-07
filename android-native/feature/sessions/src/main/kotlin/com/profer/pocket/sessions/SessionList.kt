@@ -57,6 +57,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -78,9 +79,12 @@ import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.profer.pocket.designsystem.adaptive.LocalProferSidebarHandlesInsets
+import com.profer.pocket.designsystem.adaptive.rememberProferWindowSize
 import com.profer.pocket.designsystem.component.ProferChrome
 import com.profer.pocket.designsystem.component.ProferIconAction
 import com.profer.pocket.designsystem.component.ProferEmptyState
+import com.profer.pocket.designsystem.component.LocalProferMinTouchTarget
 import com.profer.pocket.designsystem.component.ProferMark
 import com.profer.pocket.designsystem.component.ProferStatusDot
 import com.profer.pocket.designsystem.component.rememberLongPressFeedback
@@ -135,6 +139,8 @@ fun SessionListContent(
     var fullyExpandedProjects by rememberSaveable { mutableStateOf(emptyList<String>()) }
     var defaultsApplied by rememberSaveable { mutableStateOf(false) }
     val forceExpand = state.query.isNotBlank()
+    // 横屏短屏：空态不要再用 32dp 顶部留白，栏内可用高度只剩 200dp 左右。
+    val shortScreen = rememberProferWindowSize().isShort
 
     // 首屏只展开「当前会话所在项目」：手机屏装不下多个项目同时铺开，
     // 其余项目保持收起，用户点项目头再展开。项目置顶只影响顺序，不替用户展开内容。
@@ -226,7 +232,7 @@ fun SessionListContent(
                             onPrimary = if (state.query.isBlank()) onNewSession else null,
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(top = ProferSpacing.xxl),
+                                .padding(top = if (shortScreen) 0.dp else ProferSpacing.xxl),
                         )
                     }
                 }
@@ -395,38 +401,80 @@ private fun SessionListHeader(
     onToggleSearch: () -> Unit,
     onNewSession: () -> Unit,
 ) {
+    // 短屏（手机横屏）：顶栏只占一行。320dp 的列表栏 + 1.3× 字号放不下
+    // 「Profer + 模式胶囊 + 搜索 + 新建」，宁可像桌面收窄侧栏那样只留标记，
+    // 也不把胶囊挤到第二行——多一行就少一行会话。
+    val window = rememberProferWindowSize()
+    val shortScreen = window.isShort
+    // 双栏比例化之后手机上侧栏只有 200–260dp：品牌字、箭头、16dp 内边距全部收掉，
+    // 才能把「模式胶囊 + 搜索 + 新建」压进一行。
+    val narrowPane = window.isTwoPane && window.listPaneWidth < 260.dp
+    // 260–340dp 的侧栏（1120dp 平板横屏实测 314dp）放得下品牌字，但放不下品牌字 + 带 ⇄ 的
+    // 模式胶囊 + 搜索 + 新建：1.0× 下「Profer」只剩约 50dp，被压成「Pr…」。
+    // 这一档收掉胶囊上的装饰图标（语义仍由 contentDescription 给出），把 26dp 还给品牌字。
+    val tightPane = window.isTwoPane && window.listPaneWidth < 340.dp
+    // 短屏顶栏 40dp（否则状态栏 + 48dp 就吃掉 360dp 高的 20%），常规仍是 48dp。
+    val headerTarget = if (shortScreen) 40.dp else ProferSizes.minTouchTarget
+    CompositionLocalProvider(LocalProferMinTouchTarget provides headerTarget) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .statusBarsPadding()
-            .padding(horizontal = ProferSpacing.lg, vertical = ProferSpacing.sm),
+            // 双栏时侧栏卡自己已经让开状态栏（TwoPaneLayout 标了 handlesInsets），
+            // 这里再叠一次会让按钮行比对话顶栏低一整个状态栏。
+            .then(
+                if (LocalProferSidebarHandlesInsets.current) Modifier else Modifier.statusBarsPadding(),
+            )
+            .padding(
+                horizontal = when {
+                    // 窄侧栏：左右各 12dp，模式胶囊不贴卡片边缘，三颗按钮仍然放得下。
+                    narrowPane -> ProferSpacing.md
+                    shortScreen -> ProferSpacing.md
+                    else -> ProferSpacing.lg
+                },
+                vertical = if (shortScreen) ProferSpacing.xs else ProferSpacing.sm,
+            ),
     ) {
         Row(
-            modifier = Modifier.fillMaxWidth().heightIn(min = ProferSizes.minTouchTarget),
+            modifier = Modifier.fillMaxWidth().heightIn(min = headerTarget),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(ProferSpacing.sm),
         ) {
             // 1.3× 起标题就会和模式胶囊抢空间（实测 1.3× 时「Profer」被切掉一半），
             // 到这一档就把胶囊挪到第二行，标题保住整词。
             val largeFont = LocalDensity.current.fontScale >= 1.3f
-            ProferMark(size = ProferSizes.icon)
-            Text(
-                text = "Profer",
-                style = MaterialTheme.typography.titleLarge,
-                color = MaterialTheme.colorScheme.onSurface,
-                maxLines = 1,
-                softWrap = false,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f),
-            )
+            if (!narrowPane) {
+                ProferMark(size = ProferSizes.icon)
+            }
+            // 短屏横屏收掉品牌字：320dp 列表栏实测放不下「Profer + Agent + 搜索 + 新建」，
+            // 品牌字会被压成 0 宽（真机 781dp 横屏复现）。mark 已经足够标识，
+            // 和桌面版收窄侧栏时的取舍一致；平板竖屏/横屏（非短屏）仍显示。
+            // 窄侧栏里品牌字收掉后，左侧不要再留一段空白把整组按钮推右：
+            // 模式胶囊贴左，搜索/新建靠右，中间由后面的 Spacer 撑开。
+            if (shortScreen && !narrowPane) {
+                Spacer(Modifier.weight(1f))
+            } else if (!narrowPane) {
+                Text(
+                    text = "Profer",
+                    style = MaterialTheme.typography.titleLarge,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1,
+                    softWrap = false,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f),
+                )
+            }
             // 大字号下模式按钮让到下一行，避免把品牌字挤成竖排。
-            if (!largeFont) {
+            if (!largeFont || shortScreen) {
                 DrawerModeButton(
+                    compact = tightPane,
                     chatSelected = mode == DrawerMode.Chat,
                     onToggle = {
                         onModeChange(if (mode == DrawerMode.Chat) DrawerMode.Agent else DrawerMode.Chat)
                     },
                 )
+            }
+            if (narrowPane) {
+                Spacer(Modifier.weight(1f))
             }
             HeaderIconButton(
                 icon = Icons.Outlined.Search,
@@ -439,7 +487,7 @@ private fun SessionListHeader(
                 contentDescription = if (mode == DrawerMode.Chat) "新建对话" else "新建会话",
             )
         }
-        if (LocalDensity.current.fontScale >= 1.3f) {
+        if (LocalDensity.current.fontScale >= 1.3f && !shortScreen) {
             Row(modifier = Modifier.fillMaxWidth().padding(top = ProferSpacing.xs)) {
                 DrawerModeButton(
                     chatSelected = mode == DrawerMode.Chat,
@@ -449,6 +497,7 @@ private fun SessionListHeader(
                 )
             }
         }
+    }
     }
 }
 
@@ -461,12 +510,12 @@ private fun HeaderIconButton(
 ) {
     Box(
         modifier = Modifier
-            .size(ProferSizes.minTouchTarget)
+            .size(LocalProferMinTouchTarget.current)
             .clip(CircleShape)
             .clickable(onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
-        // 可见圆与「新建」按钮同为 40dp，48dp 只做热区。
+        // 可见圆与「新建」按钮同为 40dp，热区由顶栏档位决定（常规 48、短屏 40）。
         ProferChrome(
             modifier = Modifier.size(ProferSizes.actionVisual).clip(CircleShape),
             pill = true,
@@ -491,7 +540,7 @@ private fun HeaderIconButton(
 private fun NewSessionButton(onClick: () -> Unit, contentDescription: String) {
     Box(
         modifier = Modifier
-            .size(ProferSizes.minTouchTarget)
+            .size(LocalProferMinTouchTarget.current)
             .clip(CircleShape)
             .clickable(onClick = onClick),
         contentAlignment = Alignment.Center,
@@ -592,6 +641,7 @@ private fun ProjectHeader(
     // 菜单开合不参与状态恢复：进程重建后不应该自己弹出一个操作菜单。
     var menuOpen by remember(group.id) { mutableStateOf(false) }
     val longPressFeedback = rememberLongPressFeedback()
+    val dense = rememberProferWindowSize().isShort
     val rotation by animateFloatAsState(
         targetValue = if (expanded) 0f else -90f,
         animationSpec = tween(durationMillis = 220, easing = ClearEase),
@@ -603,7 +653,7 @@ private fun ProjectHeader(
                 .fillMaxWidth()
                 // sticky 项目头会盖在会话行上，底色必须不透明。
                 .background(MaterialTheme.colorScheme.surfaceContainerLow)
-                .padding(top = ProferSpacing.xs)
+                .padding(top = if (dense) 0.dp else ProferSpacing.xs)
                 .padding(horizontal = ProferSpacing.xs)
                 .clip(MaterialTheme.shapes.medium)
                 .combinedClickable(
@@ -616,7 +666,10 @@ private fun ProjectHeader(
                     },
                 )
                 .heightIn(min = ProferSizes.minTouchTarget)
-                .padding(horizontal = ProferSpacing.xs, vertical = ProferSpacing.sm),
+                .padding(
+                    horizontal = ProferSpacing.xs,
+                    vertical = if (dense) 0.dp else ProferSpacing.sm,
+                ),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Box(
@@ -922,6 +975,8 @@ private fun SessionRow(
     val longPressFeedback = rememberLongPressFeedback()
     // 大字号下标题会换行，子会话开关必须让到下一行，否则会把标题挤成两截。
     val largeFont = LocalDensity.current.fontScale >= 1.5f
+    // 短屏列表要装下更多会话：行高收到 48dp（热区下限），只去掉上下留白，不缩触控区。
+    val dense = rememberProferWindowSize().isShort
     // 行首状态条只给根会话行；子会话行用左侧图标上色（与桌面同一分层）。
     val accent = if (depth == 0) sessionStatusAccent(session.status) else null
     val statusLabel = sessionStatusLabel(session.status)
@@ -929,7 +984,7 @@ private fun SessionRow(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = ProferSpacing.xs, vertical = ProferSpacing.xxs)
+                .padding(horizontal = ProferSpacing.xs, vertical = if (dense) 0.dp else ProferSpacing.xxs)
                 .clip(MaterialTheme.shapes.medium)
                 .combinedClickable(
                     onClick = onClick,
@@ -963,8 +1018,8 @@ private fun SessionRow(
                 .padding(
                     start = ProferSpacing.xl + (if (depth > 0) ProferSpacing.lg else 0.dp),
                     end = ProferSpacing.sm,
-                    top = ProferSpacing.xs,
-                    bottom = ProferSpacing.xs,
+                    top = if (dense) 0.dp else ProferSpacing.xs,
+                    bottom = if (dense) 0.dp else ProferSpacing.xs,
                 ),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(ProferSpacing.sm),
@@ -1039,17 +1094,34 @@ private fun SessionRow(
                     }
                 }
             } else {
+                // 大字号（≥1.5×）下标题会换行：置顶/定时图标默认垂直居中，
+                // 两行标题时就会掉到第二行旁边（2.0× 真机复现）。
+                // 按首行行盒高度把图标下移，让它始终跟在第一行左侧。
+                var titleLines by remember(session.id) { mutableStateOf(1) }
+                val firstLineCenter = with(LocalDensity.current) {
+                    (MaterialTheme.typography.bodyMedium.lineHeight.toDp() - ProferSizes.iconSmall) / 2
+                }
+                val iconOffset = if (titleLines > 1) {
+                    Modifier.padding(top = firstLineCenter.coerceAtLeast(0.dp))
+                } else {
+                    Modifier
+                }
                 Column(
                     modifier = Modifier.weight(1f),
                     verticalArrangement = Arrangement.spacedBy(ProferSpacing.xxs),
                 ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
+                    // 图标用 Top 对齐 + 半个行盒的内边距才能落在首行中线上：
+                    // 继续 CenterVertically 时，padding 会被居中抵消掉一半，反而掉到两行之间。
+                    Row(
+                        verticalAlignment = if (titleLines > 1) Alignment.Top else Alignment.CenterVertically,
+                    ) {
                         if (session.sourcedByAutomation) {
                             Icon(
                                 imageVector = Icons.Outlined.Schedule,
                                 contentDescription = "定时任务会话",
                                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
                                 modifier = Modifier
+                                    .then(iconOffset)
                                     .size(ProferSizes.iconSmall)
                                     .padding(end = ProferSpacing.xxs),
                             )
@@ -1060,6 +1132,7 @@ private fun SessionRow(
                                 contentDescription = "项目内置顶",
                                 tint = MaterialTheme.colorScheme.primary,
                                 modifier = Modifier
+                                    .then(iconOffset)
                                     .size(ProferSizes.iconSmall)
                                     .padding(end = ProferSpacing.xxs),
                             )
@@ -1072,6 +1145,7 @@ private fun SessionRow(
                             color = MaterialTheme.colorScheme.onSurface,
                             maxLines = 3,
                             overflow = TextOverflow.Ellipsis,
+                            onTextLayout = { titleLines = it.lineCount },
                             modifier = Modifier.weight(1f),
                         )
                     }
@@ -1193,16 +1267,24 @@ private fun SessionListDock(
     } else {
         ProferThemeExtras.semantic.warning
     }
+    val window = rememberProferWindowSize()
+    val narrowPane = window.isTwoPane && window.listPaneWidth < 260.dp
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .navigationBarsPadding()
-            .padding(horizontal = ProferSpacing.lg, vertical = ProferSpacing.md),
+            .padding(
+                horizontal = if (narrowPane) ProferSpacing.sm else ProferSpacing.lg,
+                vertical = ProferSpacing.md,
+            ),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(ProferSpacing.sm),
     ) {
+        // 窄侧栏（219dp）里连接胶囊不能按内容撑开：会把设置键挤成一条竖线。
+        // 用 weight(1f, fill = false) 让它在剩余宽度里省略，设置键保住 48dp 热区。
         Box(
             modifier = Modifier
+                .weight(1f)
                 .heightIn(min = ProferSizes.minTouchTarget)
                 .clip(CircleShape)
                 .clickable(onClick = onOpenConnection),
@@ -1219,7 +1301,10 @@ private fun SessionListDock(
                 ) {
                     ProferStatusDot(color = statusColor, pulsing = !state.connected, size = 6.dp)
                     Text(
-                        text = if (state.connected) {
+                        // 窄侧栏放不下「已连接 · 设备名」：只留状态，设备详情在连接页里看。
+                        text = if (narrowPane) {
+                            if (state.connected) "已连接" else "未连接"
+                        } else if (state.connected) {
                             "已连接 · " + state.deviceLabel.substringBefore(" · ").ifBlank { "本机" }
                         } else {
                             "未连接"
@@ -1232,7 +1317,6 @@ private fun SessionListDock(
                 }
             }
         }
-        Spacer(modifier = Modifier.weight(1f))
         ProferIconAction(
             icon = Icons.Outlined.Settings,
             contentDescription = "设置",

@@ -232,10 +232,12 @@ fun ProferIconAction(
     modifier: Modifier = Modifier,
     tint: Color = MaterialTheme.colorScheme.onSurfaceVariant,
     size: Dp = ProferSizes.minTouchTarget,
+    /** 是否带浮层圆底。横屏紧凑顶栏用平铺图标，与桌面版顶栏一致。 */
+    chrome: Boolean = true,
 ) {
     Box(
         modifier = modifier
-            .size(size.coerceAtLeast(ProferSizes.minTouchTarget))
+            .size(size.coerceAtLeast(LocalProferMinTouchTarget.current))
             // 先 clip 再 clickable：否则 ripple 按节点外框画成矩形，圆形图标按钮会闪一个方块。
             .clip(CircleShape)
             .clickable(role = Role.Button, onClick = onClick)
@@ -244,8 +246,19 @@ fun ProferIconAction(
             .semantics { this.contentDescription = contentDescription },
         contentAlignment = Alignment.Center,
     ) {
-        ProferChrome(modifier = Modifier.size(ProferSizes.actionVisual), pill = true) {
-            Box(contentAlignment = Alignment.Center) {
+        if (chrome) {
+            ProferChrome(modifier = Modifier.size(ProferSizes.actionVisual), pill = true) {
+                Box(contentAlignment = Alignment.Center) {
+                    Icon(
+                        imageVector = icon,
+                        contentDescription = null,
+                        tint = tint,
+                        modifier = Modifier.size(ProferSizes.icon),
+                    )
+                }
+            }
+        } else {
+            Box(modifier = Modifier.size(ProferSizes.actionVisual), contentAlignment = Alignment.Center) {
                 Icon(
                     imageVector = icon,
                     contentDescription = null,

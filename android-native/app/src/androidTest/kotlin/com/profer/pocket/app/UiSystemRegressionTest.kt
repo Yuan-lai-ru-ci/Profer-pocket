@@ -27,6 +27,8 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.profer.pocket.chat.ChatPreviewData
 import com.profer.pocket.chat.ChatScreen
 import com.profer.pocket.chat.ChatMessage
+import com.profer.pocket.chat.ContentBlock
+import com.profer.pocket.chat.ThinkingBlock
 import com.profer.pocket.chat.ToolBlock
 import com.profer.pocket.chat.ToolKind
 import com.profer.pocket.chat.ConversationMessage
@@ -39,6 +41,7 @@ import com.profer.pocket.designsystem.theme.ProferTheme
 import com.profer.pocket.settings.SettingsScreen
 import com.profer.pocket.settings.ThemePreference
 import com.profer.pocket.model.ContextUsage
+import com.profer.pocket.model.ScreenOrientation
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Rule
@@ -148,8 +151,46 @@ class UiSystemRegressionTest {
         rule.runOnIdle { assertEquals(1, creates) }
     }
 
+    @Test fun chat_tool_activity_is_folded_and_expands() {
+        // Chat 页与桌面一致：工具行逐条折叠，点开才看参数与结果。
+        val state = ConversationUiState(
+            conversationId = "c1",
+            title = "对话",
+            messages = listOf(
+                ConversationMessage.Assistant(
+                    id = "a1",
+                    text = "好了",
+                    tools = listOf(
+                        ToolBlock(
+                            id = "t1",
+                            kind = ToolKind.Read,
+                            title = "读取文件",
+                            subtitle = "src/a.kt",
+                            status = ToolStatus.Success,
+                            input = """{"file_path":"src/a.kt"}""",
+                            output = "fun main() {}",
+                        ),
+                    ),
+                ),
+            ),
+        )
+        rule.setContent {
+            ProferTheme(darkTheme = false) {
+                ConversationScreen(
+                    state = state, draft = "", drawerContent = { _ -> },
+                    onInputChange = {}, onSend = {}, onStop = {}, onNewConversation = {},
+                )
+            }
+        }
+        rule.onNodeWithText("读取文件", substring = true).assertIsDisplayed()
+        rule.onNodeWithText("fun main()", substring = true).assertDoesNotExist()
+        rule.onNodeWithText("读取文件", substring = true).performClick()
+        rule.onNodeWithText("fun main()", substring = true).assertIsDisplayed()
+    }
+
     @Test fun tool_only_turn_has_no_copy_action() {
         // 纯工具回合没有正文：复制按钮不能变成一个复制空串的死图标。
+        // 回合结束后与桌面一样折成一行「执行过程」，工具卡展开后才可见。
         val state = ChatPreviewData.connected.copy(
             streaming = false,
             pendingPermission = null,
@@ -168,8 +209,195 @@ class UiSystemRegressionTest {
                     onAllowPermission = {}, onDenyPermission = {}, onOpenSettings = {})
             }
         }
-        rule.onNodeWithText("读取 ws-client.ts").assertIsDisplayed()
+        rule.onNodeWithText("执行过程：1 次工具调用").assertIsDisplayed()
+        rule.onNodeWithText("读取 ws-client.ts", substring = true).assertDoesNotExist()
         rule.onNodeWithContentDescription("复制回复").assertDoesNotExist()
+        // 展开过程组后工具卡回到原位。
+        rule.onNodeWithText("执行过程：1 次工具调用").performClick()
+        rule.onNodeWithText("读取 ws-client.ts", substring = true).assertIsDisplayed()
+    }
+
+    @Test fun completed_turn_folds_thinking_and_tools_into_one_row() {
+        val state = ChatPreviewData.connected.copy(
+            streaming = false,
+            pendingPermission = null,
+            messages = listOf(
+                ChatMessage.Assistant(
+                    id = "folded",
+                    thinking = ThinkingBlock("18 秒", "先确认游标是在哪一步推进的。"),
+                    tools = listOf(
+                        ToolBlock("t1", ToolKind.Read, "读取 ws-client.ts", "src/ws-client.ts", ToolStatus.Success),
+                    ),
+                    blocks = listOf(ContentBlock.Paragraph("结论：游标推进得太早。")),
+                ),
+            ),
+        )
+        rule.setContent {
+            ProferTheme(darkTheme = false) {
+                ChatScreen(state = state, draft = "", drawerContent = { _ -> }, onInputChange = {}, onSend = {}, onStop = {},
+                    onAllowPermission = {}, onDenyPermission = {}, onOpenSettings = {})
+            }
+        }
+        rule.onNodeWithText("执行过程：1 次工具调用，1 段思考").assertIsDisplayed()
+        rule.onNodeWithText("读取 ws-client.ts", substring = true).assertDoesNotExist()
+        rule.onNodeWithText("先确认游标", substring = true).assertDoesNotExist()
+        rule.onNodeWithText("执行过程：1 次工具调用，1 段思考").performClick()
+        rule.onNodeWithText("读取 ws-client.ts", substring = true).assertIsDisplayed()
+        rule.onNodeWithText("先确认游标", substring = true).assertIsDisplayed()
+    }
+
+    @Test fun streaming_process_expands_then_folds_when_turn_completes() {
+        var streaming by mutableStateOf(true)
+        val message = ChatMessage.Assistant(
+            id = "live",
+            thinking = ThinkingBlock("18 秒", "先确认游标是在哪一步推进的。"),
+            tools = listOf(
+                ToolBlock("t1", ToolKind.Read, "读取 ws-client.ts", "src/ws-client.ts", ToolStatus.Running),
+            ),
+            blocks = listOf(ContentBlock.Paragraph("结论：游标推进得太早。")),
+            streaming = true,
+        )
+        rule.setContent {
+            ProferTheme(darkTheme = false) {
+                ChatScreen(
+                    state = ChatPreviewData.connected.copy(
+                        streaming = streaming,
+                        pendingPermission = null,
+                        messages = listOf(message.copy(streaming = streaming)),
+                    ),
+                    draft = "", drawerContent = { _ -> }, onInputChange = {}, onSend = {}, onStop = {},
+                    onAllowPermission = {}, onDenyPermission = {}, onOpenSettings = {},
+                )
+            }
+        }
+        // 流式中默认展开：正在做什么要看得见。
+        rule.onNodeWithText("读取 ws-client.ts", substring = true).assertIsDisplayed()
+        rule.runOnIdle { streaming = false }
+        rule.mainClock.advanceTimeBy(3_000)
+        // 回合结束后自动收起，只留一行摘要；用户点开仍能看到过程。
+        rule.onNodeWithText("读取 ws-client.ts", substring = true).assertDoesNotExist()
+        rule.onNodeWithText("执行过程：1 次工具调用，1 段思考").assertIsDisplayed()
+    }
+
+    @Test fun thinking_without_tools_still_folds_into_process_group() {
+        // 桌面口径：只要还有正文，思考就属于「执行过程」，不单独铺一张思考卡。
+        val state = ChatPreviewData.connected.copy(
+            streaming = false,
+            pendingPermission = null,
+            messages = listOf(
+                ChatMessage.Assistant(
+                    id = "thinking-with-text",
+                    thinking = ThinkingBlock("18 秒", "先确认游标是在哪一步推进的。"),
+                    blocks = listOf(ContentBlock.Paragraph("结论：游标推进得太早。")),
+                ),
+            ),
+        )
+        rule.setContent {
+            ProferTheme(darkTheme = false) {
+                ChatScreen(state = state, draft = "", drawerContent = { _ -> }, onInputChange = {}, onSend = {}, onStop = {},
+                    onAllowPermission = {}, onDenyPermission = {}, onOpenSettings = {})
+            }
+        }
+        rule.onNodeWithText("执行过程：1 段思考").assertIsDisplayed()
+        rule.onNodeWithText("先确认游标", substring = true).assertDoesNotExist()
+        // 正文在过程组外面，不被一起折进去。
+        rule.onNodeWithText("结论：游标推进得太早。").assertIsDisplayed()
+        rule.onNodeWithText("执行过程：1 段思考").performClick()
+        rule.onNodeWithText("先确认游标", substring = true).assertIsDisplayed()
+    }
+
+    @Test fun multi_step_turn_folds_into_one_process_row() {
+        // 一轮七八步（每步一段思考 + 一次工具调用）必须收成一行过程摘要；
+        // 逐步一行是「非常幽默」的那版：手机上一屏全是重复的「执行过程：1 次工具调用，1 段思考」。
+        val steps = (1..4).map { index ->
+            ChatMessage.Assistant(
+                id = "step-$index",
+                thinking = ThinkingBlock("3 秒", "第 $index 步：先确认第 $index 处调用。"),
+                tools = listOf(
+                    ToolBlock("t$index", ToolKind.Read, "读取 file$index.kt", "src/file$index.kt", ToolStatus.Success),
+                ),
+            )
+        }
+        val state = ChatPreviewData.connected.copy(
+            streaming = false,
+            pendingPermission = null,
+            messages = listOf(ChatMessage.Turn("step-1", steps)),
+        )
+        rule.setContent {
+            ProferTheme(darkTheme = false) {
+                ChatScreen(state = state, draft = "", drawerContent = { _ -> }, onInputChange = {}, onSend = {}, onStop = {},
+                    onAllowPermission = {}, onDenyPermission = {}, onOpenSettings = {})
+            }
+        }
+        rule.onNodeWithText("执行过程：4 次工具调用，4 段思考").assertIsDisplayed()
+        rule.onNodeWithText("执行过程：1 次工具调用，1 段思考").assertDoesNotExist()
+        rule.onNodeWithText("读取 file4.kt", substring = true).assertDoesNotExist()
+
+        // 展开：默认只铺最近三步，更早的折在「还有 1 步过程」里。
+        rule.onNodeWithText("执行过程：4 次工具调用，4 段思考").performClick()
+        rule.onNodeWithText("读取 file4.kt", substring = true).assertIsDisplayed()
+        rule.onNodeWithText("读取 file1.kt", substring = true).assertDoesNotExist()
+        rule.onNodeWithText("还有 1 步过程").assertIsDisplayed()
+        rule.onNodeWithText("还有 1 步过程").performClick()
+        rule.onNodeWithText("读取 file1.kt", substring = true).assertIsDisplayed()
+    }
+
+    @Test fun multi_step_turn_ends_with_answer_outside_group() {
+        // 中间步骤的说明跟着过程折叠，最后一步的正文留在组外——答案不能被折进去。
+        val state = ChatPreviewData.connected.copy(
+            streaming = false,
+            pendingPermission = null,
+            messages = listOf(
+                ChatMessage.Turn(
+                    id = "answer-1",
+                    steps = listOf(
+                        ChatMessage.Assistant(
+                            id = "answer-1",
+                            thinking = ThinkingBlock("3 秒", "先读配置。"),
+                            tools = listOf(ToolBlock("t1", ToolKind.Read, "读取 config.kt", "src/config.kt", ToolStatus.Success)),
+                            blocks = listOf(ContentBlock.Paragraph("我先读一下配置。")),
+                        ),
+                        ChatMessage.Assistant(
+                            id = "answer-2",
+                            thinking = ThinkingBlock("2 秒", "可以回答了。"),
+                            blocks = listOf(ContentBlock.Paragraph("结论：游标推进得太早。")),
+                        ),
+                    ),
+                ),
+            ),
+        )
+        rule.setContent {
+            ProferTheme(darkTheme = false) {
+                ChatScreen(state = state, draft = "", drawerContent = { _ -> }, onInputChange = {}, onSend = {}, onStop = {},
+                    onAllowPermission = {}, onDenyPermission = {}, onOpenSettings = {})
+            }
+        }
+        rule.onNodeWithText("执行过程：1 次工具调用，2 段思考").assertIsDisplayed()
+        rule.onNodeWithText("结论：游标推进得太早。").assertIsDisplayed()
+        rule.onNodeWithText("我先读一下配置。").assertDoesNotExist()
+    }
+
+    @Test fun thinking_only_turn_is_promoted_and_visible() {
+        // 思考是本轮唯一产出：不能折成一行「执行过程：1 段思考」了事。
+        val state = ChatPreviewData.connected.copy(
+            streaming = false,
+            pendingPermission = null,
+            messages = listOf(
+                ChatMessage.Assistant(
+                    id = "thinking-only-reply",
+                    thinking = ThinkingBlock("18 秒", "模型只回了一段思考。"),
+                ),
+            ),
+        )
+        rule.setContent {
+            ProferTheme(darkTheme = false) {
+                ChatScreen(state = state, draft = "", drawerContent = { _ -> }, onInputChange = {}, onSend = {}, onStop = {},
+                    onAllowPermission = {}, onDenyPermission = {}, onOpenSettings = {})
+            }
+        }
+        rule.onNodeWithText("执行过程：1 段思考").assertDoesNotExist()
+        rule.onNodeWithText("思考摘要").assertIsDisplayed()
+        rule.onNodeWithText("模型只回了一段思考。", substring = true).assertIsDisplayed()
     }
 
     @Test fun context_usage_ring_needs_data() {
@@ -248,6 +476,7 @@ class UiSystemRegressionTest {
                             permissionAlertsEnabled = true, onPermissionAlertsChange = {},
                             autoReconnect = true, onAutoReconnectChange = {},
                             backgroundConnection = false, onBackgroundConnectionChange = {},
+                            screenOrientation = ScreenOrientation.System, onScreenOrientationChange = {},
                             connected = false, deviceLabel = "Mac", onOpenConnection = {}, onBack = {},
                         )
                     }
