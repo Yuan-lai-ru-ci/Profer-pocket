@@ -1,8 +1,10 @@
 package com.profer.pocket.app
 
 import com.profer.pocket.chat.ChatMessage
+import com.profer.pocket.chat.ConversationMessage
 import com.profer.pocket.designsystem.component.ToolStatus
 import com.profer.pocket.model.ChatEntry
+import com.profer.pocket.model.ChatToolActivity
 import com.profer.pocket.model.ConnectionStatus
 import com.profer.pocket.model.ConversationSummary
 import com.profer.pocket.model.SessionChat
@@ -10,6 +12,7 @@ import com.profer.pocket.model.ToolCall
 import com.profer.pocket.model.ChatMessage as DomainChatMessage
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotSame
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -44,6 +47,65 @@ class UiMappingProjectionTest {
                 at = 1_700_000_000_000 + index,
             )
         }
+    }
+
+    @Test
+    fun `Chat 工具活动映射为可展开的工具卡`() {
+        val message = DomainChatMessage(
+            id = "a1",
+            role = "assistant",
+            content = "好了",
+            createdAt = 1,
+            toolActivities = listOf(
+                ChatToolActivity(
+                    toolCallId = "t1",
+                    toolName = "Read",
+                    done = true,
+                    input = """{"file_path":"src/a.kt"}""",
+                    target = "src/a.kt",
+                    result = "fun main() {}",
+                ),
+                ChatToolActivity(toolCallId = "t2", toolName = "Bash"),
+                ChatToolActivity(
+                    toolCallId = "t3",
+                    toolName = "Bash",
+                    done = true,
+                    isError = true,
+                    result = "exit 1",
+                ),
+            ),
+        )
+        val projected = conversation("c1", listOf(message)).messages.single() as ConversationMessage.Assistant
+
+        assertEquals(listOf("读取文件", "执行命令", "执行命令"), projected.tools.map { it.title })
+        assertEquals("src/a.kt", projected.tools[0].subtitle)
+        assertEquals(ToolStatus.Success, projected.tools[0].status)
+        assertEquals("fun main() {}", projected.tools[0].output)
+        assertEquals(ToolStatus.Running, projected.tools[1].status)
+        assertEquals(ToolStatus.Error, projected.tools[2].status)
+        assertEquals("exit 1", projected.tools[2].error)
+        assertNull(projected.tools[2].output)
+    }
+
+    @Test
+    fun `Chat 流式工具活动直接上屏`() {
+        val state = UiMapping.conversationUiState(
+            conversation = ConversationSummary(id = "c1", title = "对话"),
+            messages = emptyList(),
+            stream = com.profer.pocket.model.ChatStream(
+                conversationId = "c1",
+                text = "",
+                running = true,
+                toolActivities = listOf(
+                    ChatToolActivity(toolCallId = "t1", toolName = "Grep", done = true, result = "3 处匹配"),
+                ),
+            ),
+            status = status,
+        )
+
+        assertEquals(1, state.streamTools.size)
+        assertEquals("搜索内容", state.streamTools.single().title)
+        assertEquals(ToolStatus.Success, state.streamTools.single().status)
     }
 
     @Test

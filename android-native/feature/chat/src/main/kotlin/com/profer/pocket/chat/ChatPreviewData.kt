@@ -146,6 +146,42 @@ object ChatPreviewData {
     )
 
     /**
+     * 富文本验收样本：正文文件 chip + Markdown 表格。
+     * 窄屏上这两块最容易退化，改排版时拿它对照。
+     */
+    val richText: ChatUiState = connected.copy(
+        streaming = false,
+        pendingPermission = null,
+        messages = listOf(
+            ChatMessage.User(
+                id = "rich-u1",
+                text = "重连丢消息修好了吗？把改动点列一下。",
+                meta = "22:31 · 已送达",
+            ),
+            ChatMessage.Assistant(
+                id = "rich-a1",
+                blocks = listOf(
+                    ContentBlock.Paragraph(
+                        "改在 `/Users/mac/profer/profer-main/apps/electron/src/renderer/lib/ws-client.ts:42` 的重连分支，" +
+                            "补了 `ws-client.test.ts` 的用例；桌面端只动了这一处，调度层没碰。",
+                    ),
+                    ContentBlock.Table(
+                        headers = listOf("文件", "改动", "状态"),
+                        rows = listOf(
+                            listOf("ws-client.ts", "+18 −4", "通过"),
+                            listOf("ws-client.test.ts", "+32", "新增 3 个用例"),
+                            listOf("session-store.ts", "+2 −2", "仅类型调整"),
+                        ),
+                    ),
+                    ContentBlock.Bullets(
+                        listOf("未提交改动保持原样", "移动端只读，不碰桌面工作树"),
+                    ),
+                ),
+            ),
+        ),
+    )
+
+    /**
      * 每个会话各自的内容与状态。切换会话时 UI 不应只换标题。
      */
     fun sessionStates(): Map<String, ChatUiState> = mapOf(
@@ -227,6 +263,107 @@ object ChatPreviewData {
             messages = emptyList(),
             streaming = false,
             pendingPermission = null,
+        ),
+    )
+
+    /**
+     * 一轮多步执行：每步一段思考 + 一次工具调用，末尾一段答案。
+     * 用来验收「整轮只有一个过程组」，也是截图验收的稳定样本。
+     */
+    val multiStepTurn: ChatUiState = connected.copy(
+        title = "排查 MCP 工具超时",
+        streaming = false,
+        pendingPermission = null,
+        messages = listOf(
+            ChatMessage.User(
+                id = "turn-u1",
+                text = "移动端点开工具卡之后时间很长才出结果，帮我看看是不是超时配错了。",
+                meta = "23:12 · 已送达",
+            ),
+            ChatMessage.Turn(
+                id = "turn-a1",
+                steps = listOf(
+                    ChatMessage.Assistant(
+                        id = "turn-a1",
+                        thinking = ThinkingBlock("6 秒", "先看工具注册里的超时配置，确认移动端走的是哪条链路。"),
+                        tools = listOf(
+                            ToolBlock(
+                                id = "tt1",
+                                kind = ToolKind.Search,
+                                title = "搜索内容",
+                                subtitle = "timeout",
+                                status = ToolStatus.Success,
+                                input = "{\n  \"pattern\": \"timeout\"\n}",
+                                output = "8 处匹配 · 3 个文件",
+                            ),
+                        ),
+                    ),
+                    ChatMessage.Assistant(
+                        id = "turn-a2",
+                        thinking = ThinkingBlock("4 秒", "读到 ws-client 里 30 秒的默认值，和桌面对不上。"),
+                        tools = listOf(
+                            ToolBlock(
+                                id = "tt2",
+                                kind = ToolKind.Read,
+                                title = "读取 ws-client.ts",
+                                subtitle = "src/renderer/pocket/ws-client.ts",
+                                status = ToolStatus.Success,
+                                output = "const TOOL_TIMEOUT_MS = 30_000",
+                            ),
+                        ),
+                    ),
+                    ChatMessage.Assistant(
+                        id = "turn-a3",
+                        thinking = ThinkingBlock("5 秒", "再看移动端这一侧的读取路径，确认有没有二次等待。"),
+                        tools = listOf(
+                            ToolBlock(
+                                id = "tt3",
+                                kind = ToolKind.Read,
+                                title = "读取 PocketRepository.kt",
+                                subtitle = "core/data/PocketRepository.kt",
+                                status = ToolStatus.Success,
+                                output = "suspend fun toolDetail(id: String): ToolDetail",
+                            ),
+                        ),
+                    ),
+                    ChatMessage.Assistant(
+                        id = "turn-a4",
+                        thinking = ThinkingBlock("7 秒", "怀疑是详情请求挂在主线程之外的串行队列上，跑一遍现有测试。"),
+                        tools = listOf(
+                            ToolBlock(
+                                id = "tt4",
+                                kind = ToolKind.Bash,
+                                title = "运行测试",
+                                subtitle = "bun test ws-client.test.ts",
+                                status = ToolStatus.Success,
+                                output = "12 pass · 0 fail",
+                            ),
+                        ),
+                    ),
+                    ChatMessage.Assistant(
+                        id = "turn-a5",
+                        thinking = ThinkingBlock("5 秒", "改一处：详情请求不再阻塞列表投影，超时统一到 15 秒。"),
+                        tools = listOf(
+                            ToolBlock(
+                                id = "tt5",
+                                kind = ToolKind.Edit,
+                                title = "修改文件",
+                                subtitle = "PocketRepository.kt · +6 −3",
+                                status = ToolStatus.Success,
+                            ),
+                        ),
+                    ),
+                    ChatMessage.Assistant(
+                        id = "turn-a6",
+                        blocks = listOf(
+                            ContentBlock.Paragraph(
+                                "结论：详情请求被串到列表投影后面，加上 30 秒默认超时，才显得像卡死。" +
+                                    "已把详情请求拆到独立作用域，超时统一成 15 秒。",
+                            ),
+                        ),
+                    ),
+                ),
+            ),
         ),
     )
 

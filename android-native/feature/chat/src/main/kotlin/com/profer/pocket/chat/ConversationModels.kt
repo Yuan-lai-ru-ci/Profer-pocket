@@ -13,6 +13,8 @@ data class ConversationUiState(
     val messages: List<ConversationMessage> = emptyList(),
     val streamText: String = "",
     val streamReasoning: String = "",
+    /** 流式中的工具调用；与桌面 Chat 一致，开始先出现行，结束后补结果。 */
+    val streamTools: List<ToolBlock> = emptyList(),
     val streaming: Boolean = false,
     val error: String? = null,
     val offline: Boolean = false,
@@ -36,5 +38,7 @@ sealed interface ConversationMessage {
         val reasoning: String? = null,
         val error: String? = null,
         val stopped: Boolean = false,
+        /** 工具活动（历史与流式完成后的持久化版本）。 */
+        val tools: List<ToolBlock> = emptyList(),
     ) : ConversationMessage
 }

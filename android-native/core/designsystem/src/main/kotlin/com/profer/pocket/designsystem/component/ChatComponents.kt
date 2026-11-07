@@ -56,13 +56,20 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.PathEffect
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.profer.pocket.designsystem.theme.ProferCodeTextStyle
@@ -127,8 +134,11 @@ fun ProferUserMessage(
 }
 
 /**
- * 思考过程：折叠态是一行「思考 · 摘要」，展开后是一段安静的正文。
- * 摘要取正文首行，让人不展开也知道这一步在想什么；不再显示时长，避免和模型档位混淆。
+ * 思考块：与桌面 `ContentBlock.tsx` 的 ThinkingBlock 同形。
+ *
+ * 桌面不是「一行摘要 + 展开全文」，而是标题行 + 虚线框正文：正文默认只露 4 行，
+ * 超出时底部给「展开摘要」，展开后给「收起」。移动端照抄这套折叠语义——
+ * 同一个回合在电脑上看到的是四行思考，在手机上不该只剩一句被截断的摘要。
  */
 @Composable
 fun ProferThinkingCard(
@@ -136,80 +146,195 @@ fun ProferThinkingCard(
     expanded: Boolean,
     onToggle: () -> Unit,
     modifier: Modifier = Modifier,
-    /** 折叠行前缀：常态「思考」，流式「思考中」。 */
-    label: String = "思考",
-    /** 折叠行摘要；调用方可以按尾部窗口自己算，留空则取正文首行。 */
-    summary: String? = null,
-    /** 展开后的补充说明（如「思考了 12 秒」）；没有就不占位。 */
-    meta: String? = null,
 ) {
-    // 思考正文是长会话里最长的字符串：折叠摘要只需尾部/首行，
-    // 每次重组都扫一遍全文（trim + 正则替换）会白白拷贝几十 KB。
-    val resolved = remember(summary, body) {
-        summary?.takeIf { it.isNotBlank() }
-            ?: body.lineSequence().firstOrNull { it.isNotBlank() }?.trim().orEmpty()
+    val textColor = MaterialTheme.colorScheme.onSurface
+    val mutedColor = MaterialTheme.colorScheme.onSurfaceVariant
+    // 折叠判定跟着正文走：展开态不限行数，按真实行数与阈值比。
+    // 不能 remember(body)，流式每帧都换正文，按钮会跟着闪。
+    var overflowing by remember { mutableStateOf(false) }
+    val canToggle = overflowing || expanded
+
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            // 整卡可点：手机上「展开摘要」这行字太小，撑不到 48dp 触控下限。
+            .clickable(enabled = canToggle, onClick = onToggle)
+            .semantics { stateDescription = if (expanded) "已展开" else "已收起" },
+    ) {
+        Row(
+            modifier = Modifier.padding(start = 2.dp, top = 2.dp, bottom = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            Icon(
+                imageVector = Icons.Outlined.Psychology,
+                contentDescription = null,
+                tint = mutedColor,
+                modifier = Modifier.size(14.dp),
+            )
+            Text(
+                text = "思考摘要",
+                style = MaterialTheme.typography.labelMedium,
+                color = mutedColor,
+                letterSpacing = 0.5.sp,
+            )
+        }
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(8.dp))
+                .background(textColor.copy(alpha = 0.045f))
+                .dashedRoundedBorder(color = mutedColor.copy(alpha = 0.5f), cornerRadius = 8.dp)
+                .padding(horizontal = 14.dp, vertical = 10.dp),
+        ) {
+            Text(
+                text = body,
+                style = MaterialTheme.typography.bodyMedium.copy(lineHeight = 22.sp),
+                color = textColor.copy(alpha = 0.9f),
+                maxLines = if (expanded) Int.MAX_VALUE else ThinkingCollapsedLines,
+                overflow = TextOverflow.Ellipsis,
+                onTextLayout = { layout ->
+                    overflowing = if (expanded) {
+                        overflowing || layout.lineCount > ThinkingCollapsedLines
+                    } else {
+                        layout.hasVisualOverflow
+                    }
+                },
+            )
+            if (canToggle) {
+                Row(
+                    modifier = Modifier.padding(top = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(2.dp),
+                ) {
+                    Icon(
+                        imageVector = if (expanded) Icons.Outlined.ExpandLess else Icons.Outlined.ExpandMore,
+                        contentDescription = null,
+                        tint = mutedColor.copy(alpha = 0.6f),
+                        modifier = Modifier.size(14.dp),
+                    )
+                    Text(
+                        text = if (expanded) "收起" else "展开摘要",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = mutedColor.copy(alpha = 0.7f),
+                    )
+                }
+            }
+        }
     }
+}
+
+/** 折叠态露出的思考行数：与桌面 `THINKING_COLLAPSE_LINE_THRESHOLD` 一致。 */
+private const val ThinkingCollapsedLines = 4
+
+/** 虚线圆角描边：思考块的「草稿纸」观感，对应桌面 ThinkingBlock 的虚线边框。 */
+private fun Modifier.dashedRoundedBorder(
+    color: Color,
+    cornerRadius: Dp,
+    strokeWidth: Dp = 1.5.dp,
+    dashLength: Dp = 8.dp,
+    gapLength: Dp = 6.dp,
+): Modifier = drawBehind {
+    drawRoundRect(
+        color = color,
+        cornerRadius = CornerRadius(cornerRadius.toPx()),
+        style = Stroke(
+            width = strokeWidth.toPx(),
+            pathEffect = PathEffect.dashPathEffect(floatArrayOf(dashLength.toPx(), gapLength.toPx())),
+        ),
+    )
+}
+
+/**
+ * 执行过程组：把一条回复里的思考与工具调用收成一行「执行过程：N 次工具调用，M 段思考」。
+ *
+ * 与桌面同构：流式中展开（看得到正在做什么），回合结束后收起；
+ * 用户手动点过之后由调用方停止自动折叠，不再和阅读抢控制权。
+ */
+@Composable
+fun ProferProcessGroup(
+    summary: String,
+    expanded: Boolean,
+    onToggle: () -> Unit,
+    modifier: Modifier = Modifier,
+    /** 回合仍在进行：折叠行右侧保留活动指示，收起时也看得出这一轮没结束。 */
+    streaming: Boolean = false,
+    /** 折叠行末尾的工具类型图标；空则不占位。 */
+    icons: List<ImageVector> = emptyList(),
+    /** 图标没放下的工具种类数，显示为「+N」。 */
+    hiddenIconCount: Int = 0,
+    content: @Composable () -> Unit,
+) {
     Column(modifier = modifier.fillMaxWidth()) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
                 .heightIn(min = ProferSizes.minTouchTarget)
                 .clip(RoundedCornerShape(10.dp))
-                .background(MaterialTheme.colorScheme.surfaceContainerHigh)
                 .clickable(onClick = onToggle)
-                .padding(horizontal = 8.dp, vertical = 6.dp),
+                .padding(horizontal = 8.dp, vertical = 6.dp)
+                .semantics { stateDescription = if (expanded) "已展开" else "已收起" },
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
         ) {
-            Box(
+            Icon(
+                imageVector = Icons.Outlined.ExpandMore,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier
-                    .size(22.dp)
-                    .background(MaterialTheme.colorScheme.tertiaryContainer, RoundedCornerShape(7.dp)),
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(
-                    imageVector = Icons.Outlined.Psychology,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.onTertiaryContainer,
-                    modifier = Modifier.size(14.dp),
-                )
-            }
+                    .size(16.dp)
+                    .rotate(if (expanded) 180f else 0f),
+            )
             Text(
-                text = if (resolved.isBlank()) label else "$label · $resolved",
+                text = summary,
                 style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
+                // 大字号下允许折两行：摘要被截成「1 段思…」比多占一行更难读。
+                maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f),
             )
-            Icon(
-                imageVector = if (expanded) Icons.Outlined.ExpandLess else Icons.Outlined.ExpandMore,
-                contentDescription = if (expanded) "收起思考" else "展开思考",
-                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.size(18.dp),
-            )
+            if (streaming) {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(12.dp),
+                    strokeWidth = 1.5.dp,
+                    color = MaterialTheme.colorScheme.primary.copy(alpha = 0.6f),
+                )
+            }
+            if (icons.isNotEmpty() || hiddenIconCount > 0) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    icons.forEach { icon ->
+                        Icon(
+                            imageVector = icon,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+                            modifier = Modifier.size(14.dp),
+                        )
+                    }
+                    if (hiddenIconCount > 0) {
+                        Text(
+                            text = "+$hiddenIconCount",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+                        )
+                    }
+                }
+            }
         }
         AnimatedVisibility(
             visible = expanded,
             enter = fadeIn() + expandVertically(),
             exit = fadeOut() + shrinkVertically(),
         ) {
+            // 内容整体缩进到摘要文字下方：展开后仍然能看出这是同一条过程。
             Column(
-                modifier = Modifier.padding(start = 30.dp, end = 8.dp, top = 6.dp, bottom = 8.dp),
-                verticalArrangement = Arrangement.spacedBy(4.dp),
+                modifier = Modifier.padding(start = 22.dp, end = 4.dp, top = 4.dp, bottom = 6.dp),
+                verticalArrangement = Arrangement.spacedBy(ProferSpacing.xs),
             ) {
-                meta?.takeIf { it.isNotBlank() }?.let {
-                    Text(
-                        text = it,
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
-                    )
-                }
-                Text(
-                    text = body,
-                    style = MaterialTheme.typography.bodySmall.copy(lineHeight = 21.sp),
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
+                content()
             }
         }
     }

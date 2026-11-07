@@ -89,6 +89,23 @@ sealed interface ChatMessage {
         /** 本回合工具产出的图片；缩略图由宿主注入的 loader 拉取。 */
         val images: List<com.profer.pocket.model.ChatImage> = emptyList(),
     ) : ChatMessage
+
+    /**
+     * 一个回合：两条用户输入之间的助手输出。
+     *
+     * 移动端一条助手条目对应模型的一步（一段思考 + 几次工具调用），一轮排查常有七八步。
+     * 逐步渲染就是七八行「执行过程」，所以投影层把连续条目合成一个回合，
+     * 整轮只留一个过程组——与桌面 `groupIntoTurns` 同口径。
+     * 只有一步的回合仍是 [Assistant]，两条渲染路径共用 [layoutTurn]。
+     */
+    @Immutable
+    data class Turn(
+        /** 取第一步的 id：后续步骤追加时 LazyColumn 的 key 不变，滚动位置也不跳。 */
+        override val id: String,
+        val steps: List<Assistant>,
+    ) : ChatMessage {
+        val streaming: Boolean get() = steps.any { it.streaming }
+    }
 }
 
 /** 发送栏模型选择项：模型必须和渠道一起提交。 */
@@ -127,18 +144,36 @@ enum class NoticeTone { Info, Success, Warning }
 
 enum class ToolKind { Read, Search, Bash, Edit, Other }
 
+/**
+ * 正文块。
+ *
+ * 每个实现都显式标 [Immutable]：接口上的注解不会传给实现类，而带 `List` 字段的
+ * 数据类会被 Compose 判成不稳定——那样流式时每次重组都会重走列表/表格的组合。
+ * 这些 list 构造完就不再改（解析器每次都造新 list），所以这个承诺成立。
+ */
 @Immutable
 sealed interface ContentBlock {
+    @Immutable
     data class Paragraph(val text: String) : ContentBlock
+
+    @Immutable
     data class Heading(val text: String) : ContentBlock
+
+    @Immutable
     data class Bullets(val items: List<String>) : ContentBlock
+
+    @Immutable
     data class Code(val language: String, val code: String) : ContentBlock
+
+    @Immutable
     data class Quote(val text: String) : ContentBlock
 
     /** Markdown 表格：手机上没有横向表格，渲染成按行分组的记录卡。 */
+    @Immutable
     data class Table(val headers: List<String>, val rows: List<List<String>>) : ContentBlock
 
     /** 1. / 2. 这类有序列表；渲染时按序号重新编号。 */
+    @Immutable
     data class Ordered(val items: List<String>) : ContentBlock
 }
 

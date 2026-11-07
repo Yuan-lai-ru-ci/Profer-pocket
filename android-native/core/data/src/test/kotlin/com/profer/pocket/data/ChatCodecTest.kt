@@ -80,6 +80,39 @@ class ChatCodecTest {
     }
 
     @Test
+    fun `工具活动按 toolCallId 合并 start 与 result`() {
+        val data = JSONArray().put(
+            JSONObject()
+                .put("id", "m1")
+                .put("role", "assistant")
+                .put("content", "好了")
+                .put(
+                    "toolActivities",
+                    JSONArray().apply {
+                        put(JSONObject().put("toolCallId", "t1").put("toolName", "Read").put("type", "start"))
+                        put(JSONObject().put("toolCallId", "t2").put("toolName", "Bash").put("type", "start"))
+                        put(
+                            JSONObject()
+                                .put("toolCallId", "t1")
+                                .put("toolName", "Read")
+                                .put("type", "result")
+                                .put("input", JSONObject().put("file_path", "a.kt"))
+                                .put("result", "ok"),
+                        )
+                    },
+                ),
+        )
+        val activities = ChatCodec.messages(data).single().toolActivities
+        // 保留首次出现顺序；result 晚到不会把行顶到末尾。
+        assertEquals(listOf("t1", "t2"), activities.map { it.toolCallId })
+        assertTrue(activities[0].done)
+        assertEquals("ok", activities[0].result)
+        assertEquals("{\"file_path\":\"a.kt\"}", activities[0].input)
+        assertEquals("a.kt", activities[0].target)
+        assertTrue(!activities[1].done)
+    }
+
+    @Test
     fun `chat_event 帧保留 payload`() {
         val frame = FrameCodec.parseInbound(
             """{"kind":"chat_event","conversationId":"c1","channel":"chat:stream:chunk","payload":{"delta":"Pong"}}""",

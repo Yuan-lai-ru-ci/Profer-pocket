@@ -25,8 +25,8 @@ import com.profer.pocket.designsystem.theme.ProferThemeExtras
 /**
  * 文件路径识别与文件 chip。
  *
- * 正文不再内联 chip：一句话被 chip 切成几块反而更难读，正文里的路径
- * 走等宽行内代码。chip 只保留给「本轮修改文件」汇总。
+ * 正文里的文件路径由 [ProferRichText] 拆成 chip 内联渲染（点一下拉预览）；
+ * 这里的切分工具同时给「本轮修改文件」汇总卡和正文 chip 复用。
  */
 private val FILE_EXTENSIONS = setOf(
     "md", "markdown", "json", "jsonc", "json5", "xml", "html", "htm", "txt", "log", "csv",
@@ -41,6 +41,49 @@ private val FILE_CANDIDATE = Regex(
 )
 
 private val LINE_COL_SUFFIX = Regex(""":\d+(?::\d+)?$""")
+
+/** 正文 chip 的短名：去掉目录，保留 `:行[:列]` 后缀（与桌面端 chip 一致）。 */
+internal fun fileDisplayName(raw: String): String {
+    val trimmed = raw.trim()
+    val suffix = LINE_COL_SUFFIX.find(trimmed)?.value.orEmpty()
+    val path = if (suffix.isEmpty()) trimmed else trimmed.dropLast(suffix.length)
+    return path.substringAfterLast('/') + suffix
+}
+
+/**
+ * 单个行内片段是不是文件引用（绝对路径、相对路径、裸文件名都算）。
+ *
+ * 与桌面端同口径：扩展名得在已知列表里，纯版本号（`1.2.3`）不算文件。
+ */
+internal fun isFileRef(value: String): Boolean {
+    val trimmed = value.trim()
+    if (trimmed.isEmpty() || trimmed.contains(' ')) return false
+    val path = trimmed.replace(LINE_COL_SUFFIX, "")
+    val filename = path.substringAfterLast('/')
+    val extension = filename.substringAfterLast('.', "").lowercase()
+    if (extension !in FILE_EXTENSIONS) return false
+    // 裸文件名至少要有名字部分：`.gitignore` 这类点开头的不当作文件。
+    return filename.length > extension.length + 1
+}
+
+/** chip 里一行最多显示多少字符（含省略号与大后缀）。 */
+private const val ChipLabelLimit = 34
+
+/**
+ * 长文件名的中间省略：保留开头 + 扩展名 + `:行:列` 后缀。
+ *
+ * 移动端一行放不下几十个字符的长名，尾巴上被截成 `…report....` 看不出是什么、在哪一行；
+ * 中间省略能把「哪个文件。哪种类型。第几行」三件事同时留住。
+ */
+internal fun middleEllipsis(text: String, max: Int): String {
+    if (text.length <= max || max < 8) return text
+    val suffix = LINE_COL_SUFFIX.find(text)?.value.orEmpty()
+    val body = if (suffix.isEmpty()) text else text.dropLast(suffix.length)
+    val extension = body.substringAfterLast('.', "")
+    val tail = (if (extension.isEmpty() || extension.length > 8) "" else ".$extension") + suffix
+    if (tail.length >= max - 1) return text
+    return body.take(max - tail.length - 1) + "…" + tail
+}
 
 internal data class FileRefSegment(
     val text: String,
@@ -107,6 +150,8 @@ private fun badgeFor(filename: String, colors: ProferFileBadgeColors): Pair<Stri
 internal fun FileRefChip(display: String, onClick: (() -> Unit)? = null) {
     val primary = MaterialTheme.colorScheme.primary
     val (badge, badgeColor) = badgeFor(display, ProferThemeExtras.fileBadges)
+    // 长名先做中间省略，再交给 Text 的 maxLines / ellipsis 兜底。
+    val label = middleEllipsis(display, ChipLabelLimit)
     Row(
         modifier = Modifier
             .height(21.dp)
@@ -132,7 +177,7 @@ internal fun FileRefChip(display: String, onClick: (() -> Unit)? = null) {
                 .padding(horizontal = 3.dp, vertical = 1.dp),
         )
         Text(
-            text = display,
+            text = label,
             style = MaterialTheme.typography.bodySmall.copy(
                 fontSize = 12.sp,
                 lineHeight = 16.sp,

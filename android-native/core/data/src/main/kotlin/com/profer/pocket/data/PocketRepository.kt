@@ -1872,6 +1872,18 @@ class PocketRepository(
 
             "chat:stream:complete" -> finishChatStream(id, payload.optString("messageId"))
 
+            // 工具开始/结束：按 toolCallId 合并到当前流，结束不把行从列表里拿掉。
+            "chat:stream:tool-activity" -> {
+                val activity = payload.optJSONObject("activity")?.let(ChatCodec::toolActivity) ?: return
+                _chatStreams.update { streams ->
+                    val current = streams[id] ?: ChatStream(id)
+                    streams + (id to current.copy(
+                        toolActivities = ChatCodec.mergeToolActivity(current.toolActivities, activity),
+                        running = true,
+                    ))
+                }
+            }
+
             "chat:stream:user" -> onChatUserMessage(id, payload.optJSONObject("message"))
 
             "chat:stream:error" -> {
@@ -1920,7 +1932,8 @@ class PocketRepository(
         }
     }
 
-    private fun finishChatStream(conversationId: String, messageId: String) {        val stream = _chatStreams.value[conversationId]
+    private fun finishChatStream(conversationId: String, messageId: String) {
+        val stream = _chatStreams.value[conversationId]
         val text = stream?.text.orEmpty()
         if (text.isNotBlank()) {
             val message = ChatMessage(
@@ -1928,6 +1941,10 @@ class PocketRepository(
                 role = "assistant",
                 content = text,
                 createdAt = clock(),
+                // 流式期间的思考与工具活动随消息落进列表；后续历史水合会按 id 换成持久化版本。
+                // 不带上它们的话，回合结束后 Chat 页的思考行会凭空消失，直到重新打开对话。
+                reasoning = stream?.reasoning?.takeIf { it.isNotBlank() },
+                toolActivities = stream?.toolActivities.orEmpty(),
             )
             _conversationMessages.update {
                 it + (conversationId to ((it[conversationId] ?: emptyList()) + message))

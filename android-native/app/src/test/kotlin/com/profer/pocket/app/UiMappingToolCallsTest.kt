@@ -79,7 +79,7 @@ class UiMappingToolCallsTest {
     }
 
     @Test
-    fun `工具卡挂在各自助手消息上，不再汇总成一条图标条`() {
+    fun `连续助手条目的工具卡收进同一个回合`() {
         val chat = SessionChat(
             sessionId = "s1",
             messages = listOf(
@@ -100,10 +100,11 @@ class UiMappingToolCallsTest {
             ),
         )
 
-        val assistants = state(chat).messages.filterIsInstance<ChatMessage.Assistant>()
-        assertEquals(listOf(1, 1), assistants.map { it.tools.size })
-        assertEquals(ToolKind.Read, assistants[0].tools.single().kind)
-        assertEquals(ToolKind.Bash, assistants[1].tools.single().kind)
+        // 两段连续助手条目属于同一轮：工具卡按发生顺序留在回合里，不再各占一块。
+        val turn = state(chat).messages.single() as ChatMessage.Turn
+        assertEquals(listOf("t1", "t2"), turn.steps.flatMap { step -> step.tools.map { it.id } })
+        assertEquals(ToolKind.Read, turn.steps[0].tools.single().kind)
+        assertEquals(ToolKind.Bash, turn.steps[1].tools.single().kind)
     }
 
     @Test

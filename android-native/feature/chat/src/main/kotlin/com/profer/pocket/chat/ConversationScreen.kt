@@ -75,14 +75,16 @@ import com.profer.pocket.designsystem.component.ProferIconAction
 import com.profer.pocket.designsystem.component.proferFloatingSurface
 import com.profer.pocket.designsystem.component.ProferNotice
 import com.profer.pocket.designsystem.component.ProferThinkingCard
+import com.profer.pocket.designsystem.component.ProferToolCallCard
 import com.profer.pocket.designsystem.component.ProferUserMessage
 import com.profer.pocket.designsystem.theme.ProferSizes
 import com.profer.pocket.designsystem.theme.ProferSpacing
 import kotlinx.coroutines.launch
 
 /**
- * Chat（普通对话）页：与 Agent 对话页共用抽屉，但不显示工具、权限与模型档位。
- * 消息只渲染正文；推理折叠；流式用行内光标。复制、智能跟随、回到最新、离线条沿用 Agent 页的做法。
+ * Chat（普通对话）页：与 Agent 对话页共用抽屉。
+ * 消息渲染正文、折叠的思考与逐条工具活动；权限与模型档位不在本页。
+ * 流式用行内光标。复制、智能跟随、回到最新、离线条沿用 Agent 页的做法。
  */
 @Composable
 fun ConversationScreen(
@@ -105,6 +107,7 @@ fun ConversationScreen(
     onToggleListPane: () -> Unit = {},
     chatTools: List<com.profer.pocket.model.ChatToolSummary> = emptyList(),
     onToggleTool: (String, Boolean) -> Unit = { _, _ -> },
+    onOpenFilePath: (String) -> Unit = {},
 ) {
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
@@ -144,6 +147,9 @@ fun ConversationScreen(
         unseenCount = 0
     }
 
+    // 横屏短屏：渐隐加宽、消息间距收紧（与 Agent 页同一档）。
+    val shortScreen = rememberProferWindowSize().isShort
+
     // 滚到底部才算看过；停在历史里时只累计新消息数，用于「回到最新」角标。
     LaunchedEffect(atBottom, state.messages.size, positionedConversation) {
         if (positionedConversation != state.conversationId) return@LaunchedEffect
@@ -180,7 +186,8 @@ fun ConversationScreen(
         scope.launch { snackbarHostState.showSnackbar("已复制") }
     }
 
-    PocketDrawerLayout(
+    ProvideFilePreview(onOpenFile = onOpenFilePath) {
+        PocketDrawerLayout(
         modifier = modifier,
         drawerState = drawerState,
         listPaneCollapsed = listPaneCollapsed,
@@ -194,7 +201,17 @@ fun ConversationScreen(
         // 平板/桌面下内容区可能很宽：正文与输入条限制在 760dp 内居中，行长不失控。
         // 背景铺满内容区，阅读栏限制 760dp 居中：宽屏下不出现一整条被拉长的正文。
         Box(
-            modifier = Modifier.fillMaxSize().proferBackdrop(),
+            modifier = Modifier
+                .fillMaxSize()
+                // 横屏短屏与双栏都不叠纸面渐变：渐变底部那条色带会整块落在输入条下方，
+                // 在 360dp 高里非常显眼；单栏竖屏仍保留。
+                .then(
+                    if (shortScreen || rememberProferWindowSize().isTwoPane) {
+                        Modifier.background(MaterialTheme.colorScheme.background)
+                    } else {
+                        Modifier.proferBackdrop()
+                    },
+                ),
             contentAlignment = Alignment.TopCenter,
         ) {
         Scaffold(
@@ -233,7 +250,8 @@ fun ConversationScreen(
                 )
             },
             bottomBar = {
-                ProferComposer(
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    ProferComposer(
                     value = draft,
                     onValueChange = onInputChange,
                     onSend = onSend,
@@ -252,6 +270,7 @@ fun ConversationScreen(
                     toolsActive = chatTools.any { it.enabled && it.available },
                     placeholder = if (state.offline) "离线 · 等待重连" else "给 Profer 发消息…",
                 )
+                }
             },
         ) { padding ->
             Column(modifier = Modifier.padding(padding)) {
@@ -287,46 +306,42 @@ fun ConversationScreen(
                             modifier = Modifier.fillMaxSize(),
                         )
 
+                        // 悬浮在消息区底部：不进 bottomBar，不占布局高度，也不压住输入条。
                         if (!atBottom && state.messages.isNotEmpty() && !imeVisible) {
-                            Box(
+                            Surface(
                                 modifier = Modifier
-                                    .align(Alignment.BottomEnd)
-                                    .padding(end = ProferSpacing.sm, bottom = ProferSpacing.sm)
-                                    .size(ProferSizes.minTouchTarget)
+                                    .align(Alignment.BottomCenter)
+                                    .padding(bottom = ProferSpacing.sm)
+                                    .heightIn(min = 32.dp)
                                     .clip(CircleShape)
                                     .clickable {
                                         scope.launch {
-                                            listState.scrollToBottom()
-                                            unseenCount = 0
+                                            val last = (listState.layoutInfo.totalItemsCount - 1).coerceAtLeast(0)
+                                            listState.animateScrollToItem(last)
                                         }
                                     },
-                                contentAlignment = Alignment.Center,
+                                shape = CircleShape,
+                                color = proferFloatingSurface(),
+                                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                                shadowElevation = 2.dp,
                             ) {
-                                Surface(
-                                    modifier = Modifier.height(36.dp),
-                                    shape = CircleShape,
-                                    color = MaterialTheme.colorScheme.surfaceContainerHigh,
-                                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-                                    shadowElevation = 1.dp,
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 3.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(4.dp),
                                 ) {
-                                    Row(
-                                        modifier = Modifier.padding(horizontal = 10.dp),
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(4.dp),
-                                    ) {
-                                        Icon(
-                                            imageVector = Icons.Outlined.ArrowDownward,
-                                            contentDescription = "回到最新",
-                                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                            modifier = Modifier.size(17.dp),
+                                    Icon(
+                                        imageVector = Icons.Outlined.ArrowDownward,
+                                        contentDescription = "回到最新",
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.size(17.dp),
+                                    )
+                                    if (unseenCount > 0) {
+                                        Text(
+                                            text = "$unseenCount",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
                                         )
-                                        if (unseenCount > 0) {
-                                            Text(
-                                                text = "$unseenCount",
-                                                style = MaterialTheme.typography.labelSmall,
-                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                            )
-                                        }
                                     }
                                 }
                             }
@@ -337,7 +352,8 @@ fun ConversationScreen(
                             modifier = Modifier
                                 .align(Alignment.TopCenter)
                                 .fillMaxWidth()
-                                .height(18.dp)
+                                // 短屏消息更少，半行裁切更扎眼：渐隐加宽到 22dp。
+                                .height(if (shortScreen) 12.dp else 18.dp)
                                 .background(
                                     Brush.verticalGradient(
                                         listOf(
@@ -351,7 +367,7 @@ fun ConversationScreen(
                             modifier = Modifier
                                 .align(Alignment.BottomCenter)
                                 .fillMaxWidth()
-                                .height(14.dp)
+                                .height(if (shortScreen) 8.dp else 14.dp)
                                 .background(
                                     Brush.verticalGradient(
                                         listOf(
@@ -362,9 +378,12 @@ fun ConversationScreen(
                                 ),
                         )
                     }
+
                 }
             }
         }
+    }
+    }
     }
     if (toolSheetOpen) {
         ChatToolSheet(
@@ -387,7 +406,6 @@ fun ConversationScreen(
             onDismiss = { modelSheetOpen = false },
         )
         }
-    }
 }
 
 @Composable
@@ -398,8 +416,10 @@ private fun ConversationTopBar(
     /** 双栏列表栏已收起：左侧键从「收起」变成「展开」。单栏恒为 false。 */
     listPaneCollapsed: Boolean = false,
 ) {
-    val twoPane = rememberProferWindowSize().isTwoPane
-    ProferHeaderRow {
+    val window = rememberProferWindowSize()
+    val twoPane = window.isTwoPane
+    val compact = window.isShort
+    ProferHeaderRow(compact = compact) {
         ProferIconAction(
             // 与 Agent 对话同构：双栏用面板图标（收起/展开），单栏用汉堡键（抽屉）。
             icon = when {
@@ -413,6 +433,7 @@ private fun ConversationTopBar(
                 else -> "收起对话列表"
             },
             onClick = onOpenDrawer,
+            chrome = !compact,
         )
         // 与 Agent 对话同构：标题进浮起胶囊，字号与内边距走同一套 token。
         // 外层占满中间，胶囊按内容收窄，右侧新建键仍贴边。
@@ -423,16 +444,22 @@ private fun ConversationTopBar(
                 color = MaterialTheme.colorScheme.onSurface,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
-                modifier = Modifier
-                    .clip(MaterialTheme.shapes.extraLarge)
-                    .background(proferFloatingSurface())
-                    .padding(horizontal = ProferSpacing.md, vertical = ProferSpacing.sm),
+                // 横屏短屏不再用浮层胶囊：桌面版会话头是一条平铺标题，省下的高度留给正文。
+                modifier = if (compact) {
+                    Modifier
+                } else {
+                    Modifier
+                        .clip(MaterialTheme.shapes.extraLarge)
+                        .background(proferFloatingSurface())
+                        .padding(horizontal = ProferSpacing.md, vertical = ProferSpacing.sm)
+                },
             )
         }
         ProferIconAction(
             icon = Icons.Outlined.Add,
             contentDescription = "新建对话",
             onClick = onNewConversation,
+            chrome = !compact,
         )
     }
 }
@@ -445,11 +472,18 @@ private fun ConversationMessages(
     onCopy: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val window = rememberProferWindowSize()
+    val shortScreen = window.isShort
     LazyColumn(
         state = listState,
         modifier = modifier,
-        contentPadding = PaddingValues(horizontal = ProferSpacing.lg, vertical = ProferSpacing.md),
-        verticalArrangement = Arrangement.spacedBy(ProferSpacing.xl),
+        contentPadding = PaddingValues(
+            horizontal = if (window.isTwoPane) ProferSpacing.xl else ProferSpacing.lg,
+            vertical = if (shortScreen) ProferSpacing.sm else ProferSpacing.md,
+        ),
+        verticalArrangement = Arrangement.spacedBy(
+            if (shortScreen) ProferSpacing.lg else ProferSpacing.xl,
+        ),
     ) {
         if (state.messages.isEmpty() && !state.streaming) {
             item(key = "empty") {
@@ -499,28 +533,28 @@ private fun ConversationMessages(
         if (state.streaming) {
             item(key = "stream") {
                 Column(verticalArrangement = Arrangement.spacedBy(ProferSpacing.sm)) {
+                    // 与桌面 Chat 同序：工具活动 → 思考 → 正文。
+                    state.streamTools.forEach { tool -> ChatToolRow(tool) }
                     if (state.streamReasoning.isNotBlank()) {
                         var expanded by remember { mutableStateOf(false) }
-                        // 思考正文可能很长：摘要只在文本真正变化时重算。
-                        val summary = remember(state.streamReasoning) {
-                            thinkingTail(state.streamReasoning)
-                        }
                         ProferThinkingCard(
                             body = state.streamReasoning,
                             expanded = expanded,
                             onToggle = { expanded = !expanded },
-                            summary = summary,
                         )
                     }
                     if (state.streamText.isBlank()) {
                         ProferActivityLine(text = "Profer 正在生成…")
                     } else {
                         // 输入框每敲一个字都会重组这一页，不能跟着重新分块 Markdown。
-                        val blocks = remember(state.streamText) { cachedRichBlocks(state.streamText) }
-                        ProferRichText(
-                            blocks = blocks,
-                            showCursor = true,
-                        )
+                        // 流式正文只重算尾块，中间态不进全局缓存。
+                        val blocks = remember(state.conversationId, state.streamText) {
+                            streamingRichBlocks("conversation:" + state.conversationId, state.streamText)
+                        }
+                         ProferRichText(
+                             blocks = blocks,
+                             showCursor = true,
+                         )
                     }
                 }
             }
@@ -546,13 +580,14 @@ private fun ConversationMessages(
 @Composable
 private fun AssistantMessage(message: ConversationMessage.Assistant) {
     Column(verticalArrangement = Arrangement.spacedBy(ProferSpacing.sm)) {
+        // 与桌面 Chat 同序：工具活动 → 思考 → 正文；工具行逐条折叠，点开看参数与结果。
+        message.tools.forEach { tool -> ChatToolRow(tool) }
         message.reasoning?.takeIf { it.isNotBlank() }?.let { reasoning ->
             var expanded by rememberSaveable(message.id) { mutableStateOf(false) }
             ProferThinkingCard(
                 body = reasoning,
                 expanded = expanded,
                 onToggle = { expanded = !expanded },
-                summary = thinkingHeadline(reasoning),
             )
         }
         ProferRichText(text = message.text)
@@ -567,4 +602,21 @@ private fun AssistantMessage(message: ConversationMessage.Assistant) {
             ProferNotice(text = error, tint = MaterialTheme.colorScheme.error)
         }
     }
+}
+
+/** Chat 模式的一条工具活动：图标 + 标题 · 目标 + 状态，点开看参数/结果。 */
+@Composable
+private fun ChatToolRow(tool: ToolBlock) {
+    var expanded by rememberSaveable(tool.id) { mutableStateOf(false) }
+    ProferToolCallCard(
+        icon = tool.kind.icon(),
+        title = tool.title,
+        subtitle = tool.subtitle,
+        status = tool.status,
+        expanded = expanded,
+        onToggle = { expanded = !expanded },
+        input = tool.input,
+        output = tool.output,
+        error = tool.error,
+    )
 }

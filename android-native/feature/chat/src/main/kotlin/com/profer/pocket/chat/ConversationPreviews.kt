@@ -3,6 +3,7 @@ package com.profer.pocket.chat
 import android.content.res.Configuration
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.tooling.preview.Preview
+import com.profer.pocket.designsystem.component.ToolStatus
 import com.profer.pocket.designsystem.theme.ProferTheme
 
 /**
@@ -48,6 +49,24 @@ private val PreviewConversation = ConversationUiState(
             id = "a2",
             text = "结构如下：\n\n**进展**：完成移动端 Chat 页的阅读细节；补齐模型切换。\n\n**问题**：离线条没有做真实断网复现。\n\n**下周**：补 Chat 的分支重发协议。",
             reasoning = "用户只要结构，不需要展开正文。",
+            // 工具行与桌面 Chat 同序：在思考与正文之前，逐条折叠。
+            tools = listOf(
+                ToolBlock(
+                    id = "t1",
+                    kind = ToolKind.Search,
+                    title = "搜索内容",
+                    subtitle = "resumeCursor",
+                    status = ToolStatus.Success,
+                    output = "3 处匹配 · 2 个文件",
+                ),
+                ToolBlock(
+                    id = "t2",
+                    kind = ToolKind.Edit,
+                    title = "修改文件",
+                    subtitle = "ws-client.ts · +18 −4",
+                    status = ToolStatus.Success,
+                ),
+            ),
         ),
     ),
 )

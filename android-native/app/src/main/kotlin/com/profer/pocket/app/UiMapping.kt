@@ -10,6 +10,8 @@ import com.profer.pocket.chat.ThinkingBlock
 import com.profer.pocket.chat.ToolBlock
 import com.profer.pocket.chat.ToolKind
 import com.profer.pocket.chat.cachedRichBlocks
+import com.profer.pocket.chat.settleStreamingRichBlocks
+import com.profer.pocket.chat.streamingRichBlocks
 import com.profer.pocket.data.SessionCatalog
 import com.profer.pocket.connect.ConnectionPhase
 import com.profer.pocket.connect.ConnectionUiState
@@ -24,6 +26,7 @@ import com.profer.pocket.designsystem.component.ToolStatus
 import com.profer.pocket.model.ChatEntry
 import com.profer.pocket.model.ChatMessage as DomainChatMessage
 import com.profer.pocket.model.ChatStream
+import com.profer.pocket.model.ChatToolActivity
 import com.profer.pocket.model.ConversationSummary
 import com.profer.pocket.model.ConnectionStatus
 import com.profer.pocket.model.NoticeTone as DomainNoticeTone
@@ -107,6 +110,17 @@ object UiMapping {
 
     private val projectionLock = Any()
     private var projectionSessionId: String? = null
+
+    /** 回合合并缓存：步骤没变时复用同一个 [ChatMessage.Turn]，整张消息表才能原样复用。 */
+    private class ProjectedTurn(
+        val steps: List<ChatMessage.Assistant>,
+        val turn: ChatMessage.Turn,
+    ) {
+        fun sameSteps(other: List<ChatMessage.Assistant>): Boolean =
+            steps.size == other.size && steps.indices.all { steps[it] === other[it] }
+    }
+
+    private val turnProjections = HashMap<String, ProjectedTurn>()
     private val messageProjections = HashMap<String, MessageProjection>()
     private val liveEntryIds = HashSet<String>()
     private var lastProjectedMessages: List<ChatMessage> = emptyList()
@@ -357,6 +371,7 @@ object UiMapping {
         synchronized(projectionLock) {
             if (projectionSessionId != sessionId) {
                 messageProjections.clear()
+                turnProjections.clear()
                 lastProjectedMessages = emptyList()
                 projectionSessionId = sessionId
             }
@@ -386,15 +401,66 @@ object UiMapping {
             if (messageProjections.size > out.size) {
                 messageProjections.keys.retainAll(liveEntryIds)
             }
+            turnProjections.keys.retainAll(liveEntryIds)
             (chat?.pendingInteraction as? PendingInteraction.Question)?.let { question ->
                 out.add(questionNotice(question))
             }
+            val merged = mergeAssistantTurns(out)
             val previous = lastProjectedMessages
-            val unchanged = previous.size == out.size && out.indices.all { out[it] === previous[it] }
-            val result = if (unchanged) previous else out
+            val unchanged = previous.size == merged.size && merged.indices.all { merged[it] === previous[it] }
+            val result = if (unchanged) previous else merged
             lastProjectedMessages = result
             return result
         }
+    }
+
+    /**
+     * 连续的助手条目合成一个回合。
+     *
+     * 移动端一条助手条目 = 模型的一步（一段思考 + 几次工具调用），一轮排查常有七八步；
+     * 逐步渲染就是七八行「执行过程：1 次工具调用，1 段思考」。桌面把「上一条用户输入之后
+     * 的所有 assistant 消息」当一个 turn（`groupIntoTurns`），这里同口径：
+     * 凡是助手条目相邻就归同一轮，遇到用户消息/来源卡/系统提示就断开。
+     *
+     * 合并结果按首步 id 缓存：流式时只有最后一段在变，前面的回合必须还是同一个实例，
+     * 否则整张消息表每个 token 都重建一遍。
+     */
+    private fun mergeAssistantTurns(messages: List<ChatMessage>): List<ChatMessage> {
+        var merged = false
+        val result = ArrayList<ChatMessage>(messages.size)
+        var index = 0
+        while (index < messages.size) {
+            val message = messages[index]
+            if (message !is ChatMessage.Assistant) {
+                result += message
+                index += 1
+                continue
+            }
+            var end = index
+            while (end + 1 < messages.size && messages[end + 1] is ChatMessage.Assistant) {
+                end += 1
+            }
+            if (end == index) {
+                result += message
+            } else {
+                merged = true
+                val steps = ArrayList<ChatMessage.Assistant>(end - index + 1)
+                for (step in index..end) steps += messages[step] as ChatMessage.Assistant
+                result += turnOf(steps)
+            }
+            index = end + 1
+        }
+        // 没有相邻助手条目时返回原表：保留上一次的 List 实例，StateFlow 能直接去重。
+        return if (merged) result else messages
+    }
+
+    private fun turnOf(steps: List<ChatMessage.Assistant>): ChatMessage.Turn {
+        val key = steps.first().id
+        val cached = turnProjections[key]
+        if (cached != null && cached.sameSteps(steps)) return cached.turn
+        val turn = ChatMessage.Turn(id = key, steps = steps)
+        turnProjections[key] = ProjectedTurn(steps, turn)
+        return turn
     }
 
     /** 单条 entry → UI 模型；内部注入的用户文本不上屏（与桌面同口径）。 */
@@ -437,7 +503,12 @@ object UiMapping {
             } else {
                 entry.toolCalls.map { call -> toolBlock(call, chat) }
             },
-            blocks = cachedRichBlocks(entry.text),
+            // 流式帧带的是累计全文：只重算尾块，中间态不进全局缓存；收尾那一帧直接转正。
+            blocks = if (entry.streaming) {
+                streamingRichBlocks(entry.id, entry.text)
+            } else {
+                settleStreamingRichBlocks(entry.id, entry.text) ?: cachedRichBlocks(entry.text)
+            },
             streaming = entry.streaming,
             images = entry.images,
         )
@@ -491,6 +562,9 @@ object UiMapping {
         )
     }
 
+    private const val ChatToolResultLimit = 1_200
+    private const val ChatToolInputLimit = 800
+
     /**
      * 单条工具调用 → 卡片模型：图标分类与状态。
      * 投影目前只透传 file_path，input/output/error 恒为 null，卡片因此不可展开；
@@ -521,6 +595,39 @@ object UiMapping {
             status = status,
         )
     }
+
+    /**
+     * Chat 模式工具活动 → 工具卡。
+     *
+     * Chat 的工具结果由桌面执行并随事件下发，所以这里的入参/结果可展开；
+     * 与 Agent 会话的「投影尚未下发」不是同一回事。
+     */
+    private fun chatToolBlock(activity: ChatToolActivity): ToolBlock {
+        val status = when {
+            !activity.done -> ToolStatus.Running
+            activity.isError -> ToolStatus.Error
+            else -> ToolStatus.Success
+        }
+        val result = activity.result?.let { truncateForCard(it, ChatToolResultLimit) }
+        return ToolBlock(
+            id = activity.toolCallId,
+            kind = toolKind(activity.toolName),
+            title = toolTitle(activity.toolName),
+            subtitle = activity.target ?: when (status) {
+                ToolStatus.Running -> "运行中…"
+                ToolStatus.Success -> "已完成"
+                ToolStatus.Error -> "执行失败"
+                ToolStatus.Waiting -> "未返回结果"
+            },
+            status = status,
+            input = activity.input?.let { truncateForCard(it, ChatToolInputLimit) },
+            output = if (activity.isError) null else result,
+            error = if (activity.isError) result else null,
+        )
+    }
+
+    private fun truncateForCard(text: String, limit: Int): String =
+        if (text.length <= limit) text else text.take(limit).trimEnd() + "…"
 
     /** 工具名 → 移动端图标分类；未知工具统一走 Other，不把它归到 Bash。 */
     private fun toolKind(name: String): ToolKind = when (name.lowercase()) {
@@ -717,6 +824,8 @@ object UiMapping {
         messages = projectedConversationMessages(conversation?.id, messages),
         streamText = stream?.text.orEmpty(),
         streamReasoning = stream?.reasoning.orEmpty(),
+        // 流式中的工具调用也要看得见：开始先出现行，结束后补结果，不等到整轮完成才上屏。
+        streamTools = stream?.toolActivities.orEmpty().map(::chatToolBlock),
         streaming = stream?.running == true,
         error = stream?.error,
         offline = status !is ConnectionStatus.Connected,
@@ -759,6 +868,7 @@ object UiMapping {
                         reasoning = message.reasoning,
                         error = message.error,
                         stopped = message.stopped,
+                        tools = message.toolActivities.map(::chatToolBlock),
                     )
                 }
                 conversationProjections[message.id] = ConversationProjection(message, projected)

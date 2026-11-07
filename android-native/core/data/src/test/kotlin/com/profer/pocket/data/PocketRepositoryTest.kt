@@ -866,6 +866,62 @@ class PocketRepositoryTest {
     }
 
     @Test
+    fun `Chat 工具活动按 toolCallId 合并并随完成消息落盘`() = runTest {
+        val fixture = fixture(backgroundScope, SessionSnapshotStore.Snapshot())
+        connect(fixture)
+        runCurrent()
+
+        val listJob = launch { fixture.repository.refreshConversations() }
+        runCurrent()
+        respondCommand(
+            fixture,
+            "list_conversations",
+            """[{"id":"c1","title":"新对话","channelId":"ch1","modelId":"m1","activePath":[]}]""",
+        )
+        listJob.join()
+
+        val send = launch { fixture.repository.sendConversationMessage("c1", "看看文件") }
+        runCurrent()
+        respondCommand(fixture, "chat_send_message", """{"accepted":true}""")
+        send.join()
+
+        val socket = fixture.factory.created.single()
+        socket.receive(
+            """{"kind":"chat_event","conversationId":"c1","channel":"chat:stream:tool-activity","payload":{"activity":{"type":"start","toolName":"Read","toolCallId":"t1"}}}""",
+        )
+        socket.receive(
+            """{"kind":"chat_event","conversationId":"c1","channel":"chat:stream:tool-activity","payload":{"activity":{"type":"result","toolName":"Read","toolCallId":"t1","input":{"file_path":"a.kt"},"result":"ok"}}}""",
+        )
+        runCurrent()
+
+        val stream = fixture.repository.chatStreams.value.getValue("c1")
+        assertEquals(1, stream.toolActivities.size)
+        assertTrue(stream.toolActivities.single().done)
+        assertEquals("ok", stream.toolActivities.single().result)
+
+        socket.receive(
+            """{"kind":"chat_event","conversationId":"c1","channel":"chat:stream:reasoning","payload":{"delta":"先读文件"}}""",
+        )
+        socket.receive(
+            """{"kind":"chat_event","conversationId":"c1","channel":"chat:stream:chunk","payload":{"delta":"好了"}}""",
+        )
+        socket.receive(
+            """{"kind":"chat_event","conversationId":"c1","channel":"chat:stream:complete","payload":{"messageId":"m9"}}""",
+        )
+        runCurrent()
+
+        val assistant = fixture.repository.conversationMessages.value.getValue("c1").last()
+        assertEquals("m9", assistant.id)
+        assertEquals("好了", assistant.content)
+        assertEquals("先读文件", assistant.reasoning)
+        assertEquals(1, assistant.toolActivities.size)
+        assertEquals(
+            "a.kt",
+            assistant.toolActivities.single().input?.let { JSONObject(it).optString("file_path") },
+        )
+    }
+
+    @Test
     fun `未加载的 Chat 会话收到用户消息广播不创建孤立消息`() = runTest {
         val fixture = fixture(backgroundScope, SessionSnapshotStore.Snapshot())
         connect(fixture)
