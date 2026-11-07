@@ -1,10 +1,13 @@
 package com.profer.pocket.app
 
 import android.Manifest
+import android.app.Activity
 import android.content.Context
 import android.content.Intent
+import android.content.pm.ActivityInfo
 import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
+import android.graphics.drawable.ColorDrawable
 import android.os.Build
 import android.os.Bundle
 import android.util.Log
@@ -21,6 +24,7 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -31,6 +35,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.launch
@@ -46,12 +54,15 @@ import com.profer.pocket.connect.ConnectionPhase
 import com.profer.pocket.connect.ConnectionScreen
 import com.profer.pocket.connect.QrScannerScreen
 import com.profer.pocket.designsystem.adaptive.ProferWindowSizeProvider
+import com.profer.pocket.designsystem.theme.ProferDarkColors
+import com.profer.pocket.designsystem.theme.ProferLightColors
 import com.profer.pocket.designsystem.theme.ProferTheme
 import com.profer.pocket.sessions.DrawerMode
 import com.profer.pocket.sessions.SessionListContent
 import com.profer.pocket.sessions.SessionStressScreen
 import com.profer.pocket.settings.SettingsScreen
 import com.profer.pocket.model.HomeMode
+import com.profer.pocket.model.ScreenOrientation
 import com.profer.pocket.settings.ThemePreference
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -64,6 +75,12 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        // 鸿蒙卓易通（iSulad 里的 Android 容器）会给透明导航栏叠一层系统「对比度 scrim」：
+        // 表现就是底部一条比手势条略高、颜色跟随主题但和主题有色差的色带，容器里所有
+        // edge-to-edge 的 App 都有。关掉对比度强制，导航栏才是真透明、由 App 背景铺满。
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            window.isNavigationBarContrastEnforced = false
+        }
         handleNotificationIntent(intent)
         handleDebugConnectIntent(intent)
         handleDebugLiveIntent(intent)
@@ -152,6 +169,19 @@ fun ProferApp(viewModel: PocketViewModel) {
     ApplySystemBarStyle(darkTheme = darkTheme)
 
     ProferTheme(darkTheme = darkTheme) {
+        // 手机横屏进入沉浸式：导航栏在 360dp 高里要吃掉 48–56dp，会变成输入条下方
+        // 一整条与窗口卡无关的底色（桌面版没有）。收起后上滑即可唤出，胶囊提示保留。
+        val windowSize = com.profer.pocket.designsystem.adaptive.rememberProferWindowSize()
+        ProferImmersiveNavigationBars(enabled = windowSize.isShort && windowSize.isLandscape)
+        val activity = LocalContext.current as? Activity
+        LaunchedEffect(settings.screenOrientation) {
+            activity?.requestedOrientation = when (settings.screenOrientation) {
+                ScreenOrientation.System -> ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+                ScreenOrientation.Landscape -> ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
+                ScreenOrientation.Portrait -> ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+            }
+        }
+
         // 首帧完成后才允许启动前台服务：冷启动期间主线程排不进服务回调。
         LaunchedEffect(Unit) { viewModel.onUiReady() }
         val navController = rememberNavController()
@@ -335,6 +365,10 @@ fun ProferApp(viewModel: PocketViewModel) {
                             viewModel.selectConversationModel(option.channelId, option.modelId)
                         },
                         onRetryConnection = viewModel::retryConnection,
+                        onOpenFilePath = { path ->
+                            val filename = path.substringAfterLast('/').ifBlank { path }
+                            previewFile = com.profer.pocket.model.AgentAttachment(filename, path)
+                        },
                         drawerState = drawerState,
                         chatTools = chatTools,
                         onToggleTool = viewModel::toggleChatTool,
@@ -373,6 +407,10 @@ fun ProferApp(viewModel: PocketViewModel) {
                         onRewriteMessage = viewModel::rewriteAndResend,
                         onRetrySend = viewModel::retrySend,
                         onOpenAttachment = { previewFile = it },
+                        onOpenFilePath = { path ->
+                            val filename = path.substringAfterLast('/').ifBlank { path }
+                            previewFile = com.profer.pocket.model.AgentAttachment(filename, path)
+                        },
                         onOpenImage = { image ->
                             previewFile = com.profer.pocket.model.AgentAttachment(
                                 filename = image.filename,
@@ -478,6 +516,8 @@ fun ProferApp(viewModel: PocketViewModel) {
                     onAutoReconnectChange = viewModel::updateAutoReconnect,
                     backgroundConnection = settings.backgroundConnection,
                     onBackgroundConnectionChange = viewModel::updateBackgroundConnection,
+                    screenOrientation = settings.screenOrientation,
+                    onScreenOrientationChange = viewModel::updateScreenOrientation,
                     connected = connectionState.phase == ConnectionPhase.Connected,
                     deviceLabel = if (connectionState.phase == ConnectionPhase.Connected) {
                         "${connectionState.deviceName} · 在线"
@@ -633,20 +673,61 @@ private fun com.profer.pocket.model.ThemeMode.toPreference(): ThemePreference = 
     com.profer.pocket.model.ThemeMode.Dark -> ThemePreference.Dark
 }
 
+/**
+ * 沉浸式导航栏：只在「短屏 + 横屏」时收起系统导航栏。
+ *
+ * 手机横屏的导航栏（三键 48–56dp）不透明、且强制对比度关不掉，会把输入条下方
+ * 填成一整条系统色。收起后内容一直铺到窗口卡底边，观感和桌面版一致；
+ * 用户上滑唤出时按 `BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE` 临时浮起，不打断输入。
+ */
+@Composable
+private fun ProferImmersiveNavigationBars(enabled: Boolean) {
+    val view = LocalView.current
+    val context = LocalContext.current
+    LaunchedEffect(enabled) {
+        val window = (context as? Activity)?.window ?: return@LaunchedEffect
+        val controller = WindowCompat.getInsetsController(window, view)
+        if (enabled) {
+            controller.systemBarsBehavior =
+                WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+            controller.hide(WindowInsetsCompat.Type.navigationBars())
+        } else {
+            controller.show(WindowInsetsCompat.Type.navigationBars())
+        }
+    }
+    // 离开组合（切到竖屏路由、退出 App）时必须显式恢复，否则导航栏会一直藏着。
+    DisposableEffect(Unit) {
+        onDispose {
+            val window = (context as? Activity)?.window
+            if (window != null) {
+                WindowCompat.getInsetsController(window, view)
+                    .show(WindowInsetsCompat.Type.navigationBars())
+            }
+        }
+    }
+}
+
 @Composable
 private fun ApplySystemBarStyle(darkTheme: Boolean) {
     val context = LocalContext.current
     val activity = context as? ComponentActivity ?: return
     LaunchedEffect(darkTheme) {
-        activity.enableEdgeToEdge(
-            statusBarStyle = SystemBarStyle.auto(
-                lightScrim = Color.Transparent.toArgb(),
-                darkScrim = Color.Transparent.toArgb(),
-            ) { darkTheme },
-            navigationBarStyle = SystemBarStyle.auto(
-                lightScrim = Color.Transparent.toArgb(),
-                darkScrim = Color.Transparent.toArgb(),
-            ) { darkTheme },
-        )
+        val transparent = Color.Transparent.toArgb()
+        // 必须用 light()/dark()，不能用 auto()：androidx 的 EdgeToEdgeApi29 里
+        // nightMode == MODE_NIGHT_AUTO 会重新打开导航栏对比度强制，那层 scrim 就是
+        // 卓易通底部那条色带。light()/dark() 的 nightMode 非 AUTO，强制会被关掉。
+        val style = if (darkTheme) {
+            SystemBarStyle.dark(transparent)
+        } else {
+            SystemBarStyle.light(transparent, transparent)
+        }
+        activity.enableEdgeToEdge(statusBarStyle = style, navigationBarStyle = style)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            activity.window.isNavigationBarContrastEnforced = false
+        }
+        // 容器若没把内容铺到导航栏底下，露出来的是窗口底色：跟 App 主题对齐，
+        // 避免「系统亮色 + App 深色」时再出现一条浅色边（胶囊壳当年就踩过这个坑）。
+        val background = if (darkTheme) ProferDarkColors.background else ProferLightColors.background
+        activity.window.setBackgroundDrawable(ColorDrawable(background.toArgb()))
     }
 }

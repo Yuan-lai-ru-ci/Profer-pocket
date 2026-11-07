@@ -19,6 +19,8 @@ private fun PreviewSettings(darkTheme: Boolean) {
             onAutoReconnectChange = {},
             backgroundConnection = true,
             onBackgroundConnectionChange = {},
+            screenOrientation = com.profer.pocket.model.ScreenOrientation.System,
+            onScreenOrientationChange = {},
             connected = true,
             deviceLabel = "MacBook Pro · 24ms",
             onOpenConnection = {},

@@ -329,7 +329,17 @@ private fun DeviceList(
                                     overflow = TextOverflow.Ellipsis,
                                 )
                             }
-                            Text("${device.scopeLabel} · ${device.trustLabel}", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            // 局域网 + 无信任信息时 scopeLabel 与 trustLabel 都是「局域网」，
+                            // 拼起来就成了「局域网 · 局域网」。同一个词只说一次。
+                            Text(
+                                if (device.scopeLabel == device.trustLabel) {
+                                    device.scopeLabel
+                                } else {
+                                    "${device.scopeLabel} · ${device.trustLabel}"
+                                },
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
                             Text(if (device.isActive) "当前设备" else "点按切换到此设备", style = MaterialTheme.typography.labelMedium,
                                 color = if (device.isActive) ProferThemeExtras.semantic.success else MaterialTheme.colorScheme.onSurfaceVariant)
                         }

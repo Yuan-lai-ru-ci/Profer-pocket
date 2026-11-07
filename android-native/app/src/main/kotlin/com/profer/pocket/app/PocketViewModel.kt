@@ -19,6 +19,7 @@ import com.profer.pocket.model.ConversationSummary
 import com.profer.pocket.model.HomeMode
 import com.profer.pocket.model.PendingInteraction
 import com.profer.pocket.model.PocketSettings
+import com.profer.pocket.model.ScreenOrientation
 import com.profer.pocket.model.SessionChat
 import com.profer.pocket.model.SessionSummary
 import com.profer.pocket.model.ThemeMode
@@ -1207,6 +1208,9 @@ class PocketViewModel(application: Application) : AndroidViewModel(application) 
     fun updateAutoReconnect(enabled: Boolean) = updateSettings { it.copy(autoReconnect = enabled) }
 
     fun updateBackgroundConnection(enabled: Boolean) = updateSettings { it.copy(backgroundConnection = enabled) }
+
+    fun updateScreenOrientation(orientation: ScreenOrientation) =
+        updateSettings { it.copy(screenOrientation = orientation) }
 
     private fun updateSettings(transform: (PocketSettings) -> PocketSettings) {
         repository.updateSettings(transform)

@@ -1,6 +1,7 @@
 package com.profer.pocket.model
 
 enum class ThemeMode { System, Light, Dark }
+enum class ScreenOrientation { System, Landscape, Portrait }
 
 /** 本地设置：主题、通知、重连策略、后台连接。 */
 data class PocketSettings(
@@ -9,6 +10,7 @@ data class PocketSettings(
     val permissionAlertsEnabled: Boolean = true,
     val autoReconnect: Boolean = true,
     val backgroundConnection: Boolean = true,
+    val screenOrientation: ScreenOrientation = ScreenOrientation.System,
 )
 
 enum class NotificationKind { Permission, Question, PlanApproval, RunCompleted }

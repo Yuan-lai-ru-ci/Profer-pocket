@@ -2,6 +2,7 @@ package com.profer.pocket.data.settings
 
 import android.content.Context
 import com.profer.pocket.model.PocketSettings
+import com.profer.pocket.model.ScreenOrientation
 import com.profer.pocket.model.ThemeMode
 
 interface SettingsStore {
@@ -21,6 +22,7 @@ class AndroidSettingsStore(context: Context) : SettingsStore {
         permissionAlertsEnabled = prefs.getBoolean(KEY_PERMISSION_ALERTS, true),
         autoReconnect = prefs.getBoolean(KEY_AUTO_RECONNECT, true),
         backgroundConnection = prefs.getBoolean(KEY_BACKGROUND, true),
+        screenOrientation = enumValueOfOr(prefs.getString(KEY_ORIENTATION, null), ScreenOrientation.System),
     )
 
     override fun save(settings: PocketSettings) {
@@ -30,6 +32,7 @@ class AndroidSettingsStore(context: Context) : SettingsStore {
             .putBoolean(KEY_PERMISSION_ALERTS, settings.permissionAlertsEnabled)
             .putBoolean(KEY_AUTO_RECONNECT, settings.autoReconnect)
             .putBoolean(KEY_BACKGROUND, settings.backgroundConnection)
+            .putString(KEY_ORIENTATION, settings.screenOrientation.name)
             .apply()
     }
 
@@ -46,5 +49,6 @@ class AndroidSettingsStore(context: Context) : SettingsStore {
         const val KEY_PERMISSION_ALERTS = "permission_alerts"
         const val KEY_AUTO_RECONNECT = "auto_reconnect"
         const val KEY_BACKGROUND = "background_connection"
+        const val KEY_ORIENTATION = "screen_orientation"
     }
 }

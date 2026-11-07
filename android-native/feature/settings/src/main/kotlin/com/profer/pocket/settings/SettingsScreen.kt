@@ -29,7 +29,6 @@ import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.ChevronRight
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
@@ -48,6 +47,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.tooling.preview.Preview
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import com.profer.pocket.designsystem.adaptive.rememberProferWindowSize
@@ -60,7 +60,7 @@ import com.profer.pocket.designsystem.component.ProferSectionLabel
 import com.profer.pocket.designsystem.theme.ProferSizes
 import com.profer.pocket.designsystem.theme.ProferSpacing
 import com.profer.pocket.designsystem.theme.ProferTheme
-
+import com.profer.pocket.model.ScreenOrientation
 enum class ThemePreference(val label: String) {
     System("跟随系统"),
     Light("浅色"),
@@ -70,6 +70,7 @@ enum class ThemePreference(val label: String) {
 /** 设置分组。平板左侧导航按这个顺序排，手机仍是一列长滚动。 */
 private enum class SettingsSection(val label: String) {
     Appearance("外观"),
+    Screen("屏幕方向"),
     Update("更新"),
     Notifications("通知"),
     Connection("连接"),
@@ -97,6 +98,8 @@ private data class SettingsParams(
     val onAutoReconnectChange: (Boolean) -> Unit,
     val backgroundConnection: Boolean,
     val onBackgroundConnectionChange: (Boolean) -> Unit,
+    val screenOrientation: ScreenOrientation,
+    val onScreenOrientationChange: (ScreenOrientation) -> Unit,
     /** 是否已在系统电池白名单里；false 时后台会被冻结。 */
     val batteryUnrestricted: Boolean,
     val onOpenBatterySettings: () -> Unit,
@@ -121,6 +124,8 @@ fun SettingsScreen(
     onAutoReconnectChange: (Boolean) -> Unit,
     backgroundConnection: Boolean,
     onBackgroundConnectionChange: (Boolean) -> Unit,
+    screenOrientation: ScreenOrientation,
+    onScreenOrientationChange: (ScreenOrientation) -> Unit,
     connected: Boolean,
     deviceLabel: String,
     onOpenConnection: () -> Unit,
@@ -174,6 +179,8 @@ fun SettingsScreen(
         onAutoReconnectChange = onAutoReconnectChange,
         backgroundConnection = backgroundConnection,
         onBackgroundConnectionChange = onBackgroundConnectionChange,
+        screenOrientation = screenOrientation,
+        onScreenOrientationChange = onScreenOrientationChange,
         batteryUnrestricted = batteryUnrestricted,
         onOpenBatterySettings = { BatteryOptimizationEntry.openSettings(context) },
         connected = connected,
@@ -372,32 +379,26 @@ private fun SettingsSinglePane(
 private fun SettingsSectionCard(section: SettingsSection, params: SettingsParams) {
     when (section) {
         SettingsSection.Appearance -> SettingsCard {
-            Column(Modifier.selectableGroup()) {
-                ThemePreference.entries.forEachIndexed { index, preference ->
-                    if (index > 0) ProferDivider(insetStart = ProferSpacing.lg)
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .heightIn(min = ProferSizes.listItemHeight)
-                            .selectable(
-                                selected = preference == params.themePreference,
-                                role = Role.RadioButton,
-                                onClick = { params.onThemePreferenceChange(preference) },
-                            )
-                            .padding(horizontal = ProferSpacing.lg, vertical = ProferSpacing.sm),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(ProferSpacing.md),
-                    ) {
-                        Text(
-                            preference.label,
-                            style = MaterialTheme.typography.bodyLarge,
-                            color = MaterialTheme.colorScheme.onSurface,
-                            modifier = Modifier.weight(1f),
-                        )
-                        RadioButton(selected = preference == params.themePreference, onClick = null)
+            SettingsSegmentedRow(
+                options = ThemePreference.entries.map { it.label },
+                selectedIndex = ThemePreference.entries.indexOf(params.themePreference),
+                onSelect = { index -> params.onThemePreferenceChange(ThemePreference.entries[index]) },
+            )
+        }
+
+        // 屏幕方向：标题已说明是哪个设置，卡内只留一行分段，不再每个选项占一行。
+        SettingsSection.Screen -> SettingsCard {
+            SettingsSegmentedRow(
+                options = ScreenOrientation.entries.map { orientation ->
+                    when (orientation) {
+                        ScreenOrientation.System -> "自动"
+                        ScreenOrientation.Landscape -> "横屏"
+                        ScreenOrientation.Portrait -> "竖屏"
                     }
-                }
-            }
+                },
+                selectedIndex = ScreenOrientation.entries.indexOf(params.screenOrientation),
+                onSelect = { index -> params.onScreenOrientationChange(ScreenOrientation.entries[index]) },
+            )
         }
 
         SettingsSection.Update -> SettingsCard {
@@ -511,6 +512,68 @@ private fun SettingsCard(content: @Composable () -> Unit) {
     }
 }
 
+/**
+ * 一行分段选择。
+ *
+ * 分组标题已经说明这个设置是什么，所以卡内不再一行一个选项：
+ * 三段均分一行，点一下即切，读写都比「多行单选项」快。
+ */
+@Composable
+private fun SettingsSegmentedRow(
+    options: List<String>,
+    selectedIndex: Int,
+    onSelect: (Int) -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .padding(horizontal = ProferSpacing.md, vertical = ProferSpacing.sm)
+            // 宽屏下不拉满整宽：分段控制在卡片内左对齐，手机仍占满可用宽度。
+            .widthIn(max = 340.dp)
+            .fillMaxWidth()
+            .clip(MaterialTheme.shapes.extraLarge)
+            // surfaceContainer 在本主题里就是分段轨道色。
+            .background(MaterialTheme.colorScheme.surfaceContainer)
+            .padding(3.dp)
+            .selectableGroup(),
+        horizontalArrangement = Arrangement.spacedBy(3.dp),
+    ) {
+        options.forEachIndexed { index, label ->
+            val selected = index == selectedIndex
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .heightIn(min = 36.dp)
+                    .clip(MaterialTheme.shapes.extraLarge)
+                    .background(
+                        if (selected) {
+                            MaterialTheme.colorScheme.surfaceContainerLowest
+                        } else {
+                            Color.Transparent
+                        },
+                    )
+                    .selectable(
+                        selected = selected,
+                        role = Role.RadioButton,
+                        onClick = { onSelect(index) },
+                    ),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    text = label,
+                    style = MaterialTheme.typography.labelLarge,
+                    color = if (selected) {
+                        MaterialTheme.colorScheme.onSurface
+                    } else {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    },
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
+    }
+}
+
 @Composable
 private fun SettingsActionRow(
     title: String,
@@ -606,6 +669,7 @@ private fun SettingsPreview() {
             permissionAlertsEnabled = true, onPermissionAlertsChange = {},
             autoReconnect = true, onAutoReconnectChange = {},
             backgroundConnection = false, onBackgroundConnectionChange = {},
+            screenOrientation = ScreenOrientation.System, onScreenOrientationChange = {},
             connected = false, deviceLabel = "MacBook Pro", onOpenConnection = {}, onBack = {},
         )
     }
