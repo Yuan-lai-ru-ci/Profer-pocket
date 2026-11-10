@@ -34,8 +34,8 @@ fun pocketVersionCodeOf(versionName: String): Int {
     return (major * 10_000 + minor * 100 + patch) * 100 + build
 }
 
-// 正式版默认版本号；测试包构建时传 -PpocketVersionName=0.1.25-internal.1 覆盖，不改文件。
-val pocketVersionName = providers.gradleProperty("pocketVersionName").orNull ?: "0.1.25"
+// 正式版默认版本号；测试包构建时传 -PpocketVersionName=0.1.26-internal.1 覆盖，不改文件。
+val pocketVersionName = providers.gradleProperty("pocketVersionName").orNull ?: "0.1.26"
 val pocketVersionCode = pocketVersionCodeOf(pocketVersionName)
 
 val signingProperties = Properties()
@@ -134,7 +134,7 @@ kotlin {
 /**
  * 体验包必须使用测试基线版本号（如 `0.1.26-internal.1`）。
  *
- * 同一个 versionName 只能对应一个 APK：正式包 `0.1.25` 已经发布，体验包若沿用会破坏版本追溯。
+ * 同一个 versionName 只能对应一个 APK：正式包 `0.1.26` 发布后，体验包若沿用会破坏版本追溯。
  * 这条检查只在真正构建 internal 任务时触发，不影响 debug / release / 单测。
  */
 val requestedInternal = gradle.startParameter.taskNames.any { it.contains("Internal") }
