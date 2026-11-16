@@ -1,0 +1,44 @@
+{
+  "compilerOptions": {
+    "lib": ["ESNext", "DOM", "DOM.Iterable"],
+    "target": "ESNext",
+    "module": "Preserve",
+    "moduleDetection": "force",
+    "jsx": "react-jsx",
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
+    "verbatimModuleSyntax": true,
+    "noEmit": true,
+    "strict": true,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "noUncheckedIndexedAccess": true,
+    "baseUrl": "..",
+    "paths": {
+      "@profer/shared": ["packages/shared/src/index.ts"],
+      "@profer/session-core": ["packages/session-core/src/index.ts"]
+    }
+  },
+  "include": [
+    "css-inline.d.ts",
+    "main.tsx",
+    "interactions.tsx",
+    "turn-extras.tsx",
+    "turn-timeline.ts",
+    "turn-process.tsx",
+    "turn-meta.ts",
+    "model-selection.ts",
+    "preset-model.ts",
+    "preset-panel.tsx",
+    "session-settings.tsx",
+    "goal.tsx",
+    "goal-model.ts",
+    "visualization.tsx",
+    "message-page.ts",
+    "page-title.ts",
+    "attachments.ts",
+    "../src/renderer/pocket/ws-client.ts",
+    "../src/renderer/pocket/sdk-message-slim.ts"
+  ],
+  "exclude": ["dist", "node_modules"]
+}

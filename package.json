@@ -1,6 +1,6 @@
 {
   "name": "@profer/pocket-client",
-  "version": "0.1.19",
+  "version": "0.1.20",
   "description": "Profer 移动端独立客户端（主仓库移动版 1:1 移植，复用桌面组件栈 + WsClient + electronapi-stub）",
   "author": "Profer Team",
   "private": true,
@@ -13,6 +13,10 @@
     "typecheck": "tsc --noEmit",
     "test:startup-motion": "bun test src/renderer/pocket/startup-motion.test.ts",
     "build": "vite build",
+    "build:webui": "vite build --config webui/vite.config.ts",
+    "dev:webui": "vite --config webui/vite.config.ts",
+    "typecheck:webui": "tsc --noEmit -p webui/tsconfig.json",
+    "test:webui": "bun test webui/",
     "apk": "bun run build && node pocket-app/scripts/build-apk.mjs"
   },
   "dependencies": {
@@ -60,6 +64,7 @@
     "@tiptap/react": "^3.19.0",
     "@tiptap/starter-kit": "^3.19.0",
     "@tiptap/suggestion": "^3.19.0",
+    "beautiful-mermaid": "1.1.3",
     "class-variance-authority": "0.7.1",
     "clsx": "^2.1.1",
     "cmdk": "^1.1.1",
@@ -69,6 +74,7 @@
     "lowlight": "^3.3.0",
     "lucide-react": "^0.460.0",
     "markdown-it": "^14.1.0",
+    "mermaid": "11.16.1",
     "react": "^18.3.1",
     "react-arborist": "3.15.0",
     "react-dom": "^18.3.1",

@@ -91,17 +91,37 @@ const PENDING_SEND_LEDGER_TTL_MS = 2 * 60 * 1000
 
 type PendingSendLedger = { clientMessageId: string; expiresAt: number }
 
-function pendingSendLedgerKey(payload: { sessionId: string; userMessage: string; channelId: string; modelId?: string; workspaceId?: string }): string {
+/**
+ * 参与幂等键的字段。
+ *
+ * `attachments` 必须计入：同一句正文配上不同附件是**两条不同的消息**，
+ * 若只按正文取键，前一条还没确认时再发一条正文相同、附件不同的消息，
+ * 会被判成同一请求而复用旧 clientMessageId，服务端直接去重丢掉 —— 静默丢消息。
+ */
+type PendingSendKeyInput = {
+  sessionId: string
+  userMessage: string
+  channelId: string
+  modelId?: string
+  workspaceId?: string
+  attachments?: Array<{ filename: string }>
+}
+
+function pendingSendLedgerKey(payload: PendingSendKeyInput): string {
+  const attachments = Array.isArray(payload.attachments)
+    ? payload.attachments.map((item) => (item && typeof item.filename === 'string' ? item.filename : '')).join(',')
+    : ''
   return `${PENDING_SEND_LEDGER_PREFIX}${stableHash([
     payload.sessionId,
     payload.userMessage,
     payload.channelId,
     payload.modelId ?? '',
     payload.workspaceId ?? '',
+    attachments,
   ].join('\u0000'))}`
 }
 
-function claimPendingSendId(payload: { sessionId: string; userMessage: string; channelId: string; modelId?: string; workspaceId?: string }, createId: () => string): string {
+function claimPendingSendId(payload: PendingSendKeyInput, createId: () => string): string {
   const key = pendingSendLedgerKey(payload)
   const now = Date.now()
   try {
@@ -117,7 +137,7 @@ function claimPendingSendId(payload: { sessionId: string; userMessage: string; c
   }
 }
 
-function settlePendingSendId(payload: { sessionId: string; userMessage: string; channelId: string; modelId?: string; workspaceId?: string }, clientMessageId: string): void {
+function settlePendingSendId(payload: PendingSendKeyInput, clientMessageId: string): void {
   const key = pendingSendLedgerKey(payload)
   try {
     const current = JSON.parse(localStorage.getItem(key) ?? 'null') as PendingSendLedger | null
@@ -125,6 +145,18 @@ function settlePendingSendId(payload: { sessionId: string; userMessage: string; 
   } catch {
     /* localStorage 不可用时仅失去跨进程重试去重，不影响本次发送。 */
   }
+}
+
+/** 从出站帧里取出附件文件名（结算幂等键时用，必须与 claim 时口径一致）。 */
+function frameAttachmentNames(value: unknown): Array<{ filename: string }> {
+  if (!Array.isArray(value)) return []
+  const names: Array<{ filename: string }> = []
+  for (const item of value) {
+    if (!item || typeof item !== 'object') continue
+    const filename = (item as { filename?: unknown }).filename
+    if (typeof filename === 'string' && filename) names.push({ filename })
+  }
+  return names
 }
 
 type CommandResultMessage = CommandResult<unknown> & {
@@ -167,6 +199,22 @@ export interface WsClientOptions {
   onCommandPending?: (pending: { commandId: string; expectedRevision?: number; sessionId?: string }) => void
   /** Agent 事件恢复结果，用于触发缓存过期后的快照兜底和调试指标记录。 */
   onAgentResumeStatus?: (status: AgentResumeStatus) => void
+}
+
+/**
+ * 把 command_result 的失败转成 Error。
+ *
+ * 除了文案，还把服务端给的机器可读 `code` 挂到 error 上：调用方要按错误类型分支
+ * （例如「当前内核不支持追加消息」要提示停止本轮，而不是重试），匹配文案太脆。
+ */
+function commandFailure(msg: { conflict?: { code?: string }; error?: string; code?: string }): Error {
+  const text = msg.conflict?.code
+    ? `${msg.conflict.code}: ${msg.error || '指令失败'}`
+    : (msg.error || '指令失败')
+  const error = new Error(text) as Error & { code?: string }
+  const code = msg.conflict?.code ?? msg.code
+  if (code) error.code = code
+  return error
 }
 
 export class WsClient {
@@ -399,7 +447,7 @@ export class WsClient {
       this.pendingCommands.delete(id)
       this.completedCommands.add(id)
       if (msg.ok) pending.resolve(msg.data)
-      else pending.reject(new Error(msg.conflict?.code ? `${msg.conflict.code}: ${msg.error || '指令失败'}` : (msg.error || '指令失败')))
+      else pending.reject(commandFailure(msg))
       return
     }
     // 无 requestId 时用 FIFO 兜底（兼容）
@@ -409,7 +457,7 @@ export class WsClient {
       this.pendingCommands.delete(fid)
       this.completedCommands.add(fid)
       if (msg.ok) pending.resolve(msg.data)
-      else pending.reject(new Error(msg.conflict?.code ? `${msg.conflict.code}: ${msg.error || '指令失败'}` : (msg.error || '指令失败')))
+      else pending.reject(commandFailure(msg))
     }
   }
 
@@ -589,7 +637,7 @@ export class WsClient {
   }
 
   /** 快照回退（同一会话内回退到指定点，恢复文件 + 截断对话；对齐桌面 rewindSession） */
-  rewindSession(payload: { sessionId: string; assistantMessageUuid: string }): Promise<unknown> {
+  rewindSession(payload: { sessionId: string; assistantMessageUuid?: string }): Promise<unknown> {
     return this.sendCommand({ type: 'rewind_session', ...payload })
   }
 
@@ -611,6 +659,11 @@ export class WsClient {
   /** 设置会话推理档位（对齐桌面 updateSessionOpenAIThinkingLevel） */
   updateSessionThinkingLevel(sessionId: string, level: string | null): Promise<unknown> {
     return this.sendCommand({ type: 'update_session_thinking_level', sessionId, level })
+  }
+
+  /** 设置会话推理强度覆盖；null = 清除覆盖、跟随预设（对齐桌面 UPDATE_SESSION_AGENT_EFFORT） */
+  updateSessionAgentEffort(sessionId: string, effort: string | null): Promise<unknown> {
+    return this.sendCommand({ type: 'update_session_agent_effort', sessionId, effort })
   }
 
   getUserProfile(): Promise<unknown> {
@@ -664,6 +717,16 @@ export class WsClient {
   }
 
   /**
+   * 会话内可视化记录（原生图表 / HTML 片段）。
+   *
+   * 图表数据不在消息流里：WS 出口的投影把 tool_use 入参压成 `{ file_path }`，
+   * 所以只能按 `toolCallId` 从记录侧取，再挂回对应的工具调用行。
+   */
+  listVisualizations(sessionId: string): Promise<unknown> {
+    return this.sendCommand({ type: 'list_visualizations', sessionId })
+  }
+
+  /**
    * 获取活跃 Agent 会话的运行时上下文窗口快照（对齐桌面 remote-service `get_agent_runtime_contexts`）。
    *
    * `context_window` 是 run 启动时的瞬时事件，Pocket 晚连接/重连/切回会话时会错过它，
@@ -690,6 +753,15 @@ export class WsClient {
     return this.sendCommand({ type: 'respond_exit_plan_mode', requestId, action, feedback })
   }
 
+  /**
+   * 确认模型主动提议的 Goal（对齐桌面端 RESPOND_GOAL_PROPOSAL）。
+   * 批准时由主进程用提议的目标与契约启动 Goal；失败会返回 ok:false，
+   * 提议仍留在队列里，调用方可以继续展示卡片并重试。
+   */
+  respondGoalProposal(proposalId: string, accepted: boolean): Promise<unknown> {
+    return this.sendCommand({ type: 'respond_goal_proposal', proposalId, accepted })
+  }
+
   updateSessionModel(sessionId: string, channelId?: string, modelId?: string, expectedRevision?: number): Promise<unknown> {
     return this.sendCommand({ type: 'update_session_model', sessionId, ...(channelId ? { channelId } : {}), ...(modelId ? { modelId } : {}) }, { expectedRevision })
   }
@@ -712,28 +784,28 @@ export class WsClient {
     return this.sendCommand({ type: 'get_default_preset', workspaceSlug })
   }
 
-  setDefaultPreset(workspaceSlug: string, presetId: string): Promise<unknown> {
-    return this.sendCommand({ type: 'set_default_preset', workspaceSlug, presetId })
+  setDefaultPreset(workspaceSlug: string | undefined, presetId: string): Promise<unknown> {
+    return this.sendCommand({ type: 'set_default_preset', ...(workspaceSlug ? { workspaceSlug } : {}), presetId })
   }
 
   updateSessionPreset(sessionId: string, presetId: string, expectedRevision?: number): Promise<unknown> {
     return this.sendCommand({ type: 'update_session_preset', sessionId, presetId }, { expectedRevision })
   }
 
-  createPreset(workspaceSlug: string, input: Record<string, unknown>): Promise<unknown> {
-    return this.sendCommand({ type: 'create_preset', workspaceSlug, input })
+  createPreset(workspaceSlug: string | undefined, input: Record<string, unknown>): Promise<unknown> {
+    return this.sendCommand({ type: 'create_preset', ...(workspaceSlug ? { workspaceSlug } : {}), input })
   }
 
-  copyPreset(workspaceSlug: string, fromId: string, name?: string): Promise<unknown> {
-    return this.sendCommand({ type: 'copy_preset', workspaceSlug, fromId, name })
+  copyPreset(workspaceSlug: string | undefined, fromId: string, name?: string): Promise<unknown> {
+    return this.sendCommand({ type: 'copy_preset', ...(workspaceSlug ? { workspaceSlug } : {}), fromId, ...(name ? { name } : {}) })
   }
 
-  updatePreset(workspaceSlug: string, presetId: string, updates: Record<string, unknown>): Promise<unknown> {
-    return this.sendCommand({ type: 'update_preset', workspaceSlug, presetId, updates })
+  updatePreset(workspaceSlug: string | undefined, presetId: string, updates: Record<string, unknown>): Promise<unknown> {
+    return this.sendCommand({ type: 'update_preset', ...(workspaceSlug ? { workspaceSlug } : {}), presetId, updates })
   }
 
-  deletePreset(workspaceSlug: string, presetId: string): Promise<unknown> {
-    return this.sendCommand({ type: 'delete_preset', workspaceSlug, presetId })
+  deletePreset(workspaceSlug: string | undefined, presetId: string): Promise<unknown> {
+    return this.sendCommand({ type: 'delete_preset', ...(workspaceSlug ? { workspaceSlug } : {}), presetId })
   }
 
   uploadAttachment(sessionId: string, filename: string, base64: string): Promise<{ filename: string; path: string; size: number }> {
@@ -770,12 +842,44 @@ export class WsClient {
     return this.sendCommand({ type: 'ensure_project_draft_session', ...payload })
   }
 
-  sendMessage(payload: { sessionId: string; userMessage: string; channelId: string; modelId?: string; workspaceId?: string; permissionMode?: 'auto' | 'plan' | 'bypassPermissions'; uuid?: string; startedAt?: number; additionalDirectories?: string[] }): Promise<unknown> {
+  sendMessage(payload: {
+    sessionId: string
+    userMessage: string
+    channelId: string
+    modelId?: string
+    workspaceId?: string
+    permissionMode?: 'auto' | 'plan' | 'bypassPermissions'
+    uuid?: string
+    startedAt?: number
+    additionalDirectories?: string[]
+    /**
+     * 本轮的附件：只传文件名（先经 `saveAgentAttachment` 落到会话 cwd），
+     * 绝对路径由主进程拼出来并校验 —— 不接受客户端传路径。
+     */
+    attachments?: Array<{ filename: string; label?: string }>
+    /**
+     * 客户端类型，只用于给消息打「来源」标签（网页 / 远程）。
+     * 主进程按白名单取值，不参与任何鉴权判断。
+     */
+    clientKind?: 'webui' | 'remote'
+    /** 提及的技能 slug（正文里的 /skill:<slug> token 同步传一份，主进程做技能路由） */
+    mentionedSkills?: string[]
+  }): Promise<unknown> {
     // 幂等去重键既要覆盖同一 WebView 的 WS 重连，也要覆盖“服务端已接收但 WebView
     // 被系统杀掉、未收到 accepted”的跨进程恢复窗口。
     const clientMessageId = claimPendingSendId(payload, WsClient.newClientMessageId)
     const frame = { type: 'send_message', ...payload, clientMessageId }
     return this.queueMessageOrSend(frame)
+  }
+
+  /**
+   * 把附件写进会话工作目录（与桌面 saveFilesToAgentSession 同源）。
+   *
+   * 返回 `{ filename, path, size }`：`filename` 可能与原名不同（服务端会为同名文件加序号），
+   * 发消息时必须用返回值里的 `filename`，否则解析不到刚上传的文件。
+   */
+  saveAgentAttachment(sessionId: string, filename: string, base64: string): Promise<unknown> {
+    return this.sendCommand({ type: 'save_agent_attachment', sessionId, filename, base64 })
   }
 
   saveFilesToAgentSession(input: { workspaceSlug: string; sessionId: string; files: Array<{ filename: string; data: string }> }): Promise<unknown> {
@@ -815,17 +919,21 @@ export class WsClient {
     reject: (e: Error) => void,
   ): void {
     const clientMessageId = String(frame.clientMessageId ?? '')
+    // 结算用的键必须与 claim 时口径完全一致（含附件文件名）。若漏掉附件，
+    // 键不一致 → 账本条目清不掉 → 2 分钟内重发同样内容会被当成重复请求丢掉。
+    const keyInput: PendingSendKeyInput = {
+      sessionId: String(frame.sessionId ?? ''),
+      userMessage: String(frame.userMessage ?? ''),
+      channelId: String(frame.channelId ?? ''),
+      modelId: typeof frame.modelId === 'string' ? frame.modelId : undefined,
+      workspaceId: typeof frame.workspaceId === 'string' ? frame.workspaceId : undefined,
+      attachments: frameAttachmentNames(frame.attachments),
+    }
     // 走 sendCommand 的内部追踪；服务端收到即回 command_result（send_message 是 fire-and-forget，
     // 立即返回 accepted，不等待 run 结束）。成功即从「待确认」中移除。
     this.sendCommand(frame).then(
       (r) => {
-        settlePendingSendId({
-          sessionId: String(frame.sessionId ?? ''),
-          userMessage: String(frame.userMessage ?? ''),
-          channelId: String(frame.channelId ?? ''),
-          modelId: typeof frame.modelId === 'string' ? frame.modelId : undefined,
-          workspaceId: typeof frame.workspaceId === 'string' ? frame.workspaceId : undefined,
-        }, clientMessageId)
+        settlePendingSendId(keyInput, clientMessageId)
         resolve(r)
       },
       (err: Error) => {
@@ -834,13 +942,7 @@ export class WsClient {
         if (isTransientConnectionError(err)) {
           this.outgoingQueue.push({ payload: frame, clientMessageId, resolve, reject })
         } else {
-          settlePendingSendId({
-            sessionId: String(frame.sessionId ?? ''),
-            userMessage: String(frame.userMessage ?? ''),
-            channelId: String(frame.channelId ?? ''),
-            modelId: typeof frame.modelId === 'string' ? frame.modelId : undefined,
-            workspaceId: typeof frame.workspaceId === 'string' ? frame.workspaceId : undefined,
-          }, clientMessageId)
+          settlePendingSendId(keyInput, clientMessageId)
           reject(err)
         }
       },
@@ -881,6 +983,8 @@ export class WsClient {
     mentionedSkills?: string[]
     mentionedMcpServers?: string[]
     mentionedSessionIds?: string[]
+    /** 来源客户端（展示用，仅 webui 白名单值） */
+    clientKind?: 'webui'
   }): Promise<unknown> {
     return this.sendCommand({ type: 'queue_message', ...payload })
   }
@@ -998,6 +1102,57 @@ export class WsClient {
 
   readFileAsDataUrl(filePath: string, access?: { sessionId?: string; candidateBasePaths?: string[] }): Promise<unknown> {
     return this.sendCommand({ type: 'read_file_as_data_url', filePath, access })
+  }
+
+  // ---- Goal 长时自主执行 ----
+  // 与主进程 AGENT_IPC_CHANNELS.START_GOAL / PAUSE_GOAL 等一一对应，
+  // 服务端把这些命令转发给唯一的 GoalSessionService，本客户端不持有状态机。
+  getGoal(sessionId: string): Promise<unknown> {
+    return this.sendCommand({ type: 'get_goal', sessionId })
+  }
+
+  getGoalHistory(sessionId: string): Promise<unknown> {
+    return this.sendCommand({ type: 'get_goal_history', sessionId })
+  }
+
+  /** 启动持续目标；契约三项都是可选文本（验收 / 约束 / 停止条件）。 */
+  startGoal(input: {
+    sessionId: string
+    goal: string
+    contract?: { verification?: string; constraints?: string; stopWhen?: string }
+  }): Promise<unknown> {
+    return this.sendCommand({ type: 'start_goal', ...input })
+  }
+
+  /**
+   * 修改目标 / 契约 / 预算。
+   *
+   * `limits` 里 `null` 表示清除该项预算（改为不限）；`maxConsecutiveFailures` 必填，
+   * 服务端只收正整数的安全整数（时长是毫秒）。
+   */
+  updateGoal(input: {
+    sessionId: string
+    goal?: string
+    contract?: { verification?: string; constraints?: string; stopWhen?: string }
+    limits?: { maxIterations?: number | null; maxDurationMs?: number | null; maxTokens?: number | null; maxConsecutiveFailures?: number }
+  }): Promise<unknown> {
+    return this.sendCommand({ type: 'update_goal', ...input })
+  }
+
+  pauseGoal(sessionId: string): Promise<unknown> {
+    return this.sendCommand({ type: 'pause_goal', sessionId })
+  }
+
+  resumeGoal(sessionId: string): Promise<unknown> {
+    return this.sendCommand({ type: 'resume_goal', sessionId })
+  }
+
+  stopGoal(sessionId: string): Promise<unknown> {
+    return this.sendCommand({ type: 'stop_goal', sessionId })
+  }
+
+  clearGoal(sessionId: string): Promise<unknown> {
+    return this.sendCommand({ type: 'clear_goal', sessionId })
   }
 }
 

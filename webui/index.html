@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+<meta name="color-scheme" content="light dark" />
+<!-- 地址栏 / 状态栏跟随系统主题；不支持 media 的浏览器取最后一条（深色） -->
+<meta name="theme-color" content="#F7F5F2" media="(prefers-color-scheme: light)" />
+<meta name="theme-color" content="#191715" media="(prefers-color-scheme: dark)" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<meta name="apple-mobile-web-app-title" content="Profer 会话" />
+<meta name="application-name" content="Profer 会话" />
+<!-- 图标取自桌面端应用图标：Vite 会把根绝对路径自动拼上 /webui/ 前缀 -->
+<link rel="icon" href="/favicon.ico" sizes="any" />
+<link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+<title>Profer 会话</title>
+</head>
+<body>
+<div id="root"></div>
+<script type="module" src="./main.tsx"></script>
+</body>
+</html>
